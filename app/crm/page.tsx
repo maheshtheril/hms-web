@@ -3,7 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import TopNav from "@/app/components/TopNav";
-import LeadsTableClient from "./LeadsTableClient";
+import LeadsTableClient from './leads/LeadsTableClient';
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic"; // always fresh
