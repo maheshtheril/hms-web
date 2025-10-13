@@ -9,3 +9,6 @@ dist
 .vscode
 npm-debug.log
 yarn-error.log
+.bak
+app/crm/leads/new/page.tsx.bak
+next.config.js.bak
