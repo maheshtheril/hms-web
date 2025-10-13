@@ -65,7 +65,7 @@ type CFValue = {
   value_json?: any | null;
 };
 
-/* ───────── Assign Employee (loads /api/users) ───────── */
+/* ───────── Assign Employee (loads /admin/users) ───────── */
 function AssignEmployee({
   value, onChange,
 }: { value: string | null; onChange: (id: string | null) => void }) {
@@ -81,11 +81,18 @@ function AssignEmployee({
   async function loadUsers() {
     try {
       setErr(null); setLoading(true);
-      const { data } = await apiClient.get("/users", { params: { active: 1 }, withCredentials: true });
-      const arr = Array.isArray(data?.users) ? data.users
-        : Array.isArray(data) ? data
-        : Array.isArray(data?.data) ? data.data
-        : [];
+      const { data } = await apiClient.get("/admin/users", {
+        params: { page: 1, pageSize: 200, active: 1 },
+        withCredentials: true,
+      });
+
+      const arr =
+        (Array.isArray(data?.items) && data.items) ||
+        (Array.isArray(data?.users) && data.users) ||
+        (Array.isArray(data?.data) && data.data) ||
+        (Array.isArray(data) && data) ||
+        [];
+
       setUsers(arr.map((u: any) => ({
         id: String(u.id ?? u.user_id ?? u.uuid),
         name: u.name ?? u.full_name ?? null,
@@ -98,7 +105,8 @@ function AssignEmployee({
 
   useEffect(() => {
     if (open && users.length === 0 && !loading && !err) loadUsers();
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   return (
     <div className="relative" ref={anchor}>
@@ -164,7 +172,6 @@ function CustomFieldInput({
     const fd = new FormData();
     fd.append("file", file);
     try {
-      // Adjust to your uploader route/response shape.
       const { data } = await apiClient.post("/uploads", fd, {
         headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true,
@@ -173,7 +180,7 @@ function CustomFieldInput({
       onChange({ value_text: url || file.name });
     } catch (e) {
       console.warn("Upload failed", e);
-      onChange({ value_text: file.name }); // fallback keep filename so user sees something
+      onChange({ value_text: file.name });
     }
   }
 
@@ -371,12 +378,22 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
     (async () => {
       try {
         setLoadErr(e => ({ ...e, companies: undefined }));
-        const { data } = await apiClient.get("/companies", { params: { active: 1 }, withCredentials: true });
-        const arr = Array.isArray(data?.companies) ? data.companies
-          : Array.isArray(data) ? data
-          : Array.isArray(data?.data) ? data.data
-          : [];
-        const mapped: CompanyOpt[] = arr.map((c: any) => ({ id: String(c.id), name: c.name ?? null }));
+        const { data } = await apiClient.get("/admin/companies", {
+          params: { active: 1, page: 1, pageSize: 200 },
+          withCredentials: true,
+        });
+
+        const raw =
+          (Array.isArray(data?.items) && data.items) ||
+          (Array.isArray(data?.companies) && data.companies) ||
+          (Array.isArray(data?.data) && data.data) ||
+          (Array.isArray(data) && data) ||
+          [];
+
+        const mapped: CompanyOpt[] = raw.map((c: any) => ({
+          id: String(c.id ?? c.company_id ?? c.uuid),
+          name: c.name ?? c.company_name ?? null,
+        }));
         setCompanies(mapped);
       } catch (e: any) {
         setLoadErr(e2 => ({ ...e2, companies: e?.response?.data?.error || "Could not load companies" }));
@@ -422,7 +439,6 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
 
         setCfDefs(defs);
 
-        // init values per field type
         const init: Record<string, CFValue> = {};
         for (const d of defs) {
           switch (d.field_type) {
@@ -460,7 +476,6 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
     setCfValues(prev => ({ ...prev, [defId]: updater(prev[defId] || {}) }));
   }
 
-  // quick required check for custom fields
   function validateRequiredCustomFields(): string | null {
     for (const d of cfDefs) {
       if (!d.required || d.visible === false) continue;
@@ -483,7 +498,6 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
     setErr(null); setOk(null);
     if (!form.lead_name?.trim()) return setErr("Lead name is required");
 
-    // validate required CFs (client)
     const cfError = validateRequiredCustomFields();
     if (cfError) return setErr(cfError);
 
@@ -555,7 +569,7 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
         }
       }
 
-      // 3) If notes exist, create initial note (non-blocking if it fails)
+      // 3) If notes exist, create initial note (non-blocking)
       let noteError: string | null = null;
       if (leadId && initialNote) {
         try {
@@ -641,7 +655,7 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
         <div className="max-w-screen-2xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-semibold">Create Lead (Detailed)</h1>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={() => history.back()}>Back</Button>
+            <Button type="button" variant="outline" className="btn-outline-dark" onClick={() => history.back()}>Back</Button>
           </div>
         </div>
       </header>
@@ -890,7 +904,7 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
       {/* Single footer actions */}
       <footer className="sticky bottom-0 z-40 border-t border-white/10 bg-black/70 backdrop-blur px-6 py-4">
         <div className="max-w-screen-2xl mx-auto flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => history.back()}>Cancel</Button>
+          <Button type="button" variant="outline" className="btn-outline-dark" onClick={() => history.back()}>Cancel</Button>
           <Button type="submit" form="leadForm" disabled={loading || !form.lead_name.trim()}>
             {loading ? "Saving..." : "Save Lead"}
           </Button>
@@ -899,10 +913,52 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
 
       {/* Force native selects to be readable on dark UIs */}
       <style jsx global>{`
+        /* Native controls readable in dark UIs */
+        :root { color-scheme: dark; }
+
         select.dark-select { color: #fff; }
         select.dark-select option {
           background-color: #0a0a0a;
           color: #fff;
+        }
+
+        input[type="date"],
+        input[type="datetime-local"],
+        select,
+        textarea,
+        input {
+          color-scheme: dark;
+          background-color: #0a0a0a;
+          color: #fff;
+          border-color: rgba(255,255,255,0.1);
+        }
+
+        /* Calendar icon visibility (Chromium/WebKit) */
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+          filter: invert(1) opacity(0.9);
+        }
+
+        /* Focus ring tweak for dark backgrounds */
+        input:focus, select:focus, textarea:focus {
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(255,255,255,0.15);
+          border-color: rgba(255,255,255,0.25);
+        }
+
+        /* Stronger outline variant on dark bg */
+        .btn-outline-dark {
+          border-color: rgba(255,255,255,0.2) !important;
+        }
+        .btn-outline-dark:hover {
+          background-color: rgba(255,255,255,0.06) !important;
+        }
+
+        /* Disabled readability */
+        button[disabled],
+        input[disabled],
+        select[disabled] {
+          opacity: 0.6;
         }
       `}</style>
     </div>

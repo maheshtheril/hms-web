@@ -79,7 +79,9 @@ function isSalesRole(me: MeResponse | null): boolean {
 
 async function fetchKPIs(sid: string, opts?: { mine?: boolean }): Promise<KpisPayload | null> {
   const url = new URL(`${ORIGIN}/api/kpis`);
-  if (opts?.mine) url.searchParams.set("mine", "1"); // backend should filter by current user (assigned_user_id = me)
+  if (opts?.mine) url.searchParams.set("mine", "1");
+  else url.searchParams.set("scope", "all");        // ← show all for non-sales / admins
+  url.searchParams.set("table", "leads");           // ← force the plural table
   return fetchJSON<KpisPayload>(url.toString(), `ssr_sid=${sid}`, { timeoutMs: 3500 });
 }
 

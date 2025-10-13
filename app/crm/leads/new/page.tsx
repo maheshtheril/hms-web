@@ -1,4 +1,3 @@
-export const dynamic = 'force-dynamic';
 // =============================================
 // 📁 Folder structure (suggested)
 // =============================================
@@ -76,7 +75,7 @@ export const dynamic = 'force-dynamic';
 // web/app/crm/leads/new/page.tsx — server route that mounts client
 // =============================================
 import ClientEntry from "./ClientEntry";
-export default function Page() { return <Suspense fallback={<div>Loading...</div>}></Suspense>; }
+export default function Page() { return <ClientEntry />; }
 
 // =============================================
 // web/app/crm/leads/new/ClientEntry.tsx — detects ?mode=quick|detailed

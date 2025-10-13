@@ -4,8 +4,16 @@ import { apiClient } from "@/lib/api-client";
 import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import  Fireworks  from "@/app/components/effects/Fireworks";
+import Fireworks from "@/app/components/effects/Fireworks";
 import { useToast } from "@/components/ui/use-toast";
+
+/* ───────────────── Types ───────────────── */
+type FireworksHandle = {
+  burstAt: (x: number, y: number) => void;
+  burstCenter: () => void;
+};
+
+type CompanyOpt = { id: string; name?: string };
 
 /* ======================= Auth-safe axios defaults ======================= */
 // Ensure browser sends cookies to the Next API (same origin)
@@ -239,7 +247,7 @@ function SourceSelect({ value, onChange, options }: { value: string; onChange: (
 }
 
 /* ======================= Assign Employee (practical) ======================= */
-/** Tries GET /users (expects {users:[{id,name,email}]}). Falls back to manual ID input if fetch fails. */
+/** Tries GET /admin/users (expects {users:[{id,name,email}]}). Falls back to manual ID input if fetch fails. */
 function AssignEmployee({
   value,
   onChange,
@@ -260,9 +268,11 @@ function AssignEmployee({
     try {
       setErr(null);
       setLoading(true);
-      // Go through Next proxy so cookies (sid) are forwarded.
-      // NOTE: if your apiClient has baseURL="/api", this path MUST be "/users" (not "/api/users").
-      const { data } = await apiClient.get("/users", { params: { active: 1 }, withCredentials: true });
+      // If apiClient.baseURL ends with /api, use "/admin/users"
+      const { data } = await apiClient.get("/admin/users", {
+        params: { active: 1, page: 1, pageSize: 50 },
+        withCredentials: true,
+      });
       const arr = Array.isArray(data?.users)
         ? data.users
         : Array.isArray(data)
@@ -270,7 +280,13 @@ function AssignEmployee({
         : Array.isArray(data?.data)
         ? data.data
         : [];
-      setUsers(arr.map((u: any) => ({ id: String(u.id ?? u.user_id ?? u.uuid), name: u.name ?? u.full_name, email: u.email })));
+      setUsers(
+        arr.map((u: any) => ({
+          id: String(u.id ?? u.user_id ?? u.uuid),
+          name: u.name ?? u.full_name ?? null,
+          email: u.email ?? null,
+        })),
+      );
     } catch (e: any) {
       setErr(e?.response?.data?.error || "Could not load team");
     } finally {
@@ -351,8 +367,6 @@ function ManualAssign({ value, onChange }: { value: string | null; onChange: (id
 }
 
 /* ======================= Main ======================= */
-type CompanyOpt = { id: string; name?: string };
-
 export default function QuickLeadDrawer({
   open,
   onClose,
@@ -362,7 +376,7 @@ export default function QuickLeadDrawer({
   onClose: () => void;
   onCreated?: (lead: any) => void;
 }) {
-  const { success, error: toastError } = useToast();
+  const { toast } = useToast();
 
   const [form, setForm] = useState({
     lead_name: "",
@@ -370,8 +384,8 @@ export default function QuickLeadDrawer({
     phone_national: "",
     phone_country: "IN",
     source: "Direct",
-    assigned_user_id: "" as string | null,
-    company_id: "" as string | null,
+    assigned_user_id: null as string | null,
+    company_id: null as string | null,
   });
   const [companyChoices, setCompanyChoices] = useState<CompanyOpt[]>([]);
   const [loading, setLoading] = useState(false);
@@ -419,7 +433,7 @@ export default function QuickLeadDrawer({
       const payload: any = {
         name,
         title: name,
-        lead_name: name, // harmless duplicate; backend maps to name anyway
+        lead_name: name, // harmless duplicate; backend may map to name anyway
         email: form.email || undefined,
         phone_e164: phoneE164 || undefined,
         source: form.source || undefined,
@@ -427,12 +441,11 @@ export default function QuickLeadDrawer({
         company_id: form.company_id || undefined, // include only if user picked
       };
 
-      // First attempt
+      // If apiClient.baseURL ends with /api, this is correct:
       const { data } = await apiClient.post("/leads", payload, { withCredentials: true });
 
-
       celebrate(); // 🎆 success!
-      success("Lead saved", data?.lead?.name ?? form.lead_name);
+      toast({ title: "Lead saved", description: data?.lead?.name ?? name });
 
       onCreated?.(data.lead ?? data);
       onClose();
@@ -442,8 +455,8 @@ export default function QuickLeadDrawer({
         phone_national: "",
         phone_country: "IN",
         source: "Direct",
-        assigned_user_id: "",
-        company_id: "",
+        assigned_user_id: null,
+        company_id: null,
       });
       setCompanyChoices([]);
     } catch (e: any) {
@@ -479,6 +492,8 @@ export default function QuickLeadDrawer({
             const { data } = await apiClient.post("/leads", retryPayload, { withCredentials: true });
 
             celebrate(); // 🎆 success after retry
+            toast({ title: "Lead saved", description: data?.lead?.name ?? form.lead_name });
+
             onCreated?.(data.lead ?? data);
             onClose();
             setForm({
@@ -487,8 +502,8 @@ export default function QuickLeadDrawer({
               phone_national: "",
               phone_country: "IN",
               source: "Direct",
-              assigned_user_id: "",
-              company_id: "",
+              assigned_user_id: null,
+              company_id: null,
             });
             setCompanyChoices([]);
             return;
@@ -498,6 +513,11 @@ export default function QuickLeadDrawer({
         }
 
         setErr("Please select a company, then click Save again.");
+        toast({
+          title: "Company required",
+          description: "Pick a company from the dropdown and save once more.",
+          variant: "destructive",
+        });
         return;
       }
 
@@ -514,9 +534,9 @@ export default function QuickLeadDrawer({
           : status === 500
           ? `Server Error (500): ${serverMsg ?? "See server logs for stack trace."}`
           : serverMsg || e?.message || "Failed to create";
-      setErr(msg);
-      toastError("Save failed", msg);
 
+      setErr(msg);
+      toast({ title: "Save failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -568,10 +588,13 @@ export default function QuickLeadDrawer({
             <SourceSelect value={form.source} onChange={(v) => setForm({ ...form, source: v })} options={SOURCE_OPTIONS} />
           </div>
 
-          {/* Assign Employee — practical dropdown with /users fetch + manual fallback */}
+          {/* Assign Employee — practical dropdown with /admin/users fetch + manual fallback */}
           <div>
             <label className="block text-sm">Assign To</label>
-            <AssignEmployee value={form.assigned_user_id || null} onChange={(id) => setForm({ ...form, assigned_user_id: id })} />
+            <AssignEmployee
+              value={form.assigned_user_id}
+              onChange={(id) => setForm({ ...form, assigned_user_id: id })}
+            />
           </div>
 
           {/* Company picker appears only if server asks for it */}
@@ -580,8 +603,8 @@ export default function QuickLeadDrawer({
               <label className="block text-sm">Company</label>
               <select
                 className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm"
-                value={form.company_id || ""}
-                onChange={(e) => setForm({ ...form, company_id: e.target.value || "" })}
+                value={form.company_id ?? ""}
+                onChange={(e) => setForm({ ...form, company_id: e.target.value || null })}
               >
                 <option value="" disabled>Select company</option>
                 {companyChoices.map((c) => (

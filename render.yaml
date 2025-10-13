@@ -1,18 +1,25 @@
 services:
   - type: web
-    name: 3gweb
+    name: gg-web
+    rootDir: web
     env: node
-    repo: https://github.com/maheshtheril/3gfrontend.git
-    branch: main
-    rootDir: /
-    buildCommand: npm install && npm run build
-    startCommand: npm run start
     plan: free
-    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: NEXT_DISABLE_SWC_NATIVE
-        value: "1"
-      - key: NEXT_PUBLIC_DEFAULT_PIPELINE_ID
-        value: "00000000-0000-0000-0000-000000000000"
+      - key: NEXT_PUBLIC_API_URL
+        value: https://your-backend.onrender.com
+      - key: NODE_VERSION
+        value: 20
+  - type: web
+    name: gg-api
+    rootDir: server
+    env: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run start
+    envVars:
+      - key: APP_ORIGIN
+        value: https://<your-frontend>.onrender.com
+      - key: NODE_VERSION
+        value: 20
