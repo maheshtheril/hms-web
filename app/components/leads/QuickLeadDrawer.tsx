@@ -1,4 +1,6 @@
+// app/components/leads/QuickLeadDrawer.tsx
 "use client";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import { Drawer } from "@/components/ui/drawer";
@@ -8,23 +10,19 @@ import Fireworks from "@/app/components/effects/Fireworks";
 import { useToast } from "@/components/ui/use-toast";
 
 /* ───────────────── Types ───────────────── */
-type FireworksHandle = {
-  burstAt: (x: number, y: number) => void;
-  burstCenter: () => void;
-};
-
-type CompanyOpt = { id: string; name?: string };
+export interface LeadDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  onCreated?: (lead: any) => void;
+}
+type FireworksHandle = { burstAt: (x: number, y: number) => void; burstCenter: () => void };
+type CompanyOpt = { id: string; name?: string | null };
 
 /* ======================= Auth-safe axios defaults ======================= */
-// Ensure browser sends cookies to the Next API (same origin)
 try {
   apiClient.defaults.withCredentials = true;
-  // If your apiClient has a baseURL, keep it '', or make sure it’s same-origin.
-  // Example (uncomment if needed):
-  // apiClient.defaults.baseURL = "";
-} catch {
-  /* no-op */
-}
+  // apiClient.defaults.baseURL = ""; // keep same-origin if you proxy /api
+} catch {}
 
 /* ======================= Data ======================= */
 const COUNTRIES = [
@@ -34,7 +32,7 @@ const COUNTRIES = [
   { iso2: "GB", name: "United Kingdom", dial: "44" },
   { iso2: "SG", name: "Singapore", dial: "65" },
   { iso2: "SA", name: "Saudi Arabia", dial: "966" },
-];
+] as const;
 
 const SOURCE_OPTIONS = [
   "Direct",
@@ -47,7 +45,7 @@ const SOURCE_OPTIONS = [
   "Social",
   "Partner",
   "Other",
-];
+] as const;
 
 const dialOf = (iso2: string) => COUNTRIES.find((c) => c.iso2 === iso2)?.dial ?? "91";
 const countryOf = (iso2: string) => COUNTRIES.find((c) => c.iso2 === iso2) ?? COUNTRIES[0];
@@ -63,7 +61,6 @@ function iso2ToEmoji(iso2: string) {
 }
 const flagClass = (iso2: string) => `fi fi-${iso2.toLowerCase()}`;
 
-// Shows SVG flag if flag-icons CSS is present; falls back to emoji
 function FlagIcon({ iso2, width = 20, height = 14 }: { iso2: string; width?: number; height?: number }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [fallback, setFallback] = useState<string | null>(null);
@@ -128,7 +125,7 @@ function MenuItem({
   );
 }
 
-/* ======================= Country + Phone (one line) ======================= */
+/* ======================= Country + Phone ======================= */
 function CountryPhoneRow({
   phone_country,
   phone_national,
@@ -149,7 +146,6 @@ function CountryPhoneRow({
 
   return (
     <div className="relative flex gap-2" ref={ref}>
-      {/* Flag + dial toggle */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -162,18 +158,17 @@ function CountryPhoneRow({
         <CaretDown className="opacity-70" />
       </button>
 
-      {/* Phone input — same line as flag button */}
       <div className="flex-1 relative">
         <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs opacity-70">{prefix}</span>
         <Input
           className="pl-12"
           placeholder="XXXXXXXXXX"
+          inputMode="numeric"
           value={phone_national}
           onChange={(e) => onChangeNational(e.target.value.replace(/[^\d]/g, ""))}
         />
       </div>
 
-      {/* Country menu */}
       {open && (
         <div
           role="listbox"
@@ -204,7 +199,7 @@ function CountryPhoneRow({
 }
 
 /* ======================= Source (dark dropdown) ======================= */
-function SourceSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
+function SourceSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: readonly string[] }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
   useClickOutside(anchor, () => setOpen(false));
@@ -246,8 +241,7 @@ function SourceSelect({ value, onChange, options }: { value: string; onChange: (
   );
 }
 
-/* ======================= Assign Employee (practical) ======================= */
-/** Tries GET /admin/users (expects {users:[{id,name,email}]}). Falls back to manual ID input if fetch fails. */
+/* ======================= Assign Employee ======================= */
 function AssignEmployee({
   value,
   onChange,
@@ -256,7 +250,7 @@ function AssignEmployee({
   onChange: (id: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [users, setUsers] = useState<Array<{ id: string; name?: string; email?: string }>>([]);
+  const [users, setUsers] = useState<Array<{ id: string; name?: string | null; email?: string | null }>>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -268,7 +262,6 @@ function AssignEmployee({
     try {
       setErr(null);
       setLoading(true);
-      // If apiClient.baseURL ends with /api, use "/admin/users"
       const { data } = await apiClient.get("/admin/users", {
         params: { active: 1, page: 1, pageSize: 50 },
         withCredentials: true,
@@ -295,9 +288,8 @@ function AssignEmployee({
   }
 
   useEffect(() => {
-    if (open && users.length === 0 && !loading && !err) {
-      loadUsers();
-    }
+    if (open && users.length === 0 && !loading && !err) loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   return (
@@ -367,15 +359,7 @@ function ManualAssign({ value, onChange }: { value: string | null; onChange: (id
 }
 
 /* ======================= Main ======================= */
-export default function QuickLeadDrawer({
-  open,
-  onClose,
-  onCreated,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreated?: (lead: any) => void;
-}) {
+export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawerProps) {
   const { toast } = useToast();
 
   const [form, setForm] = useState({
@@ -390,6 +374,7 @@ export default function QuickLeadDrawer({
   const [companyChoices, setCompanyChoices] = useState<CompanyOpt[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const submittingRef = useRef(false);
 
   // 🎆 Fireworks refs
   const fxRef = useRef<FireworksHandle>(null);
@@ -403,52 +388,62 @@ export default function QuickLeadDrawer({
   function coerceCompanies(raw: any): CompanyOpt[] {
     if (!raw) return [];
     if (Array.isArray(raw)) {
-      return raw.map((r) => (typeof r === "string" ? { id: r } : { id: String(r.id), name: r.name }));
+      return raw
+        .map((r) =>
+          typeof r === "string"
+            ? { id: r, name: null }
+            : { id: String(r.id ?? r.company_id ?? r.uuid ?? r), name: r.name ?? r.company_name ?? null },
+        )
+        .filter((x) => !!x.id);
     }
     return [];
   }
 
   function celebrate() {
     const rect = saveBtnRef.current?.getBoundingClientRect();
-    if (rect) {
-      fxRef.current?.burstAt(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    } else {
-      fxRef.current?.burstCenter();
-    }
+    if (rect) fxRef.current?.burstAt(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    else fxRef.current?.burstCenter();
+  }
+
+  async function doCreate(payload: any) {
+    const { data } = await apiClient.post("/leads", payload, { withCredentials: true });
+    return data?.lead ?? data;
   }
 
   async function submit() {
+    if (submittingRef.current) return;
     setErr(null);
+
     if (!form.lead_name.trim()) {
       setErr("Lead name is required");
       return;
     }
 
     try {
+      submittingRef.current = true;
       setLoading(true);
 
       const name = form.lead_name.trim();
-
-      // Minimal, schema-safe payload:
-      const payload: any = {
+      const basePayload: any = {
         name,
         title: name,
-        lead_name: name, // harmless duplicate; backend may map to name anyway
+        lead_name: name,
         email: form.email || undefined,
         phone_e164: phoneE164 || undefined,
         source: form.source || undefined,
         assigned_user_id: form.assigned_user_id || undefined,
-        company_id: form.company_id || undefined, // include only if user picked
+        company_id: form.company_id || undefined,
       };
 
-      // If apiClient.baseURL ends with /api, this is correct:
-      const { data } = await apiClient.post("/leads", payload, { withCredentials: true });
+      let created = await doCreate(basePayload);
 
-      celebrate(); // 🎆 success!
-      toast({ title: "Lead saved", description: data?.lead?.name ?? name });
-
-      onCreated?.(data.lead ?? data);
+      // happy path
+      celebrate();
+      toast({ title: "Lead saved", description: created?.name ?? name });
+      onCreated?.(created);
       onClose();
+
+      // reset
       setForm({
         lead_name: "",
         email: "",
@@ -460,7 +455,7 @@ export default function QuickLeadDrawer({
       });
       setCompanyChoices([]);
     } catch (e: any) {
-      // dump helpful context to console
+      // helpful console dump
       console.error("Create lead failed", {
         status: e?.response?.status,
         data: e?.response?.data,
@@ -470,16 +465,15 @@ export default function QuickLeadDrawer({
       const status = e?.response?.status;
       const errData = e?.response?.data;
 
-      // Server needs a company choice → try auto-pick first and retry once
       if (status === 400 && errData?.error === "company_required") {
         const list = coerceCompanies(errData?.companies);
         setCompanyChoices(list);
 
+        // auto-pick if only one
         if (list.length === 1) {
-          const [only] = list;
-          setForm((f) => ({ ...f, company_id: only.id }));
+          const only = list[0];
           try {
-            const retryPayload = {
+            const created = await doCreate({
               name: form.lead_name.trim(),
               title: form.lead_name.trim(),
               lead_name: form.lead_name.trim(),
@@ -488,14 +482,14 @@ export default function QuickLeadDrawer({
               source: form.source || undefined,
               assigned_user_id: form.assigned_user_id || undefined,
               company_id: only.id,
-            };
-            const { data } = await apiClient.post("/leads", retryPayload, { withCredentials: true });
+            });
 
-            celebrate(); // 🎆 success after retry
-            toast({ title: "Lead saved", description: data?.lead?.name ?? form.lead_name });
-
-            onCreated?.(data.lead ?? data);
+            celebrate();
+            toast({ title: "Lead saved", description: created?.name ?? form.lead_name });
+            onCreated?.(created);
             onClose();
+
+            // reset
             setForm({
               lead_name: "",
               email: "",
@@ -521,11 +515,7 @@ export default function QuickLeadDrawer({
         return;
       }
 
-      const serverMsg =
-        errData?.error ||
-        errData?.message ||
-        (typeof errData === "string" ? errData : null);
-
+      const serverMsg = errData?.error || errData?.message || (typeof errData === "string" ? errData : null);
       const msg =
         status === 401
           ? "Unauthorized (401): Please log in again."
@@ -534,24 +524,40 @@ export default function QuickLeadDrawer({
           : status === 500
           ? `Server Error (500): ${serverMsg ?? "See server logs for stack trace."}`
           : serverMsg || e?.message || "Failed to create";
-
       setErr(msg);
       toast({ title: "Save failed", description: msg, variant: "destructive" });
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   }
+
+  // Enter key = save (while drawer open)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        // avoid Enter inside selects/textarea
+        const t = e.target as HTMLElement | null;
+        const tag = (t?.tagName || "").toLowerCase();
+        if (tag !== "textarea" && tag !== "select") submit();
+      }
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, form, phoneE164]);
 
   return (
     <>
       {/* 🎆 Overlay on the whole app */}
       <Fireworks ref={fxRef} zIndex={80} />
 
-      <Drawer open={open} onClose={onClose} title="Quick Lead">
+      <Drawer open={open} onClose={onClose} title="Quick Lead" ariaLabel="Quick lead creation">
         <div className="space-y-3">
           {err && <div className="text-red-400 text-sm">{err}</div>}
 
-          {/* Lead Name (single field for quick flow) */}
           <div>
             <label className="block text-sm">Lead Name</label>
             <Input
@@ -561,17 +567,16 @@ export default function QuickLeadDrawer({
             />
           </div>
 
-          {/* Email — its own full-width row */}
           <div>
             <label className="block text-sm">Email</label>
             <Input
               placeholder="name@company.com"
+              type="email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
           </div>
 
-          {/* Phone — its own row, with country flag + dial on the same line */}
           <div>
             <label className="block text-sm">Phone</label>
             <CountryPhoneRow
@@ -582,22 +587,16 @@ export default function QuickLeadDrawer({
             />
           </div>
 
-          {/* Source — dark dropdown */}
           <div>
             <label className="block text-sm">Source</label>
             <SourceSelect value={form.source} onChange={(v) => setForm({ ...form, source: v })} options={SOURCE_OPTIONS} />
           </div>
 
-          {/* Assign Employee — practical dropdown with /admin/users fetch + manual fallback */}
           <div>
             <label className="block text-sm">Assign To</label>
-            <AssignEmployee
-              value={form.assigned_user_id}
-              onChange={(id) => setForm({ ...form, assigned_user_id: id })}
-            />
+            <AssignEmployee value={form.assigned_user_id} onChange={(id) => setForm({ ...form, assigned_user_id: id })} />
           </div>
 
-          {/* Company picker appears only if server asks for it */}
           {companyChoices.length > 0 && (
             <div>
               <label className="block text-sm">Company</label>
@@ -606,10 +605,12 @@ export default function QuickLeadDrawer({
                 value={form.company_id ?? ""}
                 onChange={(e) => setForm({ ...form, company_id: e.target.value || null })}
               >
-                <option value="" disabled>Select company</option>
+                <option value="" disabled>
+                  Select company
+                </option>
                 {companyChoices.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name ? `${c.name} (${c.id})` : c.id}
+                    {c.name ? `${c.name} (${c.id.slice(0, 8)}…)` : c.id}
                   </option>
                 ))}
               </select>
@@ -621,7 +622,7 @@ export default function QuickLeadDrawer({
             <Button ref={saveBtnRef} onClick={submit} disabled={loading || !form.lead_name.trim()}>
               {loading ? "Saving..." : "Save"}
             </Button>
-            <Button onClick={onClose} className="bg-white/0 border-white/20">
+            <Button onClick={onClose} className="bg-white/0 border-white/20" variant="outline">
               Cancel
             </Button>
           </div>

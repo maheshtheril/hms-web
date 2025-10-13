@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -304,8 +305,15 @@ function CustomFieldInput({
   }
 }
 
-/* ───────── Detailed Lead Page ───────── */
-export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any) => void }) {
+export default function DetailedLeadForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated?: (lead: any) => void;
+  onCancel?: () => void;
+}) {
+  const router = useRouter();
+
   const [form, setForm] = useState<any>({
     lead_name: "",
     email: "",
@@ -648,6 +656,11 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
     }
   }
 
+  const handleBack = () => {
+    if (onCancel) onCancel();
+    else router.back();
+  };
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
       {/* Top bar */}
@@ -655,7 +668,7 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
         <div className="max-w-screen-2xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-semibold">Create Lead (Detailed)</h1>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" className="btn-outline-dark" onClick={() => history.back()}>Back</Button>
+            <Button type="button" variant="outline" className="btn-outline-dark" onClick={handleBack}>Back</Button>
           </div>
         </div>
       </header>
@@ -904,7 +917,7 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
       {/* Single footer actions */}
       <footer className="sticky bottom-0 z-40 border-t border-white/10 bg-black/70 backdrop-blur px-6 py-4">
         <div className="max-w-screen-2xl mx-auto flex justify-end gap-2">
-          <Button type="button" variant="outline" className="btn-outline-dark" onClick={() => history.back()}>Cancel</Button>
+          <Button type="button" variant="outline" className="btn-outline-dark" onClick={handleBack}>Cancel</Button>
           <Button type="submit" form="leadForm" disabled={loading || !form.lead_name.trim()}>
             {loading ? "Saving..." : "Save Lead"}
           </Button>
@@ -913,53 +926,20 @@ export default function DetailedLeadPage({ onCreated }: { onCreated?: (lead: any
 
       {/* Force native selects to be readable on dark UIs */}
       <style jsx global>{`
-        /* Native controls readable in dark UIs */
         :root { color-scheme: dark; }
-
         select.dark-select { color: #fff; }
-        select.dark-select option {
-          background-color: #0a0a0a;
-          color: #fff;
+        select.dark-select option { background-color: #0a0a0a; color: #fff; }
+        input[type="date"], input[type="datetime-local"], select, textarea, input {
+          color-scheme: dark; background-color: #0a0a0a; color: #fff; border-color: rgba(255,255,255,0.1);
         }
-
-        input[type="date"],
-        input[type="datetime-local"],
-        select,
-        textarea,
-        input {
-          color-scheme: dark;
-          background-color: #0a0a0a;
-          color: #fff;
-          border-color: rgba(255,255,255,0.1);
-        }
-
-        /* Calendar icon visibility (Chromium/WebKit) */
         input[type="date"]::-webkit-calendar-picker-indicator,
-        input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-          filter: invert(1) opacity(0.9);
-        }
-
-        /* Focus ring tweak for dark backgrounds */
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.9); }
         input:focus, select:focus, textarea:focus {
-          outline: none;
-          box-shadow: 0 0 0 2px rgba(255,255,255,0.15);
-          border-color: rgba(255,255,255,0.25);
+          outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.25);
         }
-
-        /* Stronger outline variant on dark bg */
-        .btn-outline-dark {
-          border-color: rgba(255,255,255,0.2) !important;
-        }
-        .btn-outline-dark:hover {
-          background-color: rgba(255,255,255,0.06) !important;
-        }
-
-        /* Disabled readability */
-        button[disabled],
-        input[disabled],
-        select[disabled] {
-          opacity: 0.6;
-        }
+        .btn-outline-dark { border-color: rgba(255,255,255,0.2) !important; }
+        .btn-outline-dark:hover { background-color: rgba(255,255,255,0.06) !important; }
+        button[disabled], input[disabled], select[disabled] { opacity: 0.6; }
       `}</style>
     </div>
   );
