@@ -1,9 +1,10 @@
 // web/next.config.js
+const path = require("path");
 
 /** @type {import('next').NextConfig} */
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
 
-const nextConfig = {
+const baseConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
@@ -25,8 +26,6 @@ const nextConfig = {
 
       // Everything else under /api → backend /api
       { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
-
-      // If you ever serve files from the backend, uncomment:
       // { source: "/files/:path*", destination: `${BACKEND_URL}/files/:path*` },
     ];
   },
@@ -37,17 +36,20 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_BACKEND_URL: BACKEND_URL,
   },
+
+  // 🔑 Add the alias so Next/Webpack resolves "@/*" like tsconfig does
+  webpack(config) {
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      "@": path.resolve(__dirname), // maps "@/..." to project root
+    };
+    return config;
+  },
 };
 
-module.exports = nextConfig;
-
-/**
- * Temporary: allow production build to succeed despite generated type errors.
- * Remove this after fixing the underlying type issues.
- */
-const _prev = typeof module !== 'undefined' && module.exports ? module.exports : {};
+// Keep your “ignore type/eslint errors during build” override
 module.exports = {
-  ..._prev,
-  typescript: { ...( _prev.typescript || {} ), ignoreBuildErrors: true },
-  eslint: { ...( _prev.eslint || {} ), ignoreDuringBuilds: true }
+  ...baseConfig,
+  typescript: { ...(baseConfig.typescript || {}), ignoreBuildErrors: true },
+  eslint: { ...(baseConfig.eslint || {}), ignoreDuringBuilds: true },
 };
