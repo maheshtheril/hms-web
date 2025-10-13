@@ -10,16 +10,18 @@ const listeners: Array<(items: ToastItem[]) => void> = [];
 let items: ToastItem[] = [];
 
 function push(t: Omit<ToastItem, "id">) {
-  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
+  const id = crypto.randomUUID();
   items = [{ id, ...t }, ...items].slice(0, 3);
   listeners.forEach((l) => l(items));
   setTimeout(() => dismiss(id), 4000);
   return { id };
 }
+
 export function dismiss(id?: string) {
   items = id ? items.filter((x) => x.id !== id) : [];
   listeners.forEach((l) => l(items));
 }
+
 export function useToast() {
   const [state, setState] = React.useState<ToastItem[]>([]);
   React.useEffect(() => {

@@ -5,7 +5,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import QuickLeadDrawer from "@/app/components/leads/QuickLeadDrawer";
 import DetailedLeadDrawer from "@/app/components/leads/DetailedLeadDrawer";
-import { Button } from "@/app/components/ui/Button";
+import { Button } from "@/components/ui/button";
 
 export default function ClientEntry() {
   const sp = useSearchParams();

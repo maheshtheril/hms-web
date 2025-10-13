@@ -1,11 +1,11 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
-import { Drawer } from "@/app/components/ui/Drawer";
-import { Input } from "@/app/components/ui/Input";
-import { Button } from "@/app/components/ui/Button";
+import { Drawer } from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import  Fireworks  from "@/app/components/effects/Fireworks";
-import { useToast } from "@/app/components/ui/Toaster";
+import { useToast } from "@/components/ui/use-toast";
 
 /* ======================= Auth-safe axios defaults ======================= */
 // Ensure browser sends cookies to the Next API (same origin)

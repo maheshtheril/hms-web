@@ -1,9 +1,9 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
-import { Input } from "@/app/components/ui/Input";
-import { Textarea } from "@/app/components/ui/Textarea";
-import { Button } from "@/app/components/ui/Button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import { CountryPhoneRow, dialOf } from "@/app/components/phones/CountryPhoneRow";
 
 /* ───────── Small UI helpers ───────── */
