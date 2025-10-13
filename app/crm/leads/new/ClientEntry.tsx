@@ -1,3 +1,4 @@
+'use client';
 // app/crm/leads/new/ClientEntry.tsx
 "use client";
 import React, { useEffect, useState, useCallback } from "react";

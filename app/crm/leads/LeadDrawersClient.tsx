@@ -1,3 +1,4 @@
+'use client';
 // app/crm/leads/LeadDrawersClient.tsx
 "use client";
 
