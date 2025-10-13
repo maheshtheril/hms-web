@@ -1,0 +1,18 @@
+# render.yaml - Deploy Next.js static export as Render Static Site "3gweb"
+static_sites:
+  - name: 3gweb
+    repo: https://github.com/maheshtheril/3gfrontend.git
+    branch: main
+    rootDir: /
+    buildCommand: npm install && npm run build && npm run export
+    publishCommand: echo "published"
+    publish: out
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_DISABLE_SWC_NATIVE
+        value: "1"
+      - key: NEXT_PUBLIC_DEFAULT_PIPELINE_ID
+        value: "00000000-0000-0000-0000-000000000000"

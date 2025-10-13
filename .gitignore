@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.env.local
+.env.development
+.env.production
+dist
+.DS_Store
+.vscode
+npm-debug.log
+yarn-error.log
