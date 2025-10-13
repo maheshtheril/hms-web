@@ -1,5 +1,5 @@
 import Sidebar from "@/components/Sidebar";
-import Topbar from "@/components/Topbar";
+import { Topbar } from '@/components/Topbar';
 import { api } from "@/lib/api";
 import KanbanClient from "./reorder-client";
 import PipelineSwitcher from "./pipeline-switcher";
