@@ -1,7 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 /* app/globals.css */
+@import "tailwindcss";
 @import url("https://cdn.jsdelivr.net/npm/@fullcalendar/daygrid@6.1.15/index.css");
 @import url("https://cdn.jsdelivr.net/npm/@fullcalendar/timegrid@6.1.15/index.css");
 
@@ -23,11 +21,8 @@ html, body {
 /* Card utility (used in leads, kanban, dashboard, etc.) */
 .card {
   @apply rounded-2xl border border-white/10 p-4 shadow-sm;
-  /* ✅ Use plain CSS here instead of a Tailwind bg utility inside @apply */
-  /* Prefer modern color-mix for the 70% panel look, with rgba fallback */
   background-color: color-mix(in oklab, var(--panel) 70%, transparent);
-  /* Fallback for older browsers: */
-  background-color: rgba(17, 17, 17, 0.7);
+  background-color: rgba(17, 17, 17, 0.7); /* fallback */
 }
 
 /* Scrollbar styling for a cleaner look */
@@ -92,10 +87,6 @@ html, body {
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
 }
