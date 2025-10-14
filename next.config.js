@@ -1,10 +1,11 @@
 // web/next.config.js
 const path = require("path");
 
-/** @type {import('next').NextConfig} */
+// Single source of truth (server-only)
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
 
-const baseConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
@@ -17,39 +18,39 @@ const baseConfig = {
 
   async rewrites() {
     return [
-      // Auth endpoints
-      { source: "/api/auth/:path*", destination: `${BACKEND_URL}/auth/:path*` },
+      // Map FE /api/health -> BE /healthz (you said /healthz returns ok)
+      { source: "/api/health", destination: `${BACKEND_URL}/healthz` },
 
-      // Admin / Tenant (safe to keep)
-      { source: "/api/admin/:path*", destination: `${BACKEND_URL}/api/admin/:path*` },
+      // If your backend mounts auth under /api/auth, keep this form:
+      { source: "/api/auth/:path*",   destination: `${BACKEND_URL}/api/auth/:path*` },
+
+      // Admin / Tenant (under /api)
+      { source: "/api/admin/:path*",  destination: `${BACKEND_URL}/api/admin/:path*` },
       { source: "/api/tenant/:path*", destination: `${BACKEND_URL}/api/tenant/:path*` },
 
-      // Everything else under /api → backend /api
-      { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
-      // { source: "/files/:path*", destination: `${BACKEND_URL}/files/:path*` },
+      // Catch-all: everything else under /api -> backend /api
+      { source: "/api/:path*",        destination: `${BACKEND_URL}/api/:path*` },
+      // { source: "/files/:path*",    destination: `${BACKEND_URL}/files/:path*` }, // enable if needed
     ];
   },
 
-  // Use standalone only for production deploys (Render/Docker)
+  // Standalone for Render builds
   output: process.env.NODE_ENV === "production" ? "standalone" : undefined,
 
-  env: {
-    NEXT_PUBLIC_BACKEND_URL: BACKEND_URL,
-  },
+  // 🚫 DO NOT expose backend URL to the browser
+  // env: {},
 
-  // 🔑 Add the alias so Next/Webpack resolves "@/*" like tsconfig does
   webpack(config) {
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
-      "@": path.resolve(__dirname), // maps "@/..." to project root
+      "@": path.resolve(__dirname),
     };
     return config;
   },
+
+  // Keep your build error ignores if you really need them
+  typescript: { ignoreBuildErrors: true },
+  eslint: { ignoreDuringBuilds: true },
 };
 
-// Keep your “ignore type/eslint errors during build” override
-module.exports = {
-  ...baseConfig,
-  typescript: { ...(baseConfig.typescript || {}), ignoreBuildErrors: true },
-  eslint: { ...(baseConfig.eslint || {}), ignoreDuringBuilds: true },
-};
+module.exports = nextConfig;
