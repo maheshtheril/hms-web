@@ -3,13 +3,15 @@
 import axios, { AxiosError, AxiosRequestConfig } from "axios";
 
 /**
- * Client-side HTTP for Browser → Backend.
- * - In production: always use relative "/api" (Next.js rewrites → backend, no CORS)
- * - In development: you can set NEXT_PUBLIC_API_URL for local testing
- * - Handles JSON headers, logs in dev, redirects on 401
+ * Browser → Backend client.
+ * - Production: always hit same-origin `/api/*` (Next.js rewrites → backend).
+ * - Development: optional NEXT_PUBLIC_API_URL (we normalize it to end with /api).
+ * - Ensures JSON headers when sending a body.
+ * - Logs in dev.
+ * - Redirects to /login ONLY if /api/auth/me returns 401.
  */
 
-// ---------- helpers ----------
+/* ───────────────── helpers ───────────────── */
 function resolveApiBase(rawEnv: string | undefined): string | undefined {
   const raw = String(rawEnv ?? "").trim();
   if (!raw) return undefined;
@@ -53,70 +55,43 @@ function joinForLog(base?: string, u?: string) {
   return `${b}${p}`;
 }
 
-// ---------- baseURL logic ----------
+/* ───────────────── baseURL ───────────────── */
 const devEnvBase =
   process.env.NODE_ENV === "development"
     ? resolveApiBase(process.env.NEXT_PUBLIC_API_URL)
     : undefined;
 
-// In production, hard-lock to "/api" (uses Next.js rewrite to backend)
-const computedBaseURL = devEnvBase || "/api";
+// In prod we keep baseURL empty and build absolute same-origin paths in the interceptor.
+const computedBaseURL = devEnvBase || "";
 
-// ---------- axios instance ----------
+/* ───────────────── axios instance ───────────────── */
 export const apiClient = axios.create({
-  baseURL: computedBaseURL, // always ends with /api
+  baseURL: computedBaseURL, // "" in prod, full in dev if NEXT_PUBLIC_API_URL provided
   withCredentials: true,
   headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
   timeout: 20000,
 });
 
-// ---------- runtime safety ----------
-if (typeof window !== "undefined") {
-  const host = window.location.hostname;
-  const isLocal = host === "localhost" || host === "127.0.0.1";
-  if (!isLocal && apiClient.defaults.baseURL !== "/api") {
-    apiClient.defaults.baseURL = "/api";
-  }
-}
-
-// ---------- interceptors ----------
+/* ───────────────── interceptors ───────────────── */
+// Log base URL in dev
 if (process.env.NODE_ENV !== "production") {
   try {
-    console.log("[apiClient] baseURL =", apiClient.defaults.baseURL);
+    console.log("[apiClient] baseURL =", apiClient.defaults.baseURL || "(empty)");
   } catch {}
 }
 
-apiClient.interceptors.request.use((config) => {
-  const base = String(config.baseURL || computedBaseURL || "");
-  if (!isAbsolute(config.url)) {
-    config.url = apiPath(String(config.url || ""));
-  }
-  ensureJsonHeader(config);
-
-  if (process.env.NODE_ENV !== "production") {
-    try {
-      console.debug("[apiClient] →", up(config.method), joinForLog(base, String(config.url || "")));
-    } catch {}
-  }
-  return config;
-});
-
+// REQUEST: ensure exactly one "/api/" prefix for all relative paths
 apiClient.interceptors.request.use((config) => {
   const raw = String(config.url ?? "");
 
   if (!isAbsolute(raw)) {
-    // normalize to always target Next rewrite under /api
-    let p = raw.trim();
+    // drop leading slashes and normalize
+    let p = raw.trim().replace(/^\/+/, "");
 
-    // drop accidental double slashes
-    p = p.replace(/^\/+/, "");
+    // ensure it starts with "api/"
+    if (!/^api\//i.test(p)) p = `api/${p}`;
 
-    // if already starts with "api/", keep; else prefix "api/"
-    if (!/^api\//i.test(p)) {
-      p = `api/${p}`;
-    }
-
-    // final path must start with one leading slash
+    // final: single leading slash
     config.url = `/${p}`; // => "/api/..."
   }
 
@@ -131,11 +106,55 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// RESPONSE: log in dev, and only redirect on 401 for /api/auth/me
+apiClient.interceptors.response.use(
+  (res) => {
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        const base = String(res.config.baseURL || computedBaseURL || "");
+        console.debug(
+          "[apiClient] ←",
+          res.status,
+          (res.config.method || "GET").toUpperCase(),
+          base.replace(/\/+$/, "") + String(res.config.url || "")
+        );
+      } catch {}
+    }
+    return res;
+  },
+  (err) => {
+    const status = err?.response?.status;
+    const method = (err?.config?.method || "GET").toUpperCase();
+    const base = String(err?.config?.baseURL || computedBaseURL || "");
+    const url = String(err?.config?.url || "");
+    const path = /^https?:\/\//i.test(url)
+      ? url
+      : base.replace(/\/+$/, "") + (url.startsWith("/") ? url : `/${url}`);
 
+    if (process.env.NODE_ENV !== "production") {
+      try {
+        console.warn("[apiClient] ✕", status ?? "ERR", method, path);
+        if (!status) console.warn("[apiClient] network/error:", err.message);
+      } catch {}
+    }
 
-// ---------- types ----------
+    // Only bounce to /login if the auth check itself failed
+    if (typeof window !== "undefined" && status === 401 && /\/api\/auth\/me(\?|$)/.test(path)) {
+      try {
+        sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);
+      } catch {}
+      window.location.href = "/login";
+      return;
+    }
+
+    return Promise.reject(err);
+  }
+);
+
+/* ───────────────── types ───────────────── */
 export type ApiError = AxiosError<{ message?: string; code?: string }>;
 export function isApiError(e: unknown): e is ApiError {
   return !!(e && typeof e === "object" && (e as any).isAxiosError);
 }
+
 export default apiClient;

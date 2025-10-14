@@ -170,8 +170,11 @@ export default function LeadCalendar() {
 
       setItems(normalized);
     } catch (e) {
-      console.warn(`GET ${API_BASE} failed`, e);
-      setItems([]);
+if (process.env.NODE_ENV !== "production") {
+    console.warn(`GET ${API_BASE} failed`, e);
+  }
+  setItems([]);
+
     }
   }, []);
 
