@@ -1,7 +1,7 @@
 // web/next.config.js
 const path = require("path");
 
-// Single source of truth (server-only)
+// Server-only: do NOT expose this to the browser
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
 
 /** @type {import('next').NextConfig} */
@@ -18,27 +18,28 @@ const nextConfig = {
 
   async rewrites() {
     return [
-      // Map FE /api/health -> BE /healthz (you said /healthz returns ok)
+      // Health check
       { source: "/api/health", destination: `${BACKEND_URL}/healthz` },
 
-      // If your backend mounts auth under /api/auth, keep this form:
-      { source: "/api/auth/:path*",   destination: `${BACKEND_URL}/api/auth/:path*` },
+      // ✅ Backend has /auth (NOT /api/auth)
+      { source: "/api/auth/:path*", destination: `${BACKEND_URL}/auth/:path*` },
 
-      // Admin / Tenant (under /api)
-      { source: "/api/admin/:path*",  destination: `${BACKEND_URL}/api/admin/:path*` },
-      { source: "/api/tenant/:path*", destination: `${BACKEND_URL}/api/tenant/:path*` },
+      // ✅ Backend has /api/admin/*
+      { source: "/api/admin/:path*", destination: `${BACKEND_URL}/api/admin/:path*` },
 
-      // Catch-all: everything else under /api -> backend /api
-      { source: "/api/:path*",        destination: `${BACKEND_URL}/api/:path*` },
-      // { source: "/files/:path*",    destination: `${BACKEND_URL}/files/:path*` }, // enable if needed
+      // ✅ Backend has /api/tenants/* (plural)
+      { source: "/api/tenants/:path*", destination: `${BACKEND_URL}/api/tenants/:path*` },
+
+      // Optional: make tenant-signup explicit (also covered by catch-all below)
+      { source: "/api/tenant-signup", destination: `${BACKEND_URL}/api/tenant-signup` },
+
+      // Catch-all: everything else under /api → backend /api
+      { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
     ];
   },
 
-  // Standalone for Render builds
+  // Standalone is good for Render
   output: process.env.NODE_ENV === "production" ? "standalone" : undefined,
-
-  // 🚫 DO NOT expose backend URL to the browser
-  // env: {},
 
   webpack(config) {
     config.resolve.alias = {
@@ -48,7 +49,6 @@ const nextConfig = {
     return config;
   },
 
-  // Keep your build error ignores if you really need them
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
 };
