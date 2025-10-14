@@ -106,38 +106,33 @@ apiClient.interceptors.response.use(
     if (process.env.NODE_ENV !== "production") {
       try {
         const base = String(res.config.baseURL || computedBaseURL || "");
-        console.debug("[apiClient] ←", res.status, up(res.config.method), joinForLog(base, String(res.config.url || "")));
+        console.debug("[apiClient] ←", res.status, (res.config.method || "GET").toUpperCase(), (base.replace(/\/+$/,"") + String(res.config.url || "")));
       } catch {}
     }
     return res;
   },
-  (err: AxiosError<any>) => {
-    const status = err.response?.status;
-    const method = up(err.config?.method);
-    const base = String(err.config?.baseURL || computedBaseURL || "");
-    const url = isAbsolute(err.config?.url) ? String(err.config?.url) : apiPath(String(err.config?.url || ""));
-    const finalURL = joinForLog(base, url);
+  (err) => {
+    const status = err?.response?.status;
+    const method = (err?.config?.method || "GET").toUpperCase();
+    const base = String(err?.config?.baseURL || computedBaseURL || "");
+    const url  = String(err?.config?.url || "");
+    const path = /^https?:\/\//i.test(url) ? url : (base.replace(/\/+$/,"") + (url.startsWith("/") ? url : `/${url}`));
 
     if (process.env.NODE_ENV !== "production") {
-      try {
-        console.warn("[apiClient] ✕", status ?? "ERR", method, finalURL);
-        if (!status) {
-          console.warn("[apiClient] network/error:", err.message);
-        } else if (err.response?.data && typeof err.response.data === "object") {
-          console.warn("[apiClient] payload:", JSON.stringify(err.response.data));
-        }
-      } catch {}
+      try { console.warn("[apiClient] ✕", status ?? "ERR", method, path); } catch {}
     }
 
-    if (status === 401 && typeof window !== "undefined") {
-      try {
-        sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);
-      } catch {}
+    // ✅ Only kick to /login if the failing call is the auth check itself
+    if (typeof window !== "undefined" && status === 401 && /\/api\/auth\/me(\?|$)/.test(path)) {
+      try { sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search); } catch {}
       window.location.href = "/login";
+      return;
     }
+
     return Promise.reject(err);
   }
 );
+
 
 // ---------- types ----------
 export type ApiError = AxiosError<{ message?: string; code?: string }>;
