@@ -21,16 +21,18 @@ const nextConfig = {
       // Health check
       { source: "/api/health", destination: `${BACKEND_URL}/healthz` },
 
-      // ✅ Backend has /auth (NOT /api/auth)
+      // Auth (backend exposes /auth, not /api/auth)
       { source: "/api/auth/:path*", destination: `${BACKEND_URL}/auth/:path*` },
 
-      // ✅ Backend has /api/admin/*
+      // Admin + Tenants are under /api on the backend
       { source: "/api/admin/:path*", destination: `${BACKEND_URL}/api/admin/:path*` },
-
-      // ✅ Backend has /api/tenants/* (plural)
       { source: "/api/tenants/:path*", destination: `${BACKEND_URL}/api/tenants/:path*` },
 
-      // Optional: make tenant-signup explicit (also covered by catch-all below)
+      // Leads + Scheduler (explicit mappings so client /api/* always works)
+      { source: "/api/leads/:path*", destination: `${BACKEND_URL}/leads/:path*` },
+      { source: "/api/scheduler/:path*", destination: `${BACKEND_URL}/scheduler/:path*` },
+
+      // Optional: tenant signup
       { source: "/api/tenant-signup", destination: `${BACKEND_URL}/api/tenant-signup` },
 
       // Catch-all: everything else under /api → backend /api
