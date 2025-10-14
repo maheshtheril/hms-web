@@ -29,7 +29,8 @@ type Eventish = {
   classNames?: string[];
 };
 
-const API_BASE = "/scheduler/leads";
+const API_BASE = "scheduler/leads"; // let the interceptor add /api
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers

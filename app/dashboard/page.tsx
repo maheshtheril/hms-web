@@ -1,6 +1,6 @@
 // path: app/dashboard/page.tsx
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
 import FireworksOnce from "./FireworksOnce";
@@ -9,10 +9,7 @@ import LeadCalendar from "@/app/dashboard/components/LeadCalendar";
 
 export const dynamic = "force-dynamic";
 
-/* ───────────────── Constants & Types ───────────────── */
-const RAW_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN ?? "http://localhost:3000";
-const ORIGIN = RAW_ORIGIN.replace(/\/+$/, "");
-
+/* ───────────────── Types ───────────────── */
 type KpisPayload = {
   open_leads?: number;
   open_leads_count?: number;
@@ -26,13 +23,13 @@ type MeUser = {
   name?: string | null;
   email?: string | null;
   role?: string | null;
-  roles?: string[] | null; // flexible: some backends send array
-  role_codes?: string[] | null; // flexible: codes like ["Salesman"]
+  roles?: string[] | null;
+  role_codes?: string[] | null;
 };
 
 type MeResponse = {
   user?: MeUser | null;
-  roles?: string[]; // flexible: some backends put roles at root
+  roles?: string[];
 };
 
 /* ───────────────── Utils ───────────────── */
@@ -43,12 +40,19 @@ function detailedHref(src: string, ret = "/dashboard") {
   return `/crm/leads/new?mode=detailed&src=${encodeURIComponent(src)}&return=${encodeURIComponent(ret)}`;
 }
 
-async function fetchJSON<T>(url: string, cookie: string, { timeoutMs = 4000 } = {}): Promise<T | null> {
+async function getOrigin() {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  return `${proto}://${host}`;
+}
+
+async function fetchJSON<T>(url: string, cookieHeader: string, { timeoutMs = 4000 } = {}): Promise<T | null> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const r = await fetch(url, {
-      headers: { cookie },
+      headers: { cookie: cookieHeader },
       cache: "no-store",
       signal: ac.signal,
     });
@@ -61,45 +65,46 @@ async function fetchJSON<T>(url: string, cookie: string, { timeoutMs = 4000 } = 
   }
 }
 
-async function fetchMe(sid: string): Promise<MeResponse | null> {
-  return fetchJSON<MeResponse>(`${ORIGIN}/api/auth/me`, `ssr_sid=${sid}`, { timeoutMs: 3500 });
+async function fetchMe(origin: string, allCookies: string): Promise<MeResponse | null> {
+  return fetchJSON<MeResponse>(`${origin}/api/auth/me`, allCookies, { timeoutMs: 3500 });
 }
 
-function isSalesRole(me: MeResponse | null): boolean {
-  if (!me) return false;
-  const pool: string[] = [
-    ...(me.roles ?? []),
-    ...((me.user?.roles as string[] | null) ?? []),
-    ...((me.user?.role_codes as string[] | null) ?? []),
-  ];
-  if (pool.length > 0) return pool.some((r) => /sales|salesman|salesperson|bd[e]?/i.test(String(r)));
-  if (me.user?.role) return /sales|salesman|salesperson|bd[e]?/i.test(me.user.role);
-  return false;
-}
-
-async function fetchKPIs(sid: string, opts?: { mine?: boolean }): Promise<KpisPayload | null> {
-  const url = new URL(`${ORIGIN}/api/kpis`);
+async function fetchKPIs(origin: string, allCookies: string, opts?: { mine?: boolean }): Promise<KpisPayload | null> {
+  const url = new URL(`${origin}/api/kpis`);
   if (opts?.mine) url.searchParams.set("mine", "1");
-  else url.searchParams.set("scope", "all");        // ← show all for non-sales / admins
-  url.searchParams.set("table", "leads");           // ← force the plural table
-  return fetchJSON<KpisPayload>(url.toString(), `ssr_sid=${sid}`, { timeoutMs: 3500 });
+  else url.searchParams.set("scope", "all");
+  url.searchParams.set("table", "leads");
+  return fetchJSON<KpisPayload>(url.toString(), allCookies, { timeoutMs: 3500 });
 }
 
 /* ───────────────── Page ───────────────── */
 export default async function DashboardPage() {
   const cookieStore = await cookies();
-  const sid = cookieStore.get("ssr_sid")?.value ?? cookieStore.get("sid")?.value;
-  if (!sid) redirect("/login");
+  const allCookies = cookieStore.toString();
 
-  const meRes = await fetchMe(sid);
+  // Must have a session cookie
+  if (!/\b(sid|ssr_sid)=/.test(allCookies)) redirect("/login");
+
+  const ORIGIN = await getOrigin();
+
+  // Auth
+  const meRes = await fetchMe(ORIGIN, allCookies);
   const user = meRes?.user;
   if (!user) redirect("/login");
 
-  const mine = isSalesRole(meRes); // ⇦ Sales roles see user-wise KPIs
-  const kpiRes = await fetchKPIs(sid, { mine });
+  // Role-scoped KPIs
+  const pool: string[] = [
+    ...(meRes?.roles ?? []),
+    ...((meRes?.user?.roles as string[] | null) ?? []),
+    ...((meRes?.user?.role_codes as string[] | null) ?? []),
+  ];
+  const mine = pool.length > 0
+    ? pool.some((r) => /sales|salesman|salesperson|bd[e]?/i.test(String(r)))
+    : !!meRes?.user?.role && /sales|salesman|salesperson|bd[e]?/i.test(meRes.user.role);
+
+  const kpiRes = await fetchKPIs(ORIGIN, allCookies, { mine });
 
   const displayName = user.name?.trim() || user.email || "user";
-
   const openLeads = String(kpiRes?.open_leads ?? kpiRes?.open_leads_count ?? 0);
   const todaysFollowups = String(kpiRes?.todays_followups ?? kpiRes?.followups_today ?? 0);
   const openLeadsTrend = String(kpiRes?.open_leads_trend ?? "+0%");

@@ -101,37 +101,36 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
-apiClient.interceptors.response.use(
-  (res) => {
-    if (process.env.NODE_ENV !== "production") {
-      try {
-        const base = String(res.config.baseURL || computedBaseURL || "");
-        console.debug("[apiClient] ←", res.status, (res.config.method || "GET").toUpperCase(), (base.replace(/\/+$/,"") + String(res.config.url || "")));
-      } catch {}
-    }
-    return res;
-  },
-  (err) => {
-    const status = err?.response?.status;
-    const method = (err?.config?.method || "GET").toUpperCase();
-    const base = String(err?.config?.baseURL || computedBaseURL || "");
-    const url  = String(err?.config?.url || "");
-    const path = /^https?:\/\//i.test(url) ? url : (base.replace(/\/+$/,"") + (url.startsWith("/") ? url : `/${url}`));
+apiClient.interceptors.request.use((config) => {
+  const raw = String(config.url ?? "");
 
-    if (process.env.NODE_ENV !== "production") {
-      try { console.warn("[apiClient] ✕", status ?? "ERR", method, path); } catch {}
+  if (!isAbsolute(raw)) {
+    // normalize to always target Next rewrite under /api
+    let p = raw.trim();
+
+    // drop accidental double slashes
+    p = p.replace(/^\/+/, "");
+
+    // if already starts with "api/", keep; else prefix "api/"
+    if (!/^api\//i.test(p)) {
+      p = `api/${p}`;
     }
 
-    // ✅ Only kick to /login if the failing call is the auth check itself
-    if (typeof window !== "undefined" && status === 401 && /\/api\/auth\/me(\?|$)/.test(path)) {
-      try { sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search); } catch {}
-      window.location.href = "/login";
-      return;
-    }
-
-    return Promise.reject(err);
+    // final path must start with one leading slash
+    config.url = `/${p}`; // => "/api/..."
   }
-);
+
+  ensureJsonHeader(config);
+
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      const base = String(config.baseURL || computedBaseURL || "");
+      console.debug("[apiClient] →", up(config.method), joinForLog(base, String(config.url || "")));
+    } catch {}
+  }
+  return config;
+});
+
 
 
 // ---------- types ----------
