@@ -20,6 +20,21 @@ export default function LoginPage() {
     } catch {}
   }, []);
 
+  // auto-skip if already logged in
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!alive) return;
+        if (r.ok) window.location.replace("/dashboard");
+      } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const emailId = useId();
   const pwId = useId();
 
@@ -57,7 +72,10 @@ export default function LoginPage() {
         sessionStorage.setItem("celebrateLoginOnce", "1");
       } catch {}
 
-      router.replace("/dashboard");
+      // hard reload so cookies are committed before SSR redirect logic
+      if (typeof window !== "undefined") {
+        window.location.assign("/dashboard");
+      }
     } catch (ex) {
       setError("Unexpected error. Please try again.");
       setLoading(false);
@@ -145,7 +163,6 @@ export default function LoginPage() {
                   tabIndex={0}
                 >
                   {showPw ? (
-                    // eye-off
                     <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
                       <path
                         fill="currentColor"
@@ -153,7 +170,6 @@ export default function LoginPage() {
                       />
                     </svg>
                   ) : (
-                    // eye
                     <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
                       <path
                         fill="currentColor"
