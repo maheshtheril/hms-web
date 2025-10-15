@@ -25,18 +25,21 @@ const nextConfig = {
       { source: "/api/auth/:path*", destination: `${BACKEND_URL}/auth/:path*` },
 
       // Admin + Tenants are under /api on the backend
-      { source: "/api/admin/:path*", destination: `${BACKEND_URL}/api/admin/:path*` },
-      { source: "/api/tenants/:path*", destination: `${BACKEND_URL}/api/tenants/:path*` },
+      { source: "/api/admin/:path*",     destination: `${BACKEND_URL}/api/admin/:path*` },
+      { source: "/api/tenants/:path*",   destination: `${BACKEND_URL}/api/tenants/:path*` },
 
-      // Leads + Scheduler (explicit mappings so client /api/* always works)
-      { source: "/api/leads/:path*", destination: `${BACKEND_URL}/leads/:path*` },
-      { source: "/api/scheduler/:path*", destination: `${BACKEND_URL}/scheduler/:path*` },
+      // Leads + Scheduler live under /api on the backend (fix was here)
+      { source: "/api/leads/:path*",     destination: `${BACKEND_URL}/api/leads/:path*` },
+      { source: "/api/scheduler/:path*", destination: `${BACKEND_URL}/api/scheduler/:path*` },
+
+      // Uploads
+      { source: "/api/uploads/:path*",   destination: `${BACKEND_URL}/api/uploads/:path*` },
 
       // Optional: tenant signup
-      { source: "/api/tenant-signup", destination: `${BACKEND_URL}/api/tenant-signup` },
+      { source: "/api/tenant-signup",    destination: `${BACKEND_URL}/api/tenant-signup` },
 
       // Catch-all: everything else under /api → backend /api
-      { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
+      { source: "/api/:path*",           destination: `${BACKEND_URL}/api/:path*` },
     ];
   },
 
