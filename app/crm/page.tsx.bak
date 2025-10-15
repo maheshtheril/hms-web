@@ -110,10 +110,10 @@ export default async function LeadsPage({
     cookieStore.get("ssr_sid")?.value ??
     null;
 
-  if (!sid) // redirect("/login");
+  if (!sid) { /* redirect disabled */ };
 
   const user = await fetchMe(sid);
-  if (!user) // redirect("/login");
+  if (!user) { /* redirect disabled */ };
 
   // SSR prefetch to avoid blank first paint
   const qs = buildQS(searchParams);

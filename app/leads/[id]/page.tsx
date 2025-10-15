@@ -18,16 +18,16 @@ async function getLead(id: string, sid: string) {
 export default async function LeadDetailPage({ params }: { params: { id: string } }) {
   const cookieStore = await cookies();
   const sid = cookieStore.get("ssr_sid")?.value;
-  if (!sid) // redirect("/login");
+  if (!sid) { /* redirect disabled */ };
 
   // auth check (optional if /api/leads/:id already enforces auth)
   const meRes = await fetch(`${ORIGIN}/api/auth/me`, {
     headers: { cookie: `ssr_sid=${sid}` },
     cache: "no-store",
   });
-  if (!meRes.ok) // redirect("/login");
+  if (!meRes.ok) { /* redirect disabled */ };
   const { user } = await meRes.json();
-  if (!user) // redirect("/login");
+  if (!user) { /* redirect disabled */ };
 
   const lead = await getLead(params.id, sid);
   if (!lead) {

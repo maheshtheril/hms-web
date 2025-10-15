@@ -120,10 +120,10 @@ export default async function LeadsPage({
 }) {
   const cookieStore = await cookies();
   const sid = cookieStore.get("ssr_sid")?.value;
-  if (!sid) // redirect("/login");
+  if (!sid) { /* redirect disabled */ };
 
   const user = await fetchMe(sid);
-  if (!user?.id) // redirect("/login");
+  if (!user?.id) { /* redirect disabled */ };
 
   // ── scope querystring for non-admins ─────────────────────────────
   const admin = isAdminUser(user);
