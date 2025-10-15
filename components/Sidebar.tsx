@@ -201,21 +201,29 @@ function useSessionMe() {
   
   if (roles.has("owner")) roles.add("tenant_admin"); // ✅ owner can see Admin menus
 
-  // include boolean flags as pseudo-roles
-  if (me?.user?.is_admin) roles.add("admin");
-  if (me?.user?.is_platform_admin) roles.add("platform_admin");
-  if (me?.user?.is_tenant_admin) roles.add("tenant_admin");
+  const ownerLike =
+  roles.has("owner") ||
+  roles.has("tenant_owner") ||
+  roles.has("tenant_super_admin") ||
+  roles.has("super_admin");
 
-  const isPlatformAdmin =
-    !!me?.user?.is_platform_admin || roles.has("platform_admin") || roles.has("global_super_admin");
+if (roles.has("owner")) roles.add("tenant_admin"); // owner should see Admin
 
-  const isTenantAdmin =
-    !!me?.user?.is_tenant_admin ||
-    roles.has("tenant_admin") ||
-    roles.has("tenant_super_admin") ||
-    roles.has("super_admin"); // tenant-scoped super
+// normalize snake_case / camelCase flags from backend
+const u = me?.user || {};
+const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? false;
+const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? false;
+const isPlatformAdminFlag = (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? false;
 
-  const isAdmin = !!me?.user?.is_admin || roles.has("admin"); // plain org admin (does NOT unlock Tenants)
+// unified booleans used by sidebar filter
+const isPlatformAdmin =
+  !!isPlatformAdminFlag || roles.has("platform_admin") || roles.has("global_super_admin");
+
+const isTenantAdmin =
+  !!isTenantAdminFlag || roles.has("tenant_admin") || ownerLike;
+
+const isAdmin =
+  !!isAdminFlag || roles.has("admin") || roles.has("company_admin");
 
   return { me, isAdmin, isPlatformAdmin, isTenantAdmin, loading };
 }
