@@ -1,26 +1,34 @@
-// app/api/__debug/route.ts
 import { NextResponse } from "next/server";
-
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+function backend() {
+  const fb = "https://threegbackend.onrender.com";
+  return (process.env.BACKEND_URL || fb).trim().replace(/\/+$/, "");
+}
 
 export async function GET() {
-  const BACKEND_URL = (process.env.BACKEND_URL || "").replace(/\/+$/, "");
-  const target = BACKEND_URL ? `${BACKEND_URL}/healthz` : "(unset)";
-  let ok = false, status = 0, body = "";
+  const BACKEND_URL = backend();
+  const out: any = { BACKEND_URL };
 
   try {
-    if (BACKEND_URL) {
-      const r = await fetch(`${BACKEND_URL}/healthz`, { cache: "no-store" });
-      status = r.status;
-      body = await r.text().catch(() => "");
-      ok = r.ok;
-    }
+    const r = await fetch(`${BACKEND_URL}/healthz`, { cache: "no-store" });
+    out.health = { ok: r.ok, status: r.status, body: await r.text().catch(() => "") };
   } catch (e: any) {
-    body = String(e?.message || e);
+    out.health = { ok: false, error: String(e?.message || e) };
   }
 
-  return NextResponse.json({
-    BACKEND_URL,
-    probe: { url: target, ok, status, body }
-  });
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/leads`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lead_name: "probe" }),
+      cache: "no-store",
+    });
+    out.postLeads = { ok: r.ok, status: r.status, body: (await r.text().catch(() => "")).slice(0, 200) };
+  } catch (e: any) {
+    out.postLeads = { ok: false, error: String(e?.message || e) };
+  }
+
+  return NextResponse.json(out);
 }

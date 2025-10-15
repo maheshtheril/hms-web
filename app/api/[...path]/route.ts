@@ -1,52 +1,111 @@
-// web/app/api/[...path]/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
-const BACKEND_URL = (process.env.BACKEND_URL || "http://localhost:4000").replace(/\/+$/, "");
-
-function join(base: string, p: string) {
-  return `${base}/${p.replace(/^\/+/, "")}`;
-}
+// app/api/[...path]/route.ts
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs"; // ensure Node, not Edge
 
-async function proxy(req: NextRequest, ctx: { params: { path?: string[] } }) {
-  // Map /api/* -> BACKEND /api/*
-  const pathParts = ctx.params.path ?? [];
-  const target = join(BACKEND_URL, `api/${pathParts.join("/")}`);
+function backendBase() {
+  const fallback = "https://threegbackend.onrender.com";
+  const base = String(process.env.BACKEND_URL || fallback).trim().replace(/\/+$/, "");
+  return base; // e.g., https://threegbackend.onrender.com
+}
 
-  // Copy headers but drop Next/Vercel internals and content-length
-  const headers = new Headers();
-  req.headers.forEach((v, k) => {
-    if (/^x-nextjs-|^x-vercel-|^content-length$/i.test(k)) return;
-    headers.set(k, v);
+function buildTarget(req: Request) {
+  const url = new URL(req.url);                 // https://web/api/leads?x=1
+  const path = url.pathname.replace(/^\/api/, ""); // -> /leads
+  return `${backendBase()}/api${path}${url.search}`; // -> https://backend/api/leads?x=1
+}
+
+function copyRequestHeaders(req: Request) {
+  const src = req.headers;
+  const dst = new Headers();
+
+  // pass through common safe headers
+  const allow = new Set([
+    "content-type",
+    "authorization",
+    "accept",
+    "accept-encoding",
+    "accept-language",
+    "user-agent",
+    "x-requested-with",
+    "cookie", // important: forward cookies for auth
+  ]);
+
+  src.forEach((v, k) => {
+    const key = k.toLowerCase();
+    if (allow.has(key)) dst.set(key, v);
   });
-  headers.set("X-Forwarded-Host", req.headers.get("host") || "");
-  headers.set("X-Forwarded-Proto", "https");
-  headers.set("X-Requested-With", "XMLHttpRequest");
 
+  // Host must be backend’s host (some providers are picky)
+  try {
+    dst.set("host", new URL(backendBase()).host);
+  } catch {}
+
+  return dst;
+}
+
+function filterResponseHeaders(h: Headers) {
+  const out = new Headers();
+
+  // Copy only safe response headers (avoid hop-by-hop headers causing 502s)
+  const allow = new Set([
+    "content-type",
+    "cache-control",
+    "etag",
+    "date",
+    "last-modified",
+    "set-cookie",     // critical for auth flows
+    "vary",
+    "x-powered-by",   // harmless
+  ]);
+
+  h.forEach((v, k) => {
+    const key = k.toLowerCase();
+    if (allow.has(key) || key.startsWith("x-")) out.append(key, v);
+  });
+
+  return out;
+}
+
+async function forward(req: Request) {
+  const target = buildTarget(req);
+
+  // Build init
   const init: RequestInit = {
     method: req.method,
-    headers,
-    redirect: "manual",
+    headers: copyRequestHeaders(req),
     cache: "no-store",
-    body: req.method === "GET" || req.method === "HEAD" ? undefined : (req.body as any),
+    redirect: "manual",
+    // Node runtime will send content-length for ArrayBuffer automatically
   };
 
+  // Attach body for non-GET/HEAD
+  const m = req.method.toUpperCase();
+  if (m !== "GET" && m !== "HEAD") {
+    // Read the raw body once and pass through
+    const buf = await req.arrayBuffer();
+    init.body = buf;
+  }
+
   try {
-    const r = await fetch(target, init);
-    const out = new NextResponse(r.body, {
-      status: r.status,
-      statusText: r.statusText,
-      headers: r.headers,
-    });
-    out.headers.set("Vary", ["Origin", "Accept-Encoding", "Cookie"].join(", "));
-    return out;
+    const resp = await fetch(target, init);
+    const headers = filterResponseHeaders(resp.headers);
+
+    // Stream body back with sanitized headers
+    return new Response(resp.body, { status: resp.status, headers });
   } catch (e: any) {
+    // Don’t hide the target in prod logs—but return it in body for quick diagnosis
     return NextResponse.json(
-      { error: "proxy_failed", message: e?.message || "fetch failed" },
+      { error: "proxy_failed", message: String(e?.message || e), target },
       { status: 502 }
     );
   }
 }
 
-export { proxy as GET, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE, proxy as OPTIONS };
+export const GET = forward;
+export const POST = forward;
+export const PUT = forward;
+export const PATCH = forward;
+export const DELETE = forward;
+export const OPTIONS = forward;
