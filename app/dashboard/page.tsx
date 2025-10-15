@@ -1,13 +1,11 @@
 // path: app/dashboard/page.tsx
-import { redirect } from "next/navigation";
-import { cookies, headers } from "next/headers";
+"use client";
+
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Suspense } from "react";
 import FireworksOnce from "./FireworksOnce";
 import TopNav from "@/app/components/TopNav";
 import LeadCalendar from "@/app/dashboard/components/LeadCalendar";
-
-export const dynamic = "force-dynamic";
 
 /* ───────────────── Types ───────────────── */
 type KpisPayload = {
@@ -40,74 +38,107 @@ function detailedHref(src: string, ret = "/dashboard") {
   return `/crm/leads/new?mode=detailed&src=${encodeURIComponent(src)}&return=${encodeURIComponent(ret)}`;
 }
 
-async function getOrigin() {
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
-  return `${proto}://${host}`;
+/* ───────────────── Client data hooks ───────────────── */
+function useMe() {
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!alive) return;
+        if (!r.ok) {
+          setMe(null);
+        } else {
+          const data = (await r.json()) as MeResponse;
+          setMe(data ?? null);
+        }
+      } catch {
+        if (alive) setMe(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return { me, loading };
 }
 
-async function fetchJSON<T>(url: string, cookieHeader: string, { timeoutMs = 4000 } = {}): Promise<T | null> {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      headers: { cookie: cookieHeader },
-      cache: "no-store",
-      signal: ac.signal,
-    });
-    if (!r.ok) return null;
-    return (await r.json()) as T;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(t);
-  }
+function useKpis(me: MeResponse | null) {
+  const [kpis, setKpis] = useState<KpisPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const mine = useMemo(() => {
+    const pool: string[] = [
+      ...(me?.roles ?? []),
+      ...((me?.user?.roles as string[] | null) ?? []),
+      ...((me?.user?.role_codes as string[] | null) ?? []),
+    ];
+    const has = (arr: string[]) => arr.some((r) => /sales|salesman|salesperson|bd[e]?/i.test(String(r)));
+    return pool.length > 0 ? has(pool) : !!me?.user?.role && /sales|salesman|salesperson|bd[e]?/i.test(me.user.role);
+  }, [me]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const url = new URL("/api/kpis", window.location.origin);
+        if (mine) url.searchParams.set("mine", "1");
+        else url.searchParams.set("scope", "all");
+        url.searchParams.set("table", "leads");
+
+        const r = await fetch(url.toString(), { credentials: "include", cache: "no-store" });
+        if (!alive) return;
+        if (!r.ok) {
+          setKpis(null);
+        } else {
+          const data = (await r.json()) as KpisPayload;
+          setKpis(data ?? null);
+        }
+      } catch {
+        if (alive) setKpis(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [mine]);
+
+  return { kpis, loading, mine };
 }
 
-async function fetchMe(origin: string, allCookies: string): Promise<MeResponse | null> {
-  return fetchJSON<MeResponse>(`${origin}/api/auth/me`, allCookies, { timeoutMs: 3500 });
-}
+/* ───────────────── Page (Client) ───────────────── */
+export default function DashboardPage() {
+  const { me, loading: meLoading } = useMe();
 
-async function fetchKPIs(origin: string, allCookies: string, opts?: { mine?: boolean }): Promise<KpisPayload | null> {
-  const url = new URL(`${origin}/api/kpis`);
-  if (opts?.mine) url.searchParams.set("mine", "1");
-  else url.searchParams.set("scope", "all");
-  url.searchParams.set("table", "leads");
-  return fetchJSON<KpisPayload>(url.toString(), allCookies, { timeoutMs: 3500 });
-}
+  // Client-side redirect if unauthenticated
+  useEffect(() => {
+    if (!meLoading && (!me || !me.user)) {
+      window.location.replace("/login");
+    }
+  }, [meLoading, me]);
 
-/* ───────────────── Page ───────────────── */
-export default async function DashboardPage() {
-  const cookieStore = await cookies();
-  const allCookies = cookieStore.toString();
+  const { kpis, loading: kpiLoading, mine } = useKpis(me);
 
-  // Must have a session cookie
-  if (!/\b(sid|ssr_sid)=/.test(allCookies)) redirect("/login");
+  const displayName =
+    me?.user?.name?.trim() || me?.user?.email || "user";
+  const openLeads = String(
+    (kpis?.open_leads ?? kpis?.open_leads_count ?? 0) || 0
+  );
+  const todaysFollowups = String(
+    (kpis?.todays_followups ?? kpis?.followups_today ?? 0) || 0
+  );
+  const openLeadsTrend = String(kpis?.open_leads_trend ?? "+0%");
 
-  const ORIGIN = await getOrigin();
-
-  // Auth
-  const meRes = await fetchMe(ORIGIN, allCookies);
-  const user = meRes?.user;
-  if (!user) redirect("/login");
-
-  // Role-scoped KPIs
-  const pool: string[] = [
-    ...(meRes?.roles ?? []),
-    ...((meRes?.user?.roles as string[] | null) ?? []),
-    ...((meRes?.user?.role_codes as string[] | null) ?? []),
-  ];
-  const mine = pool.length > 0
-    ? pool.some((r) => /sales|salesman|salesperson|bd[e]?/i.test(String(r)))
-    : !!meRes?.user?.role && /sales|salesman|salesperson|bd[e]?/i.test(meRes.user.role);
-
-  const kpiRes = await fetchKPIs(ORIGIN, allCookies, { mine });
-
-  const displayName = user.name?.trim() || user.email || "user";
-  const openLeads = String(kpiRes?.open_leads ?? kpiRes?.open_leads_count ?? 0);
-  const todaysFollowups = String(kpiRes?.todays_followups ?? kpiRes?.followups_today ?? 0);
-  const openLeadsTrend = String(kpiRes?.open_leads_trend ?? "+0%");
+  const showSkeleton = meLoading || !me?.user;
 
   return (
     <div className="min-h-dvh bg-gradient-to-b from-zinc-950 via-zinc-900 to-black text-zinc-100">
@@ -115,61 +146,91 @@ export default async function DashboardPage() {
       <TopNav />
 
       <main className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 lg:px-6 py-6 sm:py-8">
-        {/* Welcome + KPIs */}
-        <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6 mb-6">
-          <div className="xl:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
-              Welcome, <span className="text-white/90">{displayName}</span> 👋
-            </h1>
-            <p className="mt-1 text-sm opacity-80">
-              Secure SSR session is active. Your data is scoped to your tenant & company context.
-              {mine ? " (KPIs filtered to your assignments)" : ""}
-            </p>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <PrimaryLink href={quickHref("welcome_quick")} label="+ Quick Lead" />
-              <GhostLink href={detailedHref("welcome_detailed")} label="+ Detailed Lead" />
-              <GhostLink href="/crm/leads" label="Open Leads" />
-              <GhostLink href={quickHref("welcome_schedule_call")} label="Schedule Call" />
+        {/* Loading skeleton while we check auth */}
+        {showSkeleton ? (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6 animate-pulse">
+              <div className="h-6 w-56 rounded bg-white/10" />
+              <div className="mt-3 h-4 w-80 rounded bg-white/10" />
+              <div className="mt-4 flex gap-2">
+                <div className="h-8 w-28 rounded bg-white/10" />
+                <div className="h-8 w-32 rounded bg-white/10" />
+                <div className="h-8 w-24 rounded bg-white/10" />
+              </div>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-1 gap-4 sm:gap-6">
-            <KpiCard label="Open Leads" value={openLeads} trend={openLeadsTrend} />
-            <KpiCard label="Today’s Follow-ups" value={todaysFollowups} trend="On track" />
-          </div>
-        </section>
-
-        {/* Lead Follow-ups Calendar */}
-        <section className="mt-6">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
-              <span className="text-xs text-white/50">Drag to reschedule • Click to edit</span>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="h-24 rounded-2xl border border-white/10 bg-white/5 animate-pulse" />
+              <div className="h-24 rounded-2xl border border-white/10 bg-white/5 animate-pulse" />
             </div>
-            <Suspense
-              fallback={
-                <div className="mt-2 animate-pulse space-y-3">
-                  <div className="h-6 w-40 rounded bg-white/10" />
-                  <div className="h-64 rounded-xl border border-white/10 bg-white/5" />
+            <div className="h-80 rounded-2xl border border-white/10 bg-white/5 animate-pulse" />
+          </div>
+        ) : (
+          <>
+            {/* Welcome + KPIs */}
+            <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6 mb-6">
+              <div className="xl:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
+                  Welcome, <span className="text-white/90">{displayName}</span> 👋
+                </h1>
+                <p className="mt-1 text-sm opacity-80">
+                  Secure session is active. Your data is scoped to your tenant & company context.
+                  {mine ? " (KPIs filtered to your assignments)" : ""}
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <PrimaryLink href={quickHref("welcome_quick")} label="+ Quick Lead" />
+                  <GhostLink href={detailedHref("welcome_detailed")} label="+ Detailed Lead" />
+                  <GhostLink href="/crm/leads" label="Open Leads" />
+                  <GhostLink href={quickHref("welcome_schedule_call")} label="Schedule Call" />
                 </div>
-              }
-            >
-              <LeadCalendar />
-            </Suspense>
-          </div>
-        </section>
+              </div>
 
-        {/* Floating FAB for quick add (hidden on xs) */}
-        <Link
-          href={quickHref("fab")}
-          className="fixed right-4 bottom-20 sm:bottom-6 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white text-black shadow-lg shadow-white/10 active:scale-95 xs:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
-          aria-label="Quick add lead"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-            <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
-          </svg>
-        </Link>
+              <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-1 gap-4 sm:gap-6">
+                <KpiCard
+                  label="Open Leads"
+                  value={kpiLoading ? "…" : openLeads}
+                  trend={kpiLoading ? "…" : openLeadsTrend}
+                />
+                <KpiCard
+                  label="Today’s Follow-ups"
+                  value={kpiLoading ? "…" : todaysFollowups}
+                  trend={kpiLoading ? "…" : "On track"}
+                />
+              </div>
+            </section>
+
+            {/* Lead Follow-ups Calendar */}
+            <section className="mt-6">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
+                  <span className="text-xs text-white/50">Drag to reschedule • Click to edit</span>
+                </div>
+                <Suspense
+                  fallback={
+                    <div className="mt-2 animate-pulse space-y-3">
+                      <div className="h-6 w-40 rounded bg-white/10" />
+                      <div className="h-64 rounded-xl border border-white/10 bg-white/5" />
+                    </div>
+                  }
+                >
+                  <LeadCalendar />
+                </Suspense>
+              </div>
+            </section>
+
+            {/* Floating FAB for quick add (hidden on xs) */}
+            <Link
+              href={quickHref("fab")}
+              className="fixed right-4 bottom-20 sm:bottom-6 inline-flex items-center justify-center h-12 w-12 rounded-full bg-white text-black shadow-lg shadow-white/10 active:scale-95 xs:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+              aria-label="Quick add lead"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+                <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
+              </svg>
+            </Link>
+          </>
+        )}
       </main>
 
       <footer className="mt-10 py-6 text-center text-xs opacity-60">
