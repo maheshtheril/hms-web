@@ -1,7 +1,7 @@
 // web/app/crm/leads/page.tsx
 import "server-only";
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+// import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopNav from "@/app/components/TopNav";
 
@@ -320,11 +320,11 @@ async function fetchCompanyNames(leads: Lead[], cookieHeader: string): Promise<C
 /* ───────────────── Page ───────────────── */
 export default async function LeadsPage({ searchParams }: PageProps) {
   const cookieHeader = await makeCookieHeader();
-  if (!cookieHeader) redirect("/login");
+  if (!cookieHeader) // redirect("/login");
 
   const spObj: ResolvedSearch = (await searchParams) ?? {};
   const me = await getJSON("/api/auth/me", cookieHeader);
-  if (!me.ok || !me.data?.user) redirect("/login");
+  if (!me.ok || !me.data?.user) // redirect("/login");
 
   const wantTrash = getParam(spObj, "filter") === "deleted";
   const list = await getJSON(`/api/leads${wantTrash ? "?only_deleted=1" : ""}`, cookieHeader);

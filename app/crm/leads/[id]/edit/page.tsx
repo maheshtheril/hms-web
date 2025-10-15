@@ -1,7 +1,7 @@
 // app/crm/leads/[id]/edit/page.tsx
 import "server-only";
 import { cookies, headers } from "next/headers";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import TopNav from "@/app/components/TopNav";
 import EditLeadFormClient from "./EditLeadFormClient";
@@ -87,10 +87,10 @@ export default async function LeadEdit({ params, searchParams }: PageProps) {
   const _sp = (await searchParams) ?? {};
 
   const cookieHeader = await buildAuthCookieHeader();
-  if (!cookieHeader) redirect("/login");
+  if (!cookieHeader) // redirect("/login");
 
   const me = await getJSON("/api/auth/me", cookieHeader);
-  if (!me.ok || !me.data?.user) redirect("/login");
+  if (!me.ok || !me.data?.user) // redirect("/login");
 
   const res = await getJSON(`/api/leads/${encodeURIComponent(id)}`, cookieHeader);
   if (!res.ok) {

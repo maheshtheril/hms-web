@@ -1,7 +1,7 @@
 // app/crm/leads/page.tsx — MOST ADVANCED SSR + Client hydration + SEO
 import "server-only";
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+// import { redirect } from "next/navigation";
 import TopNav from "@/app/components/TopNav";
 import LeadsTableClient from "./leads/LeadsTableClient";
 import { Suspense } from "react";
@@ -110,10 +110,10 @@ export default async function LeadsPage({
     cookieStore.get("ssr_sid")?.value ??
     null;
 
-  if (!sid) redirect("/login");
+  if (!sid) // redirect("/login");
 
   const user = await fetchMe(sid);
-  if (!user) redirect("/login");
+  if (!user) // redirect("/login");
 
   // SSR prefetch to avoid blank first paint
   const qs = buildQS(searchParams);

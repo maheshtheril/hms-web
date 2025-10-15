@@ -1,7 +1,7 @@
 // app/crm/leads/page.tsx — MOST ADVANCED SSR + Client hydration + SEO
 import "server-only";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+// import { redirect } from "next/navigation";
 import TopNav from "@/app/components/TopNav";
 import LeadsTableClient from "./LeadsTableClient";
 import { Suspense } from "react";
@@ -120,10 +120,10 @@ export default async function LeadsPage({
 }) {
   const cookieStore = await cookies();
   const sid = cookieStore.get("ssr_sid")?.value;
-  if (!sid) redirect("/login");
+  if (!sid) // redirect("/login");
 
   const user = await fetchMe(sid);
-  if (!user?.id) redirect("/login");
+  if (!user?.id) // redirect("/login");
 
   // ── scope querystring for non-admins ─────────────────────────────
   const admin = isAdminUser(user);

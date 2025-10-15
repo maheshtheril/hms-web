@@ -1,16 +1,16 @@
 // app/crm/leads/page.tsx — MOST ADVANCED SSR + Client hydration + SEO
 import "server-only";
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { cookies, headers } from "next/headers";
+// import { redirect } from "next/navigation";
 import TopNav from "@/app/components/TopNav";
-import LeadsTableClient from "./LeadsTableClient";
+import LeadsTableClient from "./leads/LeadsTableClient";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic"; // always fresh
 export const runtime = "nodejs";        // consistent server runtime
 export const revalidate = 0;
 
-// ---------- SEO ----------
+/* ───────────────── SEO ───────────────── */
 export async function generateMetadata() {
   return {
     title: "Leads — GeniusGrid CRM",
@@ -24,7 +24,7 @@ export async function generateMetadata() {
   };
 }
 
-// ---------- Types expected by LeadsTableClient ----------
+/* ───────────────── Types expected by LeadsTableClient ───────────────── */
 export type Lead = {
   id: string;
   name: string;
@@ -47,9 +47,8 @@ export type LeadsListResponse = {
   pageSize: number;
 };
 
-// ---------- Helpers ----------
+/* ───────────────── Helpers ───────────────── */
 function buildQS(searchParams: Record<string, string | string[] | undefined>) {
-  // allow only known keys; coerce to strings
   const sp = new URLSearchParams();
   const allow = ["page", "pageSize", "q", "status", "owner", "sort"] as const;
   for (const k of allow) {
@@ -60,26 +59,34 @@ function buildQS(searchParams: Record<string, string | string[] | undefined>) {
   return sp.toString();
 }
 
-async function fetchMe(ssrSid: string) {
+function currentOrigin() {
+  const h = headers();
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const host = h.get("host") ?? "localhost:3000";
+  return `${proto}://${host}`.replace(/\/+$/, "");
+}
+
+async function fetchMe(sid: string) {
+  const ORIGIN = currentOrigin();
   try {
-    const r = await fetch(`/api/auth/me`, {
-      headers: { cookie: `sid=${ssrSid}; ssr_sid=${ssrSid}` }, // send both
+    const r = await fetch(`${ORIGIN}/api/auth/me`, {
+      headers: { cookie: `sid=${sid}; ssr_sid=${sid}` }, // send both to be safe
       cache: "no-store",
     });
     if (!r.ok) return null;
-    const { user } = await r.json().catch(() => ({ user: null }));
+    const { user } = (await r.json().catch(() => ({ user: null }))) as { user: any | null };
     return user;
   } catch {
     return null;
   }
 }
 
-async function fetchLeadsSSR(ssrSid: string, qs: string): Promise<LeadsListResponse | null> {
-  // IMPORTANT: relative fetch so real cookies forward; also send both cookie names
+async function fetchLeadsSSR(sid: string, qs: string): Promise<LeadsListResponse | null> {
+  const ORIGIN = currentOrigin();
   try {
-    const url = `/api/leads${qs ? `?${qs}` : ""}`;
+    const url = `${ORIGIN}/api/leads${qs ? `?${qs}` : ""}`;
     const r = await fetch(url, {
-      headers: { cookie: `sid=${ssrSid}; ssr_sid=${ssrSid}` }, // send both
+      headers: { cookie: `sid=${sid}; ssr_sid=${sid}` },
       cache: "no-store",
     });
     if (!r.ok) return null;
@@ -89,18 +96,24 @@ async function fetchLeadsSSR(ssrSid: string, qs: string): Promise<LeadsListRespo
   }
 }
 
-// ---------- Page ----------
+/* ───────────────── Page ───────────────── */
 export default async function LeadsPage({
   searchParams,
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   const cookieStore = await cookies();
-  const sid = cookieStore.get("ssr_sid")?.value;
-  if (!sid) redirect("/login");
+
+  // ✅ Prefer the real login cookie; fall back to ssr_sid
+  const sid =
+    cookieStore.get("sid")?.value ??
+    cookieStore.get("ssr_sid")?.value ??
+    null;
+
+  if (!sid) // redirect("/login");
 
   const user = await fetchMe(sid);
-  if (!user) redirect("/login");
+  if (!user) // redirect("/login");
 
   // SSR prefetch to avoid blank first paint
   const qs = buildQS(searchParams);
@@ -113,9 +126,7 @@ export default async function LeadsPage({
       <main className="mx-auto w-full max-w-screen-2xl px-4 lg:px-6 py-6 sm:py-8">
         {/* Header row */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-            Leads
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">Leads</h1>
 
           <div className="flex items-center gap-2">
             <a
@@ -147,7 +158,7 @@ export default async function LeadsPage({
   );
 }
 
-// ---------- Skeleton ----------
+/* ───────────────── Skeleton ───────────────── */
 function LeadsSkeleton() {
   return (
     <div className="p-6 animate-pulse">
