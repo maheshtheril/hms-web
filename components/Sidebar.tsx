@@ -198,6 +198,8 @@ function useSessionMe() {
     ...toSetAny(me?.user?.scopes),
     ...toSetAny(me?.user?.permissions),
   ]);
+  
+  if (roles.has("owner")) roles.add("tenant_admin"); // ✅ owner can see Admin menus
 
   // include boolean flags as pseudo-roles
   if (me?.user?.is_admin) roles.add("admin");
