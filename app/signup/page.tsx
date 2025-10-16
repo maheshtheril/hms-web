@@ -138,7 +138,7 @@ export default function SignupPage() {
   {/* Logo */}
   <div className="mx-auto mb-4 flex justify-center">
     <img
-      src="/logo.svg" // or your actual logo path (e.g., /assets/logo.png)
+      src="/logo.png" // or your actual logo path (e.g., /assets/logo.png)
       alt="App Logo"
       className="h-12 w-auto"
     />
