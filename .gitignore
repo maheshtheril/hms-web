@@ -12,3 +12,8 @@ yarn-error.log
 .bak
 app/crm/leads/new/page.tsx.bak
 next.config.js.bak
+
+# env
+*.env
+.env*
+

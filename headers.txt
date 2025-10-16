@@ -1,0 +1,18 @@
+HTTP/1.1 200 OK
+Date: Thu, 16 Oct 2025 02:53:43 GMT
+Content-Type: application/json; charset=utf-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+access-control-allow-credentials: true
+etag: W/"b-Ai2R8hgEarLmHKwesT1qcY913ys"
+rndr-id: 113a9d08-7783-464b
+Set-Cookie: sid=5c098900-984d-4a59-b35e-dd1a644f7acc; Domain=localhost; Path=/; HttpOnly; Secure; SameSite=None
+vary: Origin
+vary: Accept-Encoding
+x-powered-by: Express
+x-render-origin-server: Render
+cf-cache-status: DYNAMIC
+Server: cloudflare
+CF-RAY: 98f444783d1e935f-MAA
+alt-svc: h3=":443"; ma=86400
+
