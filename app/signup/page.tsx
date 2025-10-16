@@ -135,22 +135,23 @@ export default function SignupPage() {
     <div className="min-h-[100dvh] grid place-items-center bg-gradient-to-b from-zinc-50 to-white dark:from-black dark:to-zinc-950 px-6">
       <div className="w-full max-w-xl rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-zinc-900/70 backdrop-blur p-8 shadow-lg">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 h-12 w-12 rounded-2xl grid place-items-center bg-zinc-900 text-white dark:bg-white dark:text-black shadow">
-            {/* Minimal brand glyph */}
-            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M12 2l3.5 6.9L23 10l-5.5 4.8L19 22l-7-3.8L5 22l1.5-7.2L1 10l7.5-1.1L12 2z"
-              />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-            Create your workspace
-          </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Spin up a secure tenant with admin access in seconds.
-          </p>
-        </div>
+  {/* Logo */}
+  <div className="mx-auto mb-4 flex justify-center">
+    <img
+      src="/logo.svg" // or your actual logo path (e.g., /assets/logo.png)
+      alt="App Logo"
+      className="h-12 w-auto"
+    />
+  </div>
+
+  {/* Heading */}
+  <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+    Create your workspace
+  </h1>
+  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+    Spin up a secure tenant with admin access in seconds.
+  </p>
+</div>
 
         <form onSubmit={onSubmit} className="space-y-5">
           <div className="grid gap-5 sm:grid-cols-2">
