@@ -12,6 +12,9 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // AI demo modal state (client-only demo)
+  const [aiDemoOpen, setAiDemoOpen] = useState(false);
+
   // restore remembered email
   useEffect(() => {
     try {
@@ -90,10 +93,42 @@ export default function LoginPage() {
           </div>
 
           <div className="rounded-3xl border border-white/8 bg-white/3 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
-            {/* header */}
-            <div className="mb-4 text-center">
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Welcome back</h1>
-              <p className="mt-1 text-sm text-white/70">Sign in to your GeniusGrid workspace</p>
+            {/* header with AI badge */}
+            <div className="mb-3 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                  Welcome back — your AI copilote is ready
+                </h1>
+                <span className="ml-2 inline-flex items-center rounded-full bg-white/8 px-2 py-0.5 text-xs font-medium text-white/90">
+                  <svg width="12" height="12" viewBox="0 0 24 24" className="mr-1" aria-hidden>
+                    <path
+                      fill="currentColor"
+                      d="M12 2C7 2 3 6 3 11s4 9 9 9 9-4 9-9-4-9-9-9Zm0 2a7 7 0 0 1 7 7c0 1.7-.6 3.3-1.7 4.5L7.5 7.7A6.9 6.9 0 0 1 12 4Zm0 14a7 7 0 0 1-7-7c0-1.7.6-3.3 1.7-4.5L16.5 16.3c-1.2 1.2-2.8 1.7-4.5 1.7Z"
+                    />
+                  </svg>
+                  AI
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-white/70">
+                Sign in to your GeniusGrid workspace — get AI-powered setup tips and insights after login.
+              </p>
+            </div>
+
+            {/* small SSO / OAuth row (optional) */}
+            <div className="mb-4">
+              <button
+                type="button"
+                // placeholder: replace with actual OAuth flow
+                onClick={() => alert("SSO / OAuth flow not wired (placeholder)")}
+                className="w-full mb-2 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10"
+              >
+                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
+                  <path fill="#EA4335" d="M24 11.5v8.5h7.9C30.4 23.6 27.6 26 24 26c-5.1 0-9.2-4.1-9.2-9.2S18.9 7.6 24 7.6c2.5 0 4.7.9 6.4 2.3L24 11.5z" />
+                </svg>
+                Continue with Google
+              </button>
+
+              <div className="text-center text-xs text-white/50">or sign in with email</div>
             </div>
 
             {/* error */}
@@ -189,6 +224,15 @@ export default function LoginPage() {
                   />
                   Remember me
                 </label>
+
+                {/* quick AI demo access */}
+                <button
+                  type="button"
+                  onClick={() => setAiDemoOpen(true)}
+                  className="text-xs underline underline-offset-2 hover:text-white/95"
+                >
+                  Try AI demo
+                </button>
               </div>
 
               {/* submit */}
@@ -227,6 +271,71 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
+
+      {/* AI Demo Modal (client-side only) */}
+      {aiDemoOpen && (
+        <div
+          aria-modal="true"
+          role="dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+        >
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setAiDemoOpen(false)}
+          />
+          <div className="relative z-10 max-w-xl rounded-2xl bg-white/5 p-5 shadow-xl">
+            <div className="flex items-start justify-between">
+              <h3 className="text-lg font-semibold">AI Assistant — Quick demo</h3>
+              <button
+                className="text-white/70 hover:text-white"
+                onClick={() => setAiDemoOpen(false)}
+                aria-label="Close demo"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3 text-sm text-white/90">
+              <div className="rounded-xl bg-white/6 p-3">
+                <strong>Suggested setup:</strong>
+                <div className="mt-2 text-xs text-white/80">
+                  • Create default workspace roles: Admin, Accountant, Sales.
+                  <br />
+                  • Import your chart of accounts and map GST rates.
+                  <br />
+                  • Enable SMS OTP for client onboarding.
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-white/6 p-3">
+                <strong>Tip:</strong>
+                <div className="mt-2 text-xs text-white/80">
+                  Ask your AI assistant for a step-by-step migration checklist — it can produce a CSV import template.
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setAiDemoOpen(false);
+                  // optional: navigate user to a docs or onboarding route
+                  router.push("/onboarding");
+                }}
+                className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white"
+              >
+                Explore onboarding
+              </button>
+              <button
+                onClick={() => setAiDemoOpen(false)}
+                className="rounded-md px-3 py-1.5 text-sm text-white/80"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
