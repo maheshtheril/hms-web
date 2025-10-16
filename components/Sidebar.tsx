@@ -35,12 +35,6 @@ type SessionMe = {
 };
 
 /* ---------------------------- Static Menu Tree ---------------------------- */
-/** 
- * IMPORTANT:
- * - CRM “Companies” renamed to **Accounts** (customer/partner companies).
- * - Admin → Organization → **Legal Entities** = your tenant’s own companies (multi-company).
- * - Paths kept under /dashboard/* to match your existing style.
- */
 const SECTIONS: Section[] = [
   {
     id: "crm",
@@ -68,23 +62,19 @@ const SECTIONS: Section[] = [
           { label: "Pipeline Stages", href: "/dashboard/crm/pipelines/stages" },
         ],
       },
-
-      // ⬇️ CRM → Accounts (external companies: customers/partners)
       {
-        label: "Accounts",
-        keywords: ["companies", "customers", "partners", "vendors"],
+        label: "Companies",
+        keywords: ["accounts", "orgs", "customers"],
         children: [
-          { label: "All Accounts", href: "/dashboard/crm/accounts" },
-          { label: "Create Account", href: "/dashboard/crm/accounts/new" },
+          { label: "All Companies", href: "/dashboard/crm/companies" },
+          { label: "Create Company", href: "/dashboard/crm/companies/new" },
         ],
       },
-
       { label: "Contacts", href: "/dashboard/crm/contacts" },
       { label: "Opportunities", href: "/dashboard/crm/opportunities" },
       { label: "Activities", href: "/dashboard/crm/activities", keywords: ["calls", "tasks", "meetings"] },
     ],
   },
-
   {
     id: "admin",
     label: "Admin",
@@ -94,7 +84,6 @@ const SECTIONS: Section[] = [
       </svg>
     ),
     items: [
-      // Only Platform Admin should see this (gated below in filterSectionsForRBAC)
       {
         label: "Tenants",
         children: [
@@ -102,16 +91,6 @@ const SECTIONS: Section[] = [
           { label: "Create Tenant", href: "/dashboard/admin/tenants/new" },
         ],
       },
-
-      // ⬇️ Organization: your OWN legal entities (multi-company)
-      {
-        label: "Organization",
-        children: [
-          { label: "Legal Entities", href: "/dashboard/admin/org/companies", keywords: ["multi-company", "legal", "subsidiaries"] },
-          { label: "Create Legal Entity", href: "/dashboard/admin/org/companies/new", keywords: ["add", "new"] },
-        ],
-      },
-
       {
         label: "RBAC",
         children: [
@@ -122,19 +101,20 @@ const SECTIONS: Section[] = [
           { label: "Audit Logs", href: "/dashboard/rbac/audit", keywords: ["history", "trail", "security"] },
         ],
       },
-
       {
         label: "Settings",
         children: [
           { label: "General", href: "/dashboard/settings/general" },
           { label: "Billing", href: "/dashboard/settings/billing" },
           { label: "Teams", href: "/dashboard/settings/teams" },
+          // 👇 NEW Custom Fields menu
           { label: "Custom Fields", href: "/dashboard/settings/custom-fields", keywords: ["dynamic", "fields", "definitions"] },
         ],
       },
     ],
   },
 ];
+
 
 /* ---------------------------- Utils ---------------------------- */
 const STORAGE_KEYS = {
@@ -218,37 +198,37 @@ function useSessionMe() {
     ...toSetAny(me?.user?.scopes),
     ...toSetAny(me?.user?.permissions),
   ]);
-
+  
   if (roles.has("owner")) roles.add("tenant_admin"); // ✅ owner can see Admin menus
 
   const ownerLike =
-    roles.has("owner") ||
-    roles.has("tenant_owner") ||
-    roles.has("tenant_super_admin") ||
-    roles.has("super_admin");
+  roles.has("owner") ||
+  roles.has("tenant_owner") ||
+  roles.has("tenant_super_admin") ||
+  roles.has("super_admin");
 
-  if (roles.has("owner")) roles.add("tenant_admin"); // owner should see Admin
+if (roles.has("owner")) roles.add("tenant_admin"); // owner should see Admin
 
-  // normalize snake_case / camelCase flags from backend
-  const u = me?.user || {};
-  const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? false;
-  const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? false;
-  const isPlatformAdminFlag = (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? false;
+// normalize snake_case / camelCase flags from backend
+const u = me?.user || {};
+const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? false;
+const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? false;
+const isPlatformAdminFlag = (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? false;
 
-  // unified booleans used by sidebar filter
-  const isPlatformAdmin =
-    !!isPlatformAdminFlag || roles.has("platform_admin") || roles.has("global_super_admin");
+// unified booleans used by sidebar filter
+const isPlatformAdmin =
+  !!isPlatformAdminFlag || roles.has("platform_admin") || roles.has("global_super_admin");
 
-  const isTenantAdmin =
-    !!isTenantAdminFlag || roles.has("tenant_admin") || ownerLike;
+const isTenantAdmin =
+  !!isTenantAdminFlag || roles.has("tenant_admin") || ownerLike;
 
-  const isAdmin =
-    !!isAdminFlag || roles.has("admin") || roles.has("company_admin");
+const isAdmin =
+  !!isAdminFlag || roles.has("admin") || roles.has("company_admin");
 
   return { me, isAdmin, isPlatformAdmin, isTenantAdmin, loading };
 }
 
-// 1) Include isAdmin in the filter function (UNCHANGED RBAC BEHAVIOR)
+// 1) Include isAdmin in the filter function
 function filterSectionsForRBAC(
   src: Section[],
   isPlatformAdmin: boolean,
