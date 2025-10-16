@@ -132,4 +132,49 @@
 .glow-pulse {
   animation: pulse-glow 4s ease-in-out infinite;
 }
+/* Nebula UI tokens & animations */
+:root{
+  --nebula-primary-1: #60a5fa;
+  --nebula-primary-2: #6366f1;
+  --nebula-accent: #7dd3fc;
+  --nebula-surface-dark: rgba(255,255,255,0.04);
+  --nebula-radius: 1rem;
+}
+
+/* Pulse glow animation for logo aura */
+@keyframes pulse-glow {
+  0%,100% { opacity:0.6; transform:scale(1); filter:blur(40px); }
+  50% { opacity:1; transform:scale(1.05); filter:blur(60px); }
+}
+.glow-pulse{ animation: pulse-glow 4s ease-in-out infinite; }
+
+/* Subtle flowing border */
+@keyframes nebula-border {
+  0%{ background-position:0% 50% } 50%{ background-position:100% 50% } 100%{ background-position:0% 50% }
+}
+.ai-border {
+  background: linear-gradient(270deg, var(--nebula-primary-1), var(--nebula-primary-2), var(--nebula-accent));
+  background-size: 200% 200%;
+  animation: nebula-border 6s ease infinite;
+  padding: 1px;
+  border-radius: 1.25rem;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .glow-pulse, .ai-border { animation: none !important; transition: none !important; }
+}
+
+/* Tiny helper for AI badge */
+.ai-badge {
+  background: rgba(255,255,255,0.06);
+  color: var(--nebula-accent);
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  display:inline-flex;
+  align-items:center;
+  gap:0.35rem;
+}
 
