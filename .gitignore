@@ -17,3 +17,7 @@ next.config.js.bak
 *.env
 .env*
 
+
+cookies.txt
+headers.txt
+
