@@ -14,8 +14,10 @@ export default function LoginPage() {
   const [aiDemoOpen, setAiDemoOpen] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem("login_email");
-    if (saved) setEmail(saved);
+    try {
+      const saved = localStorage.getItem("login_email");
+      if (saved) setEmail(saved);
+    } catch {}
   }, []);
 
   const emailId = useId();
@@ -24,8 +26,15 @@ export default function LoginPage() {
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (loading) return;
+
     setError("");
     setLoading(true);
+
+    if (!email || !password) {
+      setError("Email and password are required.");
+      setLoading(false);
+      return;
+    }
 
     try {
       const res = await fetch("/api/auth/login", {
@@ -42,9 +51,12 @@ export default function LoginPage() {
         return;
       }
 
-      if (remember) localStorage.setItem("login_email", email.trim());
-      else localStorage.removeItem("login_email");
-      sessionStorage.setItem("celebrateLoginOnce", "1");
+      try {
+        if (remember) localStorage.setItem("login_email", email.trim());
+        else localStorage.removeItem("login_email");
+        sessionStorage.setItem("celebrateLoginOnce", "1");
+      } catch {}
+
       router.replace("/dashboard");
     } catch {
       setError("Unexpected error. Please try again.");
@@ -63,10 +75,12 @@ export default function LoginPage() {
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-screen-xl items-center justify-center px-4 py-12">
         <div className="w-full max-w-md">
-          {/* glowing logo */}
+          {/* glowing logo with pulse */}
           <div className="mb-6 flex justify-center">
             <div className="relative">
-              <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-sky-400/40 via-indigo-500/30 to-transparent blur-2xl opacity-80" />
+              {/* animated aura */}
+              <div className="absolute -inset-2 rounded-full bg-gradient-to-r from-sky-400/40 via-indigo-500/30 to-transparent blur-[90px] opacity-80 glow-pulse" />
+
               <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-full bg-white/5 p-2 shadow-2xl backdrop-blur-sm">
                 <img
                   src="/logo.png"
@@ -78,12 +92,27 @@ export default function LoginPage() {
           </div>
 
           <div className="rounded-3xl border border-white/8 bg-white/[0.04] p-8 shadow-2xl backdrop-blur-xl">
-            {/* header */}
+            {/* refined header: title + small AI badge + powered by line */}
             <div className="mb-6 text-center">
-              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300 bg-clip-text text-transparent">
-                Welcome back — powered by GeniusGrid AI
-              </h1>
-              <p className="mt-2 text-sm text-white/70">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300 bg-clip-text text-transparent">
+                  Welcome back
+                </h1>
+
+                <span className="inline-flex items-center rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-medium text-sky-300">
+                  <svg width="12" height="12" viewBox="0 0 24 24" className="mr-1" aria-hidden>
+                    <path
+                      fill="currentColor"
+                      d="M12 2C7 2 3 6 3 11s4 9 9 9 9-4 9-9-4-9-9-9Zm0 2a7 7 0 0 1 7 7c0 1.7-.6 3.3-1.7 4.5L7.5 7.7A6.9 6.9 0 0 1 12 4Zm0 14a7 7 0 0 1-7-7c0-1.7.6-3.3 1.7-4.5L16.5 16.3c-1.2 1.2-2.8 1.7-4.5 1.7Z"
+                    />
+                  </svg>
+                  AI
+                </span>
+              </div>
+
+              <p className="text-lg font-semibold text-indigo-300">powered by GeniusGrid&nbsp;AI</p>
+
+              <p className="mt-2 text-sm text-white/70 max-w-sm mx-auto">
                 Sign in to your GeniusGrid workspace — experience AI-driven insights and automation.
               </p>
             </div>
@@ -224,6 +253,7 @@ export default function LoginPage() {
                 ✕
               </button>
             </div>
+
             <div className="mt-3 space-y-3 text-sm text-white/90">
               <div className="rounded-xl bg-white/6 p-3">
                 <strong>Suggested setup:</strong>
@@ -233,6 +263,7 @@ export default function LoginPage() {
                   • Enable smart approval workflows.
                 </p>
               </div>
+
               <div className="rounded-xl bg-white/6 p-3">
                 <strong>Tip:</strong>
                 <p className="mt-2 text-xs text-white/80">
@@ -240,6 +271,7 @@ export default function LoginPage() {
                 </p>
               </div>
             </div>
+
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => {
