@@ -58,10 +58,10 @@ const SECTIONS: Section[] = [
           { label: "Capture & Create", header: true },
           { label: "All Leads", href: "/crm/leads", keywords: ["index", "list", "table"] },
           { label: "Create Lead", href: "/crm/leads/new", keywords: ["add", "new"] },
-          { label: "Import", href: "/crm/leads/import", keywords: ["csv", "xlsx", "bulk"] },
+          { label: "Import Leads", href: "/crm/leads/import", keywords: ["csv", "xlsx", "bulk"] },
 
-          { label: "Search", header: true },
-          { label: "Full-text Search", href: "/crm/leads/search", keywords: ["tsvector", "filter"] },
+          { label: "Search & Intelligence", header: true },
+          { label: "Smart Search", href: "/crm/leads/search", keywords: ["tsvector", "filter"] },
 
           { label: "Pipelines & Stages", header: true },
           { label: "Pipelines", href: "/crm/pipelines" },
@@ -79,9 +79,56 @@ const SECTIONS: Section[] = [
         ],
       },
 
-      { label: "Contacts", href: "/crm/contacts" },
-      { label: "Opportunities", href: "/crm/opportunities" },
-      { label: "Activities", href: "/crm/activities", keywords: ["calls", "tasks", "meetings"] },
+     {
+    label: "Companies",
+    keywords: ["clients", "organizations", "partners", "vendors"],
+    children: [
+      { label: "Standard Level", header: true },
+      { label: "All Companies", href: "/crm/companies" },
+      { label: "Create Company", href: "/crm/companies/new" },
+      { label: "Import Companies", href: "/crm/companies/import" },
+      { label: "Company Insights", href: "/crm/companies/insights", keywords: ["ai", "summary", "metrics"] },
+    ],
+  },
+
+  // ─────────────────── Contacts ───────────────────
+  {
+    label: "Contacts",
+    keywords: ["people", "clients", "individuals", "stakeholders"],
+    children: [
+      { label: "Standard Level", header: true },
+      { label: "All Contacts", href: "/crm/contacts" },
+      { label: "Create Contact", href: "/crm/contacts/new" },
+      { label: "Import Contacts", href: "/crm/contacts/import" },
+    ],
+  },
+
+  // ─────────────────── Opportunities ───────────────────
+  {
+    label: "Opportunities",
+    keywords: ["deals", "sales", "negotiations", "revenue"],
+    children: [
+      { label: "Standard Level", header: true },
+      { label: "All Opportunities", href: "/crm/opportunities" },
+      { label: "Create Opportunity", href: "/crm/opportunities/new" },
+      { label: "Pipeline View", href: "/crm/opportunities/pipeline" },
+      { label: "Performance Insights", href: "/crm/opportunities/insights" },
+    ],
+  },
+
+  // ─────────────────── Activities ───────────────────
+  {
+    label: "Activities",
+    keywords: ["tasks", "calls", "meetings", "follow-ups"],
+    children: [
+      { label: "Standard Level", header: true },
+      { label: "All Activities", href: "/crm/activities" },
+      { label: "Calls", href: "/crm/activities/calls" },
+      { label: "Meetings", href: "/crm/activities/meetings" },
+      { label: "Tasks", href: "/crm/activities/tasks" },
+    ],
+  },
+
     ],
   },
 
