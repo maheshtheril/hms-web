@@ -6,6 +6,8 @@ import Link from "next/link";
 import FireworksOnce from "./FireworksOnce";
 import TopNav from "@/app/components/TopNav";
 import LeadCalendar from "@/app/dashboard/components/LeadCalendar";
+import PrimaryButton from "@/app/components/ng/PrimaryButton";
+import { GhostButton } from "@/app/components/ng/GhostButton";
 
 /* ───────── Types ───────── */
 type KpisPayload = {
@@ -149,7 +151,7 @@ export default function DashboardPage() {
       <TopNav />
 
       <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-8">
-        {/* if still resolving auth show compact skeleton */}
+        {/* AUTH / KPI REGION */}
         {loading ? (
           <div className="space-y-6">
             <div className="rounded-2xl border border-white/8 bg-white/4 p-6 animate-pulse" />
@@ -172,11 +174,26 @@ export default function DashboardPage() {
                     Secure session active — your tenant and company data are scoped and protected. {mine ? <span className="italic">Showing KPIs for your assignments.</span> : null}
                   </p>
 
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <PrimaryLink href={quickHref("welcome_quick")} label="+ Quick Lead" />
-                    <GhostLink href={detailedHref("welcome_detailed")} label="+ Detailed Lead" />
-                    <GhostLink href="/crm/leads" label="Open Leads" />
-                    <GhostLink href={quickHref("welcome_schedule_call")} label="Schedule Call" />
+                  <div className="mt-4 flex flex-wrap gap-2 items-center">
+                    {/* Quick lead — use PrimaryButton for visual consistency */}
+                    <Link href={quickHref("welcome_quick")} className="inline-block">
+                      <PrimaryButton className="px-3 py-2 text-xs">+ Quick Lead</PrimaryButton>
+                    </Link>
+
+                    {/* Detailed lead */}
+                    <GhostButton href={detailedHref("welcome_detailed")} className="px-3 py-2 text-xs">
+                      + Detailed Lead
+                    </GhostButton>
+
+                    {/* Open leads */}
+                    <Link href="/crm/leads" className="inline-block">
+                      <GhostButton className="px-3 py-2 text-xs">Open Leads</GhostButton>
+                    </Link>
+
+                    {/* Schedule call */}
+                    <Link href={quickHref("welcome_schedule_call")} className="inline-block">
+                      <GhostButton className="px-3 py-2 text-xs">Schedule Call</GhostButton>
+                    </Link>
                   </div>
                 </div>
 
@@ -224,6 +241,7 @@ export default function DashboardPage() {
                   <h2 className="text-sm font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
                   <span className="text-xs text-white/50">Drag to reschedule • Click to edit</span>
                 </div>
+
                 <Suspense
                   fallback={
                     <div className="mt-2 animate-pulse space-y-3">
@@ -232,6 +250,7 @@ export default function DashboardPage() {
                     </div>
                   }
                 >
+                  {/* calendar component is left untouched */}
                   <LeadCalendar />
                 </Suspense>
               </div>
@@ -256,7 +275,9 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="mt-4">
-                  <Link href="/activities" className="text-xs underline">View all activities</Link>
+                  <Link href="/activities" className="text-xs underline">
+                    View all activities
+                  </Link>
                 </div>
               </aside>
             </section>
@@ -267,7 +288,9 @@ export default function DashboardPage() {
               className="fixed right-6 bottom-8 inline-flex items-center gap-3 h-12 rounded-full bg-emerald-500 px-4 py-2 text-black font-semibold shadow-2xl hover:scale-[.99] active:scale-[.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               aria-label="Quick add lead"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" /></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
+              </svg>
               <span className="hidden xs:inline">Quick lead</span>
             </Link>
           </>
@@ -285,7 +308,7 @@ export default function DashboardPage() {
 
 function KpiCardEnhanced({ label, value, trend, icon }: { label: string; value: string; trend: string; icon?: React.ReactNode }) {
   return (
-    <div className="group rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900 to-zinc-950 p-4 hover:translate-y-[-4px] transition-transform duration-200 shadow-sm">
+    <div className="group rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900 to-zinc-950 p-4 transform transition-transform duration-200 hover:-translate-y-1 shadow-sm">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-11 w-11 rounded-xl bg-white/6 flex items-center justify-center">{icon}</div>
@@ -314,43 +337,21 @@ function KpiCardEnhanced({ label, value, trend, icon }: { label: string; value: 
 function IconLeads() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-      <path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM2 20c0-3.3 4.3-6 10-6s10 2.7 10 6v2H2v-2z"/>
+      <path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM2 20c0-3.3 4.3-6 10-6s10 2.7 10 6v2H2v-2z" />
     </svg>
   );
 }
 function IconCalendar() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-      <path fill="currentColor" d="M7 10h5v5H7zM3 5h2V3h2v2h8V3h2v2h2a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1z"/>
+      <path fill="currentColor" d="M7 10h5v5H7zM3 5h2V3h2v2h8V3h2v2h2a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1z" />
     </svg>
   );
 }
 function IconGauge() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-      <path fill="currentColor" d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9zm1 5h-2v6l5 2 .7-1.2L13 13V8z"/>
+      <path fill="currentColor" d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9zm1 5h-2v6l5 2 .7-1.2L13 13V8z" />
     </svg>
-  );
-}
-
-/* ───────── Small shared buttons (used inline) ───────── */
-function PrimaryLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center gap-2 rounded-xl bg-white text-black px-3 py-2 text-xs font-semibold hover:bg-zinc-100 active:scale-[.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
-    >
-      {label}
-    </Link>
-  );
-}
-function GhostLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-transparent px-3 py-2 text-xs font-semibold hover:bg-white/3 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
-    >
-      {label}
-    </Link>
   );
 }
