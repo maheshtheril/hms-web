@@ -22,7 +22,6 @@ const PASSWORD_POLICY = {
   symbolRegex: /[^A-Za-z0-9]/,
 };
 
-/** Client-side check used to guide UX; server remains the source of truth. */
 function checkPasswordClient(pw: string) {
   const reasons: string[] = [];
   if (!pw || pw.length < PASSWORD_POLICY.minLength) {
@@ -52,7 +51,6 @@ function checkPasswordClient(pw: string) {
   return { ok: reasons.length === 0, reasons };
 }
 
-/** Lightweight strength score for the meter (0–4) */
 function strengthScore(pw: string) {
   if (!pw) return 0;
   let score = 0;
@@ -103,14 +101,12 @@ export default function SignupPage() {
       const res = await api.post("/api/tenant-signup", form);
       if (res.data?.ok) {
         setOk(true);
-        // Small pause for UX, then route
         setTimeout(() => router.push("/dashboard"), 350);
       } else {
         setErr(res.data?.error || "Signup failed");
       }
     } catch (e: any) {
       const data = e?.response?.data;
-      // Backend may return: { error: "weak_password", reasons: [...] }
       if (data?.error === "weak_password" && Array.isArray(data?.reasons)) {
         setPwReasons(data.reasons);
         setErr("Please meet the password requirements.");
@@ -124,183 +120,192 @@ export default function SignupPage() {
 
   /* ──────────────── Styles ──────────────── */
   const inputClass =
-    "w-full rounded-xl border border-zinc-300 dark:border-zinc-700 " +
-    "bg-white dark:bg-zinc-900 px-3 py-2.5 text-zinc-900 dark:text-zinc-100 " +
-    "placeholder-zinc-400 dark:placeholder-zinc-500 outline-none " +
-    "focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20 transition";
-
-  const labelClass = "mb-1.5 block text-sm text-zinc-700 dark:text-zinc-300";
+    "w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-white placeholder-white/60 outline-none " +
+    "focus:ring-2 focus:ring-sky-400/30 transition";
+  const labelClass = "mb-1.5 block text-sm text-white/80";
 
   return (
-    <div className="min-h-[100dvh] grid place-items-center bg-gradient-to-b from-zinc-50 to-white dark:from-black dark:to-zinc-950 px-6">
-      <div className="w-full max-w-xl rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/70 dark:bg-zinc-900/70 backdrop-blur p-8 shadow-lg">
-        <div className="mb-6 text-center">
-  {/* Logo */}
-  <div className="mx-auto mb-4 flex justify-center">
-    <img
-      src="/logo.png" // or your actual logo path (e.g., /assets/logo.png)
-      alt="App Logo"
-      className="h-12 w-auto"
-    />
-  </div>
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-black via-zinc-950 to-black text-white">
+      {/* ambient background lighting */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-40 right-[-10%] h-[40rem] w-[40rem] rounded-full bg-gradient-to-br from-indigo-700/20 via-sky-600/15 to-transparent blur-3xl opacity-20" />
+        <div className="absolute left-1/2 top-0 -translate-x-1/2 h-px w-[80%] bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+      </div>
 
-  {/* Heading */}
-  <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-    Create your workspace
-  </h1>
-  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-    Spin up a secure tenant with admin access in seconds.
-  </p>
-</div>
-
-        <form onSubmit={onSubmit} className="space-y-5">
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className={labelClass}>Organization / Company</label>
-              <input
-                className={inputClass}
-                placeholder="e.g., Genius Infravision LLP"
-                value={form.org}
-                onChange={onChange("org")}
-                autoComplete="organization"
-                required
-              />
-            </div>
-
-            <div>
-              <label className={labelClass}>Your name</label>
-              <input
-                className={inputClass}
-                placeholder="e.g., Dr. Sahid Cholayil"
-                value={form.name}
-                onChange={onChange("name")}
-                autoComplete="name"
-                required
-              />
-            </div>
-
-            <div>
-              <label className={labelClass}>Work email</label>
-              <input
-                className={inputClass}
-                type="email"
-                placeholder="you@company.com"
-                value={form.email}
-                onChange={onChange("email")}
-                autoComplete="email"
-                inputMode="email"
-                required
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className={labelClass}>Password</label>
-              <div className="relative">
-                <input
-                  className={`${inputClass} pr-12`}
-                  type={showPw ? "text" : "password"}
-                  placeholder="At least 12 characters, A-Z, a-z, 0-9, symbol"
-                  value={form.password}
-                  onChange={onChange("password")}
-                  autoComplete="new-password"
-                  required
-                />
-                <button
-                  type="button"
-                  aria-label={showPw ? "Hide password" : "Show password"}
-                  onClick={() => setShowPw((s) => !s)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                  {showPw ? "Hide" : "Show"}
-                </button>
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-screen-xl items-center justify-center px-6 py-16">
+        <div className="w-full max-w-xl">
+          {/* glowing logo with pulse */}
+          <div className="mb-6 flex justify-center">
+            <div className="relative">
+              <div className="absolute -inset-2 rounded-full bg-gradient-to-r from-sky-400/40 via-indigo-500/30 to-transparent blur-[90px] opacity-80 glow-pulse" />
+              <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white/5 p-2 shadow-2xl backdrop-blur-sm">
+                <img src="/logo.png" alt="GeniusGrid" className="h-16 w-16 rounded-full object-contain" />
               </div>
-
-              {/* Strength meter */}
-              <div className="mt-3">
-                <div className="h-2 w-full rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-                  <div
-                    className={[
-                      "h-full transition-all",
-                      score === 0 && "w-0",
-                      score === 1 && "w-1/4",
-                      score === 2 && "w-2/4",
-                      score === 3 && "w-3/4",
-                      score === 4 && "w-full",
-                      score <= 1
-                        ? "bg-red-500/80"
-                        : score === 2
-                        ? "bg-yellow-500/80"
-                        : score === 3
-                        ? "bg-lime-500/80"
-                        : "bg-emerald-500/90",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                  />
-                </div>
-                <div className="mt-1.5 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-                  <span>
-                    {score <= 1
-                      ? "Weak"
-                      : score === 2
-                      ? "Fair"
-                      : score === 3
-                      ? "Strong"
-                      : "Very strong"}
-                  </span>
-                  <span className="hidden sm:inline">
-                    Tip: Try something like <code className="font-mono">GeniusGrid#ERP19</code>
-                  </span>
-                </div>
-              </div>
-
-              {/* Inline requirements / backend reasons */}
-              {pwReasons.length > 0 && (
-                <ul className="mt-3 space-y-1.5 text-xs text-red-600 dark:text-red-400">
-                  {pwReasons.map((r, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <span className="mt-[3px] inline-block h-1.5 w-1.5 rounded-full bg-red-500/80" />
-                      <span>{r}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
           </div>
 
-          {/* Submit */}
-          <button
-            className={[
-              "w-full rounded-xl py-2.5 font-medium transition",
-              "bg-black text-white hover:bg-black/90",
-              "dark:bg-white dark:text-black dark:hover:bg-white/90",
-              "disabled:opacity-60 disabled:pointer-events-none",
-              "shadow-sm",
-            ].join(" ")}
-            disabled={!canSubmit || loading}
-            type="submit"
-          >
-            {loading ? "Creating your workspace…" : "Start Free"}
-          </button>
+          <div className="rounded-3xl border border-white/8 bg-white/4 p-8 shadow-2xl backdrop-blur-xl">
+            {/* header */}
+            <div className="mb-6 text-center">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300 bg-clip-text text-transparent">
+                  Create your workspace
+                </h1>
+                <span className="inline-flex items-center rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-medium text-sky-300">
+                  <svg width="12" height="12" viewBox="0 0 24 24" className="mr-1" aria-hidden>
+                    <path
+                      fill="currentColor"
+                      d="M12 2C7 2 3 6 3 11s4 9 9 9 9-4 9-9-4-9-9-9Zm0 2a7 7 0 0 1 7 7c0 1.7-.6 3.3-1.7 4.5L7.5 7.7A6.9 6.9 0 0 1 12 4Zm0 14a7 7 0 0 1-7-7c0-1.7.6-3.3 1.7-4.5L16.5 16.3c-1.2 1.2-2.8 1.7-4.5 1.7Z"
+                    />
+                  </svg>
+                  AI
+                </span>
+              </div>
 
-          {/* Alerts */}
-          {err && (
-            <p className="text-sm mt-2 text-red-600 dark:text-red-400" role="alert">
-              {String(err)}
-            </p>
-          )}
-          {ok && (
-            <p className="text-sm mt-2 text-emerald-600 dark:text-emerald-400" role="status">
-              Workspace created. Redirecting…
-            </p>
-          )}
+              <p className="text-lg font-semibold text-indigo-300">powered by GeniusGrid AI</p>
+              <p className="mt-2 text-sm text-white/70 max-w-md mx-auto">
+                Spin up a secure tenant with admin access in seconds. Admin access is granted to the creator and can be delegated later.
+              </p>
+            </div>
 
-          {/* Small legal / reassurance */}
-          <p className="text-[11px] mt-4 text-zinc-500 dark:text-zinc-400">
-            By continuing you acknowledge our standard tenant provisioning. Admin access is granted
-            to the creator and can be delegated later.
-          </p>
-        </form>
+            <form onSubmit={onSubmit} className="space-y-5">
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className={labelClass}>Organization / Company</label>
+                  <input
+                    className={inputClass}
+                    placeholder="e.g., Genius Infravision LLP"
+                    value={form.org}
+                    onChange={onChange("org")}
+                    autoComplete="organization"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Your name</label>
+                  <input
+                    className={inputClass}
+                    placeholder="e.g., Dr. Sahid Cholayil"
+                    value={form.name}
+                    onChange={onChange("name")}
+                    autoComplete="name"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Work email</label>
+                  <input
+                    className={inputClass}
+                    type="email"
+                    placeholder="you@company.com"
+                    value={form.email}
+                    onChange={onChange("email")}
+                    autoComplete="email"
+                    inputMode="email"
+                    required
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className={labelClass}>Password</label>
+                  <div className="relative">
+                    <input
+                      className={`${inputClass} pr-12`}
+                      type={showPw ? "text" : "password"}
+                      placeholder="At least 12 characters, A-Z, a-z, 0-9, symbol"
+                      value={form.password}
+                      onChange={onChange("password")}
+                      autoComplete="new-password"
+                      required
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPw ? "Hide password" : "Show password"}
+                      onClick={() => setShowPw((s) => !s)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium text-white/80 hover:bg-white/6"
+                    >
+                      {showPw ? "Hide" : "Show"}
+                    </button>
+                  </div>
+
+                  {/* Strength meter */}
+                  <div className="mt-3">
+                    <div className="h-2 w-full rounded-full bg-white/6 overflow-hidden">
+                      <div
+                        className={[
+                          "h-full transition-all",
+                          score === 0 && "w-0",
+                          score === 1 && "w-1/4",
+                          score === 2 && "w-2/4",
+                          score === 3 && "w-3/4",
+                          score === 4 && "w-full",
+                          score <= 1
+                            ? "bg-red-500/80"
+                            : score === 2
+                            ? "bg-yellow-500/80"
+                            : score === 3
+                            ? "bg-lime-500/80"
+                            : "bg-emerald-500/90",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between text-xs text-white/60">
+                      <span>
+                        {score <= 1 ? "Weak" : score === 2 ? "Fair" : score === 3 ? "Strong" : "Very strong"}
+                      </span>
+                      <span className="hidden sm:inline">
+                        Tip: Try something like <code className="font-mono text-xs">GeniusGrid#ERP19</code>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Inline requirements / backend reasons */}
+                  {pwReasons.length > 0 && (
+                    <ul className="mt-3 space-y-1.5 text-xs text-red-400">
+                      {pwReasons.map((r, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-[3px] inline-block h-1.5 w-1.5 rounded-full bg-red-500/80" />
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              <button
+                className={[
+                  "w-full rounded-xl py-2.5 font-medium transition",
+                  "bg-gradient-to-r from-sky-400 to-indigo-500 text-black hover:brightness-95",
+                  "disabled:opacity-60 disabled:pointer-events-none",
+                ].join(" ")}
+                disabled={!canSubmit || loading}
+                type="submit"
+              >
+                {loading ? "Creating workspace…" : "Start Free"}
+              </button>
+
+              {err && (
+                <p className="text-sm mt-2 text-red-400" role="alert">
+                  {String(err)}
+                </p>
+              )}
+              {ok && (
+                <p className="text-sm mt-2 text-emerald-400" role="status">
+                  Workspace created. Redirecting…
+                </p>
+              )}
+
+              <p className="text-[11px] mt-4 text-white/60">
+                By continuing you acknowledge our standard tenant provisioning. Admin access is granted to the creator and can be delegated later.
+              </p>
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   );
