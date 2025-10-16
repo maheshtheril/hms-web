@@ -178,3 +178,10 @@
   gap:0.35rem;
 }
 
+
+@media (max-width: 640px) {
+  .pointer-events-none > .absolute { filter: blur(44px) !important; opacity: 0.6 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glow-pulse, [data-framer-motion], .neural-glow { animation: none !important; }
+}
