@@ -11,16 +11,11 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // AI demo modal state (client-only demo)
   const [aiDemoOpen, setAiDemoOpen] = useState(false);
 
-  // restore remembered email
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("login_email");
-      if (saved) setEmail(saved);
-    } catch {}
+    const saved = localStorage.getItem("login_email");
+    if (saved) setEmail(saved);
   }, []);
 
   const emailId = useId();
@@ -29,15 +24,8 @@ export default function LoginPage() {
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (loading) return;
-
     setError("");
     setLoading(true);
-
-    if (!email || !password) {
-      setError("Email and password are required.");
-      setLoading(false);
-      return;
-    }
 
     try {
       const res = await fetch("/api/auth/login", {
@@ -54,12 +42,9 @@ export default function LoginPage() {
         return;
       }
 
-      try {
-        if (remember) localStorage.setItem("login_email", email.trim());
-        else localStorage.removeItem("login_email");
-        sessionStorage.setItem("celebrateLoginOnce", "1");
-      } catch {}
-
+      if (remember) localStorage.setItem("login_email", email.trim());
+      else localStorage.removeItem("login_email");
+      sessionStorage.setItem("celebrateLoginOnce", "1");
       router.replace("/dashboard");
     } catch {
       setError("Unexpected error. Please try again.");
@@ -69,20 +54,20 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-black via-zinc-950 to-black text-white">
-      {/* subtle global background decorations */}
+      {/* ambient background lighting */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-40 right-[-10%] h-[40rem] w-[40rem] rounded-full bg-gradient-to-br from-indigo-700/20 via-sky-600/15 to-transparent blur-3xl opacity-20" />
+        <div className="absolute top-[-15%] left-1/2 -translate-x-1/2 h-[32rem] w-[32rem] rounded-full bg-gradient-to-br from-sky-500/25 via-indigo-600/20 to-transparent blur-[180px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] h-[30rem] w-[30rem] rounded-full bg-gradient-to-tr from-indigo-500/10 via-cyan-400/10 to-transparent blur-[150px]" />
         <div className="absolute left-1/2 top-0 -translate-x-1/2 h-px w-[80%] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.03),transparent_60%)]" />
       </div>
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-screen-xl items-center justify-center px-4 py-12">
         <div className="w-full max-w-md">
-          {/* logo — centered above card, circular with halo */}
+          {/* glowing logo */}
           <div className="mb-6 flex justify-center">
             <div className="relative">
-              <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-indigo-400/30 via-sky-400/20 to-transparent blur-xl opacity-60" />
-              <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-full bg-white/5 p-2 shadow-lg backdrop-blur-sm">
+              <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-sky-400/40 via-indigo-500/30 to-transparent blur-2xl opacity-80" />
+              <div className="relative z-10 flex h-24 w-24 items-center justify-center rounded-full bg-white/5 p-2 shadow-2xl backdrop-blur-sm">
                 <img
                   src="/logo.png"
                   alt="GeniusGrid"
@@ -92,43 +77,15 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/8 bg-white/3 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
-            {/* header with AI badge */}
-            <div className="mb-3 text-center">
-              <div className="flex items-center justify-center gap-2">
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                  Welcome back — your AI copilote is ready
-                </h1>
-                <span className="ml-2 inline-flex items-center rounded-full bg-white/8 px-2 py-0.5 text-xs font-medium text-white/90">
-                  <svg width="12" height="12" viewBox="0 0 24 24" className="mr-1" aria-hidden>
-                    <path
-                      fill="currentColor"
-                      d="M12 2C7 2 3 6 3 11s4 9 9 9 9-4 9-9-4-9-9-9Zm0 2a7 7 0 0 1 7 7c0 1.7-.6 3.3-1.7 4.5L7.5 7.7A6.9 6.9 0 0 1 12 4Zm0 14a7 7 0 0 1-7-7c0-1.7.6-3.3 1.7-4.5L16.5 16.3c-1.2 1.2-2.8 1.7-4.5 1.7Z"
-                    />
-                  </svg>
-                  AI
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-white/70">
-                Sign in to your GeniusGrid workspace — get AI-powered setup tips and insights after login.
+          <div className="rounded-3xl border border-white/8 bg-white/[0.04] p-8 shadow-2xl backdrop-blur-xl">
+            {/* header */}
+            <div className="mb-6 text-center">
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300 bg-clip-text text-transparent">
+                Welcome back — powered by GeniusGrid AI
+              </h1>
+              <p className="mt-2 text-sm text-white/70">
+                Sign in to your GeniusGrid workspace — experience AI-driven insights and automation.
               </p>
-            </div>
-
-            {/* small SSO / OAuth row (optional) */}
-            <div className="mb-4">
-              <button
-                type="button"
-                // placeholder: replace with actual OAuth flow
-                onClick={() => alert("SSO / OAuth flow not wired (placeholder)")}
-                className="w-full mb-2 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10"
-              >
-                <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
-                  <path fill="#EA4335" d="M24 11.5v8.5h7.9C30.4 23.6 27.6 26 24 26c-5.1 0-9.2-4.1-9.2-9.2S18.9 7.6 24 7.6c2.5 0 4.7.9 6.4 2.3L24 11.5z" />
-                </svg>
-                Continue with Google
-              </button>
-
-              <div className="text-center text-xs text-white/50">or sign in with email</div>
             </div>
 
             {/* error */}
@@ -150,11 +107,10 @@ export default function LoginPage() {
                 </label>
                 <input
                   id={emailId}
-                  name="email"
                   type="email"
                   autoComplete="email"
                   inputMode="email"
-                  className="w-full rounded-2xl bg-white/5 border border-white/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400/30"
+                  className="w-full rounded-2xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
                   placeholder="you@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.currentTarget.value)}
@@ -170,7 +126,7 @@ export default function LoginPage() {
                   </label>
                   <a
                     href="/forgot-password"
-                    className="text-xs text-white/80 hover:text-white/95 underline underline-offset-2"
+                    className="text-xs text-white/80 hover:text-white underline underline-offset-2"
                   >
                     Forgot password?
                   </a>
@@ -178,10 +134,9 @@ export default function LoginPage() {
                 <div className="relative">
                   <input
                     id={pwId}
-                    name="password"
                     type={showPw ? "text" : "password"}
                     autoComplete="current-password"
-                    className="w-full rounded-2xl bg-white/5 border border-white/8 px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-400/30"
+                    className="w-full rounded-2xl bg-white/5 border border-white/10 px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.currentTarget.value)}
@@ -189,31 +144,16 @@ export default function LoginPage() {
                   />
                   <button
                     type="button"
-                    aria-label={showPw ? "Hide password" : "Show password"}
                     onClick={() => setShowPw((v) => !v)}
-                    className="absolute inset-y-0 right-2 my-auto inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/8 text-white/90 hover:bg-white/12"
-                    tabIndex={0}
+                    className="absolute inset-y-0 right-2 my-auto h-7 w-7 rounded-md bg-white/8 text-white/90 hover:bg-white/12"
+                    aria-label="Toggle password visibility"
                   >
-                    {showPw ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-                        <path
-                          fill="currentColor"
-                          d="M2 5.27L3.28 4l16.97 16.97L19.97 22l-2.58-2.58A10.86 10.86 0 0 1 12 21C6 21 2 12 2 12a21.2 21.2 0 0 1 4.05-5.94L2 5.27Zm9.99 3.02A3 3 0 0 0 9 12a3 3 0 0 0 4.99 2.71l-1-1A2 2 0 1 1 11 12c0-.26.05-.51.14-.73l.85-.98Zm8.01 3.71s-.75 1.74-2.26 3.48l-1.46-1.46A8.25 8.25 0 0 0 20 12s-1.93-4.5-8-4.5c-.68 0-1.32.07-1.92.2l-1.6-1.6A10.7 10.7 0 0 1 12 6c6 0 10 6 10 6Z"
-                        />
-                      </svg>
-                    ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-                        <path
-                          fill="currentColor"
-                          d="M12 6c6 0 10 6 10 6s-4 6-10 6S2 12 2 12s4-6 10-6Zm0 2C8.69 8 6.03 9.7 4.44 12C6.03 14.3 8.69 16 12 16s5.97-1.7 7.56-4c-1.59-2.3-4.25-4-7.56-4Zm0 2a2 2 0 1 1 0 4a2 2 0 0 1 0-4Z"
-                        />
-                      </svg>
-                    )}
+                    {showPw ? "🙈" : "👁️"}
                   </button>
                 </div>
               </div>
 
-              {/* Remember me */}
+              {/* Remember + AI Demo */}
               <div className="flex items-center justify-between pt-1">
                 <label className="flex items-center gap-2 text-xs text-white/80 select-none">
                   <input
@@ -225,7 +165,6 @@ export default function LoginPage() {
                   Remember me
                 </label>
 
-                {/* quick AI demo access */}
                 <button
                   type="button"
                   onClick={() => setAiDemoOpen(true)}
@@ -239,12 +178,12 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="mt-1 w-full rounded-xl bg-gradient-to-r from-indigo-400 to-sky-400 px-4 py-2.5 text-sm font-semibold text-black shadow-lg shadow-sky-600/20 transition-transform active:scale-[.98] disabled:opacity-60"
+                className="mt-2 w-full rounded-xl bg-gradient-to-r from-sky-400 to-indigo-500 px-4 py-2.5 text-sm font-semibold text-black shadow-lg shadow-sky-600/25 transition-transform active:scale-[.98] disabled:opacity-60"
               >
                 {loading ? "Signing in…" : "Sign in"}
               </button>
 
-              {/* signup divider + button */}
+              {/* signup */}
               <div className="mt-6 border-t border-white/10 pt-5 text-center">
                 <p className="text-xs text-white/60 mb-3">Don’t have an account?</p>
                 <a
@@ -256,7 +195,6 @@ export default function LoginPage() {
               </div>
             </form>
 
-            {/* footer */}
             <div className="mt-6 text-center text-xs text-white/60">
               By continuing you agree to our{" "}
               <a href="/legal/terms" className="underline underline-offset-2 hover:text-white/80">
@@ -272,57 +210,43 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* AI Demo Modal (client-side only) */}
+      {/* AI demo modal (optional) */}
       {aiDemoOpen && (
-        <div
-          aria-modal="true"
-          role="dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-        >
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setAiDemoOpen(false)}
-          />
-          <div className="relative z-10 max-w-xl rounded-2xl bg-white/5 p-5 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setAiDemoOpen(false)} />
+          <div className="relative z-10 max-w-xl rounded-2xl bg-white/5 p-6 shadow-xl">
             <div className="flex items-start justify-between">
               <h3 className="text-lg font-semibold">AI Assistant — Quick demo</h3>
               <button
-                className="text-white/70 hover:text-white"
                 onClick={() => setAiDemoOpen(false)}
-                aria-label="Close demo"
+                className="text-white/70 hover:text-white"
               >
                 ✕
               </button>
             </div>
-
             <div className="mt-3 space-y-3 text-sm text-white/90">
               <div className="rounded-xl bg-white/6 p-3">
                 <strong>Suggested setup:</strong>
-                <div className="mt-2 text-xs text-white/80">
-                  • Create default workspace roles: Admin, Accountant, Sales.
-                  <br />
-                  • Import your chart of accounts and map GST rates.
-                  <br />
-                  • Enable SMS OTP for client onboarding.
-                </div>
+                <p className="mt-2 text-xs text-white/80">
+                  • Create default roles (Admin, Accountant, Sales).<br />
+                  • Map GST & Chart of Accounts automatically.<br />
+                  • Enable smart approval workflows.
+                </p>
               </div>
-
               <div className="rounded-xl bg-white/6 p-3">
                 <strong>Tip:</strong>
-                <div className="mt-2 text-xs text-white/80">
-                  Ask your AI assistant for a step-by-step migration checklist — it can produce a CSV import template.
-                </div>
+                <p className="mt-2 text-xs text-white/80">
+                  Ask GeniusGrid AI for step-by-step migration and automation suggestions.
+                </p>
               </div>
             </div>
-
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => {
                   setAiDemoOpen(false);
-                  // optional: navigate user to a docs or onboarding route
                   router.push("/onboarding");
                 }}
-                className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white"
+                className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-black"
               >
                 Explore onboarding
               </button>
