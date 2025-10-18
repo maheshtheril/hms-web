@@ -2,11 +2,10 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import { apiClient } from "@/lib/api-client";
-import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import Fireworks from "@/app/components/effects/Fireworks";
 import { useToast } from "@/components/ui/use-toast";
 
 /* ───────────────── Types ───────────────── */
@@ -15,13 +14,11 @@ export interface LeadDrawerProps {
   onClose: () => void;
   onCreated?: (lead: any) => void;
 }
-type FireworksHandle = { burstAt: (x: number, y: number) => void; burstCenter: () => void };
 type CompanyOpt = { id: string; name?: string | null };
 
 /* ======================= Auth-safe axios defaults ======================= */
 try {
   apiClient.defaults.withCredentials = true;
-  // apiClient.defaults.baseURL = ""; // keep same-origin if you proxy /api
 } catch {}
 
 /* ======================= Data ======================= */
@@ -149,9 +146,7 @@ function CountryPhoneRow({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
-        aria-haspopup="listbox"
-        aria-expanded={open}
+        className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20 text-white/90"
       >
         <FlagIcon iso2={country.iso2} />
         <span className="tabular-nums">+{country.dial}</span>
@@ -159,9 +154,9 @@ function CountryPhoneRow({
       </button>
 
       <div className="flex-1 relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs opacity-70">{prefix}</span>
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/60">{prefix}</span>
         <Input
-          className="pl-12"
+          className="pl-12 bg-transparent text-white/95 placeholder:text-white/60 border border-white/15"
           placeholder="XXXXXXXXXX"
           inputMode="numeric"
           value={phone_national}
@@ -172,7 +167,7 @@ function CountryPhoneRow({
       {open && (
         <div
           role="listbox"
-          className="absolute z-50 mt-2 w-72 rounded-xl border border-white/10 bg-zinc-900 text-zinc-100 shadow-2xl p-2 left-0"
+          className="absolute z-50 mt-2 w-72 rounded-xl border border-white/10 bg-zinc-900/95 text-white shadow-2xl p-2 left-0 backdrop-blur-xl"
         >
           <div className="max-h-56 overflow-auto pr-1">
             {COUNTRIES.map((c) => (
@@ -209,9 +204,7 @@ function SourceSelect({ value, onChange, options }: { value: string; onChange: (
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full inline-flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
-        aria-haspopup="listbox"
-        aria-expanded={open}
+        className="w-full inline-flex items-center justify-between rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/90 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
       >
         <span>{value}</span>
         <CaretDown />
@@ -219,7 +212,7 @@ function SourceSelect({ value, onChange, options }: { value: string; onChange: (
       {open && (
         <div
           role="listbox"
-          className="absolute z-50 mt-2 w-full rounded-xl border border-white/10 bg-zinc-900 text-zinc-100 shadow-2xl p-2"
+          className="absolute z-50 mt-2 w-full rounded-xl border border-white/10 bg-zinc-900/95 text-white shadow-2xl p-2 backdrop-blur-xl"
         >
           <div className="max-h-56 overflow-auto pr-1">
             {options.map((opt) => (
@@ -241,123 +234,6 @@ function SourceSelect({ value, onChange, options }: { value: string; onChange: (
   );
 }
 
-/* ======================= Assign Employee ======================= */
-function AssignEmployee({
-  value,
-  onChange,
-}: {
-  value: string | null;
-  onChange: (id: string | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [users, setUsers] = useState<Array<{ id: string; name?: string | null; email?: string | null }>>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-  useClickOutside(ref, () => setOpen(false));
-
-  const selected = users.find((u) => u.id === value) || null;
-
-  async function loadUsers() {
-    try {
-      setErr(null);
-      setLoading(true);
-      const { data } = await apiClient.get("/admin/users", {
-        params: { active: 1, page: 1, pageSize: 50 },
-        withCredentials: true,
-      });
-      const arr = Array.isArray(data?.users)
-        ? data.users
-        : Array.isArray(data)
-        ? data
-        : Array.isArray(data?.data)
-        ? data.data
-        : [];
-      setUsers(
-        arr.map((u: any) => ({
-          id: String(u.id ?? u.user_id ?? u.uuid),
-          name: u.name ?? u.full_name ?? null,
-          email: u.email ?? null,
-        })),
-      );
-    } catch (e: any) {
-      setErr(e?.response?.data?.error || "Could not load team");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (open && users.length === 0 && !loading && !err) loadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full inline-flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <span>{selected ? (selected.name || selected.email || selected.id) : "Unassigned"}</span>
-        <CaretDown />
-      </button>
-
-      {open && (
-        <div className="absolute z-50 mt-2 w-full rounded-2xl border border-white/10 bg-zinc-900 text-zinc-100 shadow-2xl p-2">
-          <div className="max-h-60 overflow-auto pr-1">
-            {loading && <div className="px-3 py-2 text-sm opacity-70">Loading...</div>}
-            {err && (
-              <div className="space-y-2 p-2">
-                <div className="px-3 py-2 text-sm text-amber-300">Team not available. Enter an ID:</div>
-                <ManualAssign value={value} onChange={onChange} />
-              </div>
-            )}
-            {!loading && !err && users.length > 0 && (
-              <>
-                <MenuItem active={!value} onClick={() => { onChange(null); setOpen(false); }}>
-                  Unassigned
-                </MenuItem>
-                {users.map((u) => (
-                  <MenuItem key={u.id} active={u.id === value} onClick={() => { onChange(u.id); setOpen(false); }}>
-                    <div className="flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-full bg-white/10 grid place-items-center text-[10px]">
-                        {(u.name || u.email || u.id).slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-sm">{u.name || u.email || u.id}</div>
-                        {u.email && <div className="text-xs opacity-60">{u.email}</div>}
-                      </div>
-                    </div>
-                  </MenuItem>
-                ))}
-              </>
-            )}
-            {!loading && !err && users.length === 0 && (
-              <div className="space-y-2 p-2">
-                <div className="px-3 py-2 text-sm opacity-70">No team found. Enter an ID:</div>
-                <ManualAssign value={value} onChange={onChange} />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ManualAssign({ value, onChange }: { value: string | null; onChange: (id: string | null) => void }) {
-  const [input, setInput] = useState(value ?? "");
-  return (
-    <div className="flex gap-2">
-      <Input className="flex-1" placeholder="user-id / uuid" value={input} onChange={(e) => setInput(e.target.value)} />
-      <Button onClick={() => onChange(input || null)}>Set</Button>
-    </div>
-  );
-}
-
 /* ======================= Main ======================= */
 export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawerProps) {
   const { toast } = useToast();
@@ -375,9 +251,6 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const submittingRef = useRef(false);
-
-  // 🎆 Fireworks refs
-  const fxRef = useRef<FireworksHandle>(null);
   const saveBtnRef = useRef<HTMLButtonElement>(null);
 
   const phoneE164 = useMemo(() => {
@@ -385,31 +258,12 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
     return digits ? `+${dialOf(form.phone_country)}${digits}` : null;
   }, [form.phone_country, form.phone_national]);
 
-  function coerceCompanies(raw: any): CompanyOpt[] {
-    if (!raw) return [];
-    if (Array.isArray(raw)) {
-      return raw
-        .map((r) =>
-          typeof r === "string"
-            ? { id: r, name: null }
-            : { id: String(r.id ?? r.company_id ?? r.uuid ?? r), name: r.name ?? r.company_name ?? null },
-        )
-        .filter((x) => !!x.id);
-    }
-    return [];
-  }
-
-  function celebrate() {
-    const rect = saveBtnRef.current?.getBoundingClientRect();
-    if (rect) fxRef.current?.burstAt(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    else fxRef.current?.burstCenter();
-  }
-
   async function doCreate(payload: any) {
     const { data } = await apiClient.post("/leads", payload, { withCredentials: true });
     return data?.lead ?? data;
   }
 
+  /* ---------- submit (robust + logs + toast/alert fallback) ---------- */
   async function submit() {
     if (submittingRef.current) return;
     setErr(null);
@@ -423,6 +277,10 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
       submittingRef.current = true;
       setLoading(true);
 
+      try {
+        document.body.style.cursor = "wait";
+      } catch {}
+
       const name = form.lead_name.trim();
       const basePayload: any = {
         name,
@@ -435,13 +293,42 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
         company_id: form.company_id || undefined,
       };
 
-      let created = await doCreate(basePayload);
+      console.log("[QuickLeadDrawer] POST /leads payload:", basePayload);
 
-      // happy path
-      celebrate();
-      toast({ title: "Lead saved", description: created?.name ?? name });
-      onCreated?.(created);
-      onClose();
+      let created;
+      try {
+        created = await doCreate(basePayload);
+        console.log("[QuickLeadDrawer] /leads response:", created);
+      } catch (apiErr) {
+        console.error("[QuickLeadDrawer] POST /leads failed:", apiErr?.response?.status, apiErr?.response?.data || apiErr);
+        try {
+          toast({ title: "Save failed", description: apiErr?.response?.data?.error || apiErr?.message || "Error creating lead", variant: "destructive" });
+        } catch {
+          alert("Save failed: " + (apiErr?.response?.data?.error || apiErr?.message || "Error creating lead"));
+        }
+        setErr(String(apiErr?.response?.data?.error || apiErr?.message || "Failed to create"));
+        return;
+      }
+
+      // success
+      console.log("[QuickLeadDrawer] created lead:", created);
+      try {
+        toast({ title: "Lead saved", description: created?.name ?? name });
+      } catch {
+        alert("Lead saved: " + (created?.name ?? name));
+      }
+
+      try {
+        onCreated?.(created);
+      } catch (cbErr) {
+        console.error("[QuickLeadDrawer] onCreated callback threw:", cbErr);
+      }
+
+      try {
+        onClose();
+      } catch (closeErr) {
+        console.warn("[QuickLeadDrawer] onClose threw:", closeErr);
+      }
 
       // reset
       setForm({
@@ -455,89 +342,28 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
       });
       setCompanyChoices([]);
     } catch (e: any) {
-      // helpful console dump
-      console.error("Create lead failed", {
-        status: e?.response?.status,
-        data: e?.response?.data,
-        text: e?.response?.request?.responseText,
-      });
-
-      const status = e?.response?.status;
-      const errData = e?.response?.data;
-
-      if (status === 400 && errData?.error === "company_required") {
-        const list = coerceCompanies(errData?.companies);
-        setCompanyChoices(list);
-
-        // auto-pick if only one
-        if (list.length === 1) {
-          const only = list[0];
-          try {
-            const created = await doCreate({
-              name: form.lead_name.trim(),
-              title: form.lead_name.trim(),
-              lead_name: form.lead_name.trim(),
-              email: form.email || undefined,
-              phone_e164: phoneE164 || undefined,
-              source: form.source || undefined,
-              assigned_user_id: form.assigned_user_id || undefined,
-              company_id: only.id,
-            });
-
-            celebrate();
-            toast({ title: "Lead saved", description: created?.name ?? form.lead_name });
-            onCreated?.(created);
-            onClose();
-
-            // reset
-            setForm({
-              lead_name: "",
-              email: "",
-              phone_national: "",
-              phone_country: "IN",
-              source: "Direct",
-              assigned_user_id: null,
-              company_id: null,
-            });
-            setCompanyChoices([]);
-            return;
-          } catch (retryErr: any) {
-            console.error("Retry after auto-select company failed", retryErr?.response?.data || retryErr);
-          }
-        }
-
-        setErr("Please select a company, then click Save again.");
-        toast({
-          title: "Company required",
-          description: "Pick a company from the dropdown and save once more.",
-          variant: "destructive",
-        });
-        return;
+      console.error("[QuickLeadDrawer] unexpected error:", e);
+      try {
+        toast({ title: "Save failed", description: e?.message || "Unexpected error", variant: "destructive" });
+      } catch {
+        alert("Save failed: " + (e?.message || "Unexpected error"));
       }
-
-      const serverMsg = errData?.error || errData?.message || (typeof errData === "string" ? errData : null);
-      const msg =
-        status === 401
-          ? "Unauthorized (401): Please log in again."
-          : status === 400
-          ? `Bad Request (400): ${serverMsg ?? "Validation failed — check required fields."}`
-          : status === 500
-          ? `Server Error (500): ${serverMsg ?? "See server logs for stack trace."}`
-          : serverMsg || e?.message || "Failed to create";
-      setErr(msg);
-      toast({ title: "Save failed", description: msg, variant: "destructive" });
+      setErr(String(e?.message || "Unexpected error"));
     } finally {
       setLoading(false);
       submittingRef.current = false;
+      try {
+        document.body.style.cursor = "";
+      } catch {}
+      console.log("[QuickLeadDrawer] submit finished, loading reset");
     }
   }
 
-  // Enter key = save (while drawer open)
+  // keyboard shortcuts: Enter => save, Escape => close
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter" && !e.isComposing) {
-        // avoid Enter inside selects/textarea
         const t = e.target as HTMLElement | null;
         const tag = (t?.tagName || "").toLowerCase();
         if (tag !== "textarea" && tag !== "select") submit();
@@ -549,85 +375,162 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, form, phoneE164]);
 
-  return (
+  if (!open || typeof document === "undefined") return null;
+
+  return ReactDOM.createPortal(
     <>
-      {/* 🎆 Overlay on the whole app */}
-      <Fireworks ref={fxRef} zIndex={80} />
+      {/* backdrop + right-side drawer panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="fixed inset-0 z-[999999] flex"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div
+          className="absolute inset-0 transition-opacity duration-300"
+          style={{
+            background: "linear-gradient(180deg, rgba(6,6,9,0.55), rgba(2,2,5,0.65))",
+            backdropFilter: "blur(30px)",
+          }}
+        />
 
-      <Drawer open={open} onClose={onClose} title="Quick Lead" ariaLabel="Quick lead creation">
-        <div className="space-y-3">
-          {err && <div className="text-red-400 text-sm">{err}</div>}
-
-          <div>
-            <label className="block text-sm">Lead Name</label>
-            <Input
-              placeholder="e.g., Rahul Sharma"
-              value={form.lead_name}
-              onChange={(e) => setForm({ ...form, lead_name: e.target.value })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm">Email</label>
-            <Input
-              placeholder="name@company.com"
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm">Phone</label>
-            <CountryPhoneRow
-              phone_country={form.phone_country}
-              phone_national={form.phone_national}
-              onChangeCountry={(iso2) => setForm({ ...form, phone_country: iso2 })}
-              onChangeNational={(v) => setForm({ ...form, phone_national: v })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm">Source</label>
-            <SourceSelect value={form.source} onChange={(v) => setForm({ ...form, source: v })} options={SOURCE_OPTIONS} />
-          </div>
-
-          <div>
-            <label className="block text-sm">Assign To</label>
-            <AssignEmployee value={form.assigned_user_id} onChange={(id) => setForm({ ...form, assigned_user_id: id })} />
-          </div>
-
-          {companyChoices.length > 0 && (
+        <aside
+          className="
+            relative ml-auto w-full max-w-md h-full overflow-auto p-8
+            border-l border-white/10
+            bg-gradient-to-br from-white/[0.03] via-white/[0.015] to-white/[0.04]
+            backdrop-blur-2xl
+            shadow-[inset_0_0_60px_rgba(255,255,255,0.04),_0_8px_40px_rgba(100,100,255,0.08)]
+            rounded-l-3xl
+          "
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-4 mb-6 border-b border-white/10">
             <div>
-              <label className="block text-sm">Company</label>
-              <select
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm"
-                value={form.company_id ?? ""}
-                onChange={(e) => setForm({ ...form, company_id: e.target.value || null })}
+              <div
+                className="text-lg font-semibold text-white/95"
+                style={{ textShadow: "0 1px 0 rgba(0,0,0,0.6), 0 6px 12px rgba(80,70,200,0.1)" }}
               >
-                <option value="" disabled>
-                  Select company
-                </option>
-                {companyChoices.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name ? `${c.name} (${c.id.slice(0, 8)}…)` : c.id}
-                  </option>
-                ))}
-              </select>
-              <div className="text-xs opacity-70 mt-1">Pick a company and hit Save again.</div>
+                Quick Lead
+              </div>
+              <div className="text-xs text-white/70">Create lead quickly</div>
             </div>
-          )}
-
-          <div className="pt-2 flex gap-2">
-            <Button ref={saveBtnRef} onClick={submit} disabled={loading || !form.lead_name.trim()}>
-              {loading ? "Saving..." : "Save"}
-            </Button>
-            <Button onClick={onClose} className="bg-white/0 border-white/20" variant="outline">
-              Cancel
-            </Button>
+            <button
+              onClick={onClose}
+              className="rounded px-2 py-1 text-sm text-white/70 hover:bg-white/5 focus:outline-none"
+              aria-label="Close quick lead"
+            >
+              ✕
+            </button>
           </div>
-        </div>
-      </Drawer>
-    </>
+
+          <div className="space-y-4">
+            {err && <div className="text-rose-400 text-sm">{err}</div>}
+
+            <div>
+              <label className="block text-sm text-white/80 mb-1">Lead Name</label>
+              <Input
+                placeholder="e.g., Rahul Sharma"
+                value={form.lead_name}
+                onChange={(e) => setForm({ ...form, lead_name: e.target.value })}
+                className="bg-transparent text-white/95 placeholder:text-white/60 border border-white/15"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-white/80 mb-1">Email</label>
+              <Input
+                placeholder="name@company.com"
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                className="bg-transparent text-white/95 placeholder:text-white/60 border border-white/15"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-white/80 mb-1">Phone</label>
+              <CountryPhoneRow
+                phone_country={form.phone_country}
+                phone_national={form.phone_national}
+                onChangeCountry={(iso2) => setForm({ ...form, phone_country: iso2 })}
+                onChangeNational={(v) => setForm({ ...form, phone_national: v })}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-white/80 mb-1">Source</label>
+              <SourceSelect value={form.source} onChange={(v) => setForm({ ...form, source: v })} options={SOURCE_OPTIONS} />
+            </div>
+
+            {companyChoices.length > 0 && (
+              <div>
+                <label className="block text-sm text-white/80 mb-1">Company</label>
+                <select
+                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm"
+                  value={form.company_id ?? ""}
+                  onChange={(e) => setForm({ ...form, company_id: e.target.value || null })}
+                >
+                  <option value="" disabled>
+                    Select company
+                  </option>
+                  {companyChoices.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name ? `${c.name} (${c.id.slice(0, 8)}…)` : c.id}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs opacity-70 mt-1">Pick a company and hit Save again.</div>
+              </div>
+            )}
+
+            <div className="pt-2 flex gap-3 items-center">
+              <Button
+                ref={saveBtnRef}
+                onClick={submit}
+                disabled={loading || !form.lead_name.trim()}
+                aria-busy={loading}
+                className={`
+                  flex-1 rounded-lg px-3 py-2 text-sm font-semibold
+                  bg-gradient-to-r from-cyan-400 via-sky-400 to-violet-500 text-black
+                  hover:from-cyan-300 hover:to-violet-400
+                  shadow-[0_0_25px_rgba(120,80,255,0.3)]
+                  transition-all duration-300
+                  ${loading ? "cursor-wait" : ""}
+                `}
+              >
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <svg
+                      className="animate-spin"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <circle cx="12" cy="12" r="10" stroke="rgba(0,0,0,0.08)" strokeWidth="4" />
+                      <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+                    </svg>
+                    Saving...
+                  </span>
+                ) : (
+                  "Save"
+                )}
+              </Button>
+
+              <Button onClick={onClose} className="rounded-lg px-3 py-2 text-sm border border-white/15 text-white/80 hover:bg-white/5">
+                Cancel
+              </Button>
+            </div>
+          </div>
+
+          <div style={{ height: 28 }} />
+        </aside>
+      </div>
+    </>,
+    document.body,
   );
 }

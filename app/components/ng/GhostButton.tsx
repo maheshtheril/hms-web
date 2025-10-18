@@ -1,26 +1,51 @@
 "use client";
 import React from "react";
 import Link from "next/link";
-import clsx from "clsx";
 
-export function GhostButton({ children, className = "", href, ...props }: any) {
-  if (href) {
+type Props = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+  href?: string;
+  children?: React.ReactNode;
+  className?: string;
+};
+
+/**
+ * GhostButton:
+ * - If href is internal (starts with "/") -> use Next <Link>.
+ * - If href is external -> <a target="_blank" />.
+ * - If no href -> render <span> so it can safely be wrapped by a <Link> ancestor.
+ */
+export function GhostButton({ href, children, className = "", ...rest }: Props) {
+  const base =
+    "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium border transition-opacity disabled:opacity-60";
+  const cls = `${base} ${className}`.trim();
+
+  // internal
+  if (href && href.startsWith("/")) {
     return (
-      <Link
-        href={href}
-        className={clsx("inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold border border-[color:var(--ng-border)] bg-transparent hover:bg-white/3 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20", className)}
-        {...props}
-      >
+      <Link href={href} className={cls} {...(rest as any)}>
         {children}
       </Link>
     );
   }
+
+  // external
+  if (href) {
+    const safeProps = {
+      target: "_blank",
+      rel: "noopener noreferrer",
+      ...rest,
+    } as React.AnchorHTMLAttributes<HTMLAnchorElement>;
+    return (
+      <a href={href} className={cls} {...safeProps}>
+        {children}
+      </a>
+    );
+  }
+
+  // NO href -> render span (safe to be inside Link)
   return (
-    <button
-      {...props}
-      className={clsx("rounded-xl px-4 py-2 text-sm font-semibold border border-[color:var(--ng-border)] bg-transparent hover:bg-white/3 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20", className)}
-    >
+    <span className={cls} {...(rest as any)}>
       {children}
-    </button>
+    </span>
   );
 }

@@ -57,15 +57,15 @@ const SECTIONS: Section[] = [
         children: [
           { label: "Capture & Create", header: true },
           { label: "All Leads", href: "/crm/leads", keywords: ["index", "list", "table"] },
-          { label: "Create Lead", href: "/crm/leads/new", keywords: ["add", "new"] },
-          { label: "Import Leads", href: "/crm/leads/import", keywords: ["csv", "xlsx", "bulk"] },
+          { label: "Create Lead", href: "/leads/new", keywords: ["add", "new"] },
+          { label: "Import Leads", href: "/leads/import", keywords: ["csv", "xlsx", "bulk"] },
 
           { label: "Search & Intelligence", header: true },
-          { label: "Smart Search", href: "/crm/leads/search", keywords: ["tsvector", "filter"] },
+          { label: "Smart Search", href: "/leads/search", keywords: ["tsvector", "filter"] },
 
           { label: "Pipelines & Stages", header: true },
-          { label: "Pipelines", href: "/crm/pipelines" },
-          { label: "Pipeline Stages", href: "/crm/pipelines/stages" },
+          { label: "Pipelines", href: "/pipelines" },
+          { label: "Pipeline Stages", href: "/pipelines/stages" },
         ],
       },
 

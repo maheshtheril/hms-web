@@ -1,5 +1,6 @@
 // app/crm/leads/page.tsx — MOST ADVANCED SSR + Client hydration + SEO
 import "server-only";
+import Link from "next/link";
 import { cookies } from "next/headers";
 // import { redirect } from "next/navigation";
 import TopNav from "@/app/components/TopNav";
@@ -60,33 +61,37 @@ function buildQS(searchParams: Record<string, string | string[] | undefined>) {
   return sp.toString();
 }
 
-async function fetchMe(ssrSid: string) {
+async function fetchMe(ssrSid: string | undefined) {
+  if (!ssrSid) return null;
   try {
     const r = await fetch(`/api/auth/me`, {
       headers: { cookie: `sid=${ssrSid}; ssr_sid=${ssrSid}` }, // send both
       cache: "no-store",
     });
     if (!r.ok) return null;
-    const { user } = await r.json().catch(() => ({ user: null }));
-    return user as null | {
-      id: string;
-      email?: string;
-      roles?: string[];
+    const body = await r.json().catch(() => ({ user: null }));
+    // Normalize: many endpoints return { user } — return the user object directly
+    const { user } = body as any;
+    if (!user) return null;
+    return user as {
+      id?: string | null;
+      email?: string | null;
+      roles?: string[] | null;
       is_admin?: boolean;
       is_platform_admin?: boolean;
       is_tenant_admin?: boolean;
-    };
+    } | null;
   } catch {
     return null;
   }
 }
 
-async function fetchLeadsSSR(ssrSid: string, qs: string): Promise<LeadsListResponse | null> {
+async function fetchLeadsSSR(ssrSid: string | undefined, qs: string): Promise<LeadsListResponse | null> {
   // IMPORTANT: relative fetch so real cookies forward; also send both cookie names
   try {
     const url = `/api/leads${qs ? `?${qs}` : ""}`;
     const r = await fetch(url, {
-      headers: { cookie: `sid=${ssrSid}; ssr_sid=${ssrSid}` }, // send both
+      headers: { cookie: ssrSid ? `sid=${ssrSid}; ssr_sid=${ssrSid}` : "" },
       cache: "no-store",
     });
     if (!r.ok) return null;
@@ -97,18 +102,29 @@ async function fetchLeadsSSR(ssrSid: string, qs: string): Promise<LeadsListRespo
 }
 
 // derive “is admin?” using flags + well-known role codes
-function isAdminUser(user: NonNullable<Awaited<ReturnType<typeof fetchMe>>>) {
-  const roles = new Set<string>((user.roles ?? []).map(r => r.toLowerCase()));
+function isAdminUser(user: Awaited<ReturnType<typeof fetchMe>> | null | undefined) {
+  if (!user) return false;
+
+  // normalize roles safely (support a variety of shapes)
+  const rawRoles = Array.isArray((user as any).roles)
+    ? (user as any).roles
+    : Array.isArray((user as any).user?.roles)
+    ? (user as any).user.roles
+    : [];
+
+  const roles = new Set<string>(rawRoles.map((r: any) => String(r ?? "").toLowerCase()));
+
   return Boolean(
-    user.is_platform_admin ||
-      user.is_tenant_admin ||
-      user.is_admin ||
+    (user as any).is_platform_admin ||
+      (user as any).is_tenant_admin ||
+      (user as any).is_admin ||
       roles.has("platform_admin") ||
       roles.has("global_super_admin") ||
       roles.has("tenant_super_admin") ||
       roles.has("super_admin") ||
       roles.has("tenant_admin") ||
-      roles.has("company_admin")
+      roles.has("company_admin") ||
+      [...roles].some((r) => /admin|owner|superuser|platform/i.test(r))
   );
 }
 
@@ -120,19 +136,19 @@ export default async function LeadsPage({
 }) {
   const cookieStore = await cookies();
   const sid = cookieStore.get("ssr_sid")?.value;
-  if (!sid) { /* redirect disabled */ };
+  // if (!sid) { /* redirect disabled */ };
 
   const user = await fetchMe(sid);
-  if (!user?.id) { /* redirect disabled */ };
+  // if (!user?.id) { /* redirect disabled */ };
 
   // ── scope querystring for non-admins ─────────────────────────────
   const admin = isAdminUser(user);
   const hasOwnerInURL = typeof searchParams.owner !== "undefined";
   let qs = buildQS(searchParams);
 
-  if (!admin && !hasOwnerInURL) {
+  if (!admin && !hasOwnerInURL && user?.id) {
     const sp = new URLSearchParams(qs);
-    sp.set("owner", user.id); // scope to “my leads” for salesperson/supervisor/etc.
+    sp.set("owner", String(user.id)); // scope to “my leads” for salesperson/supervisor/etc.
     qs = sp.toString();
   }
 
@@ -140,7 +156,10 @@ export default async function LeadsPage({
   const initial = await fetchLeadsSSR(sid, qs);
 
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-zinc-950 via-zinc-900 to-black text-zinc-100">
+    <div
+      className="min-h-dvh bg-[radial-gradient(600px_200px_at_10%_10%,rgba(90,80,200,0.06),transparent),radial-gradient(500px_180px_at_90%_90%,rgba(20,140,220,0.04),transparent),linear-gradient(180deg,#030316 0%,#03030b 70%)] text-zinc-100"
+      // neural glass base
+    >
       <TopNav />
 
       <main className="mx-auto w-full max-w-screen-2xl px-4 lg:px-6 py-6 sm:py-8">
@@ -154,20 +173,26 @@ export default async function LeadsPage({
           </h1>
 
           <div className="flex items-center gap-2">
-            <a
+            <Link
               href={`/crm/leads/new?mode=detailed&src=leads_list&return=${encodeURIComponent("/crm/leads")}`}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold bg-white text-black hover:bg-zinc-100 active:scale-[.98] transition"
+              className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm shadow-black/40 bg-gradient-to-r from-white/95 to-white/85 text-black hover:brightness-95 active:scale-[.99] transform transition"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden className="opacity-80">
                 <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
               </svg>
               Add Lead
-            </a>
+            </Link>
           </div>
         </div>
 
         {/* Table container with SSR hydration + Suspense fallback */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 shadow-lg shadow-black/30 backdrop-blur-sm overflow-hidden">
+        <div
+          className="rounded-3xl border border-white/6 bg-gradient-to-b from-white/6 to-white/4 shadow-2xl backdrop-blur-md overflow-hidden"
+          style={{
+            boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+            border: "1px solid rgba(255,255,255,0.04)",
+          }}
+        >
           <Suspense fallback={<LeadsSkeleton />}>
             <LeadsTableClient initial={initial ?? undefined} />
           </Suspense>

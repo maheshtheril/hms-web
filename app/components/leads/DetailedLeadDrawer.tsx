@@ -2,13 +2,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
-import { Input } from "@/components/ui/input";
+import Input from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { CountryPhoneRow, dialOf } from "@/app/components/phones/CountryPhoneRow";
 
 /* ───────── Small UI helpers ───────── */
-function CaretDown({ className = "" }) {
+function CaretDown({ className = "" }: { className?: string }) {
   return (
     <svg className={className} width="14" height="14" viewBox="0 0 24 24" aria-hidden>
       <path fill="currentColor" d="M7 10l5 5 5-5z" />
@@ -33,7 +33,7 @@ function MenuItem({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full text-left px-3 py-2 rounded-lg text-sm ${active ? "bg-white/15" : "hover:bg-white/10"}`}
+      className={`w-full text-left px-3 py-2 rounded-lg text-sm ${active ? "bg-white/10" : "hover:bg-white/6"}`}
     >
       {children}
     </button>
@@ -103,6 +103,21 @@ function AssignEmployee({
       setErr(e?.response?.data?.error || "Could not load team");
     } finally { setLoading(false); }
   }
+// --- Paste this inside DetailedLeadForm component body (after your hooks)
+
+
+useEffect(() => {
+  try {
+    document.body.setAttribute("data-page", "lead-detailed");
+  } catch {}
+  return () => {
+    try {
+      document.body.removeAttribute("data-page");
+    } catch {}
+  };
+}, []);
+
+
 
   useEffect(() => {
     if (open && users.length === 0 && !loading && !err) loadUsers();
@@ -114,14 +129,14 @@ function AssignEmployee({
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="w-full inline-flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
+        className="w-full inline-flex items-center justify-between rounded-2xl border border-white/8 bg-white/3 backdrop-blur-sm px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/12 ng-btn"
         aria-haspopup="listbox" aria-expanded={open}
       >
-        <span>{selected ? (selected.name || selected.email || selected.id) : "Unassigned"}</span>
+        <span className="truncate">{selected ? (selected.name || selected.email || selected.id) : "Unassigned"}</span>
         <CaretDown />
       </button>
       {open && (
-        <div className="absolute z-50 mt-2 w-full rounded-2xl border border-white/10 bg-zinc-900 text-zinc-100 shadow-2xl p-2">
+        <div className="absolute z-50 mt-2 w-full rounded-2xl border border-white/8 bg-zinc-900/90 text-zinc-100 shadow-2xl p-2 backdrop-blur-md">
           <div className="max-h-60 overflow-auto pr-1">
             {loading && <div className="px-3 py-2 text-sm opacity-70">Loading…</div>}
             {err && <div className="px-3 py-2 text-sm text-amber-300">{err}</div>}
@@ -133,12 +148,12 @@ function AssignEmployee({
                 {users.map(u => (
                   <MenuItem key={u.id} active={u.id === value} onClick={() => { onChange(u.id); setOpen(false); }}>
                     <div className="flex items-center gap-2">
-                      <div className="h-6 w-6 rounded-full bg-white/10 grid place-items-center text-[10px]">
+                      <div className="h-6 w-6 rounded-full bg-white/8 grid place-items-center text-[10px] text-white/90">
                         {(u.name || u.email || u.id).slice(0, 2).toUpperCase()}
                       </div>
-                      <div className="flex-1">
-                        <div className="text-sm">{u.name || u.email || u.id}</div>
-                        {u.email && <div className="text-xs opacity-60">{u.email}</div>}
+                      <div className="flex-1 truncate">
+                        <div className="text-sm truncate">{u.name || u.email || u.id}</div>
+                        {u.email && <div className="text-xs opacity-60 truncate">{u.email}</div>}
                       </div>
                     </div>
                   </MenuItem>
@@ -165,7 +180,7 @@ function selectOptionsFrom(def: CFDef): Array<{ value: string; label: string }> 
 function CustomFieldInput({
   def, value, onChange,
 }: { def: CFDef; value: CFValue; onChange: (val: CFValue) => void }) {
-  const common = "w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white";
+  const common = "w-full rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white";
 
   async function handleFile(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -222,7 +237,7 @@ function CustomFieldInput({
     case "date":
       return (
         <Input
-          className={common}
+          className={common + " lead-date-input"} // add class for targeting
           type="date"
           value={value.value_text ?? ""}
           onChange={e => onChange({ value_text: e.target.value })}
@@ -351,6 +366,9 @@ export default function DetailedLeadForm({
   const [cfLoading, setCfLoading] = useState(false);
   const [cfErr, setCfErr] = useState<string | null>(null);
 
+  // refs for date control
+  const followUpInputRef = useRef<HTMLInputElement | null>(null);
+
   // derived lists
   const tagList = useMemo(
     () => String(form.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean),
@@ -403,6 +421,11 @@ export default function DetailedLeadForm({
           name: c.name ?? c.company_name ?? null,
         }));
         setCompanies(mapped);
+
+        // <-- AUTO-SELECT single company -->
+        if (mapped.length === 1) {
+          setForm((f: any) => ({ ...f, company_id: mapped[0].id }));
+        }
       } catch (e: any) {
         setLoadErr(e2 => ({ ...e2, companies: e?.response?.data?.error || "Could not load companies" }));
       }
@@ -473,6 +496,59 @@ export default function DetailedLeadForm({
     if (!ok) setForm((f: any) => ({ ...f, stage_id: "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.pipeline_id]);
+
+  // Remove/hide create-lead buttons that may appear elsewhere in the app (defensive)
+  useEffect(() => {
+    const selectors = [
+      '.quick-lead-btn',
+      '.detailed-lead-btn',
+      '.btn-create-lead',
+      '[data-create-lead]',
+      '[data-testid*="create"]',
+      'a[href*="/leads/new"]',
+      'button[class*="create"]',
+      'a[class*="create"]',
+      '[aria-label*="create lead" i]',
+      '[title*="create lead" i]',
+    ].join(',');
+
+    function removeCreateButtons() {
+      document.querySelectorAll(selectors).forEach(el => {
+        try {
+          el.remove();
+        } catch (e) {
+          try { (el as HTMLElement).style.display = "none"; } catch { /* ignore */ }
+        }
+      });
+    }
+
+    removeCreateButtons();
+    const interval = setInterval(removeCreateButtons, 300);
+    const timeout = setTimeout(() => clearInterval(interval), 3000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, []);
+
+  // Force color visibility for outline buttons (runtime inline override)
+  useEffect(() => {
+    const sel = '.btn-outline-dark, .ng-btn-outline, button[variant="outline"], button.btn-outline-dark';
+    function forceColors() {
+      document.querySelectorAll(sel).forEach(el => {
+        try {
+          const h = el as HTMLElement;
+          h.style.setProperty("color", "#FFFFFF", "important");
+          h.style.setProperty("-webkit-text-fill-color", "#FFFFFF", "important");
+          h.style.textShadow = "0 0 0 rgba(0,0,0,0.35)";
+          h.style.opacity = "1";
+          h.style.pointerEvents = "auto";
+        } catch {}
+      });
+    }
+    forceColors();
+    const mo = new MutationObserver(forceColors);
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true });
+    const t = setTimeout(() => mo.disconnect(), 6000);
+    return () => { mo.disconnect(); clearTimeout(t); };
+  }, []);
 
   function coerceCompaniesFromError(raw: any): CompanyOpt[] {
     if (!raw) return [];
@@ -661,14 +737,56 @@ export default function DetailedLeadForm({
     else router.back();
   };
 
+  // helper to open native picker reliably (exposed if you want to call programmatically)
+  const openNativeDatePicker = () => {
+    const el = followUpInputRef.current || document.querySelector<HTMLInputElement>('.lead-date-input');
+    if (!el) {
+      return;
+    }
+
+    try {
+      // prefer modern API
+      if (typeof (el as any).showPicker === 'function') {
+        (el as any).showPicker();
+        return;
+      }
+
+      // fallback sequence that works in many browsers
+      el.focus();
+      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      el.click();
+
+      setTimeout(() => {
+        try {
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          el.click();
+        } catch (_) { /* ignore */ }
+      }, 50);
+    } catch (e) {
+      try { el.focus(); } catch {}
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
       {/* Top bar */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/70 backdrop-blur px-6 py-4">
+      <header
+        style={{ ["--ng-btn-foreground" as any]: "#F8FAFC" } as React.CSSProperties}
+        className="sticky top-0 z-40 border-b border-white/10 bg-black/70 backdrop-blur px-6 py-4"
+      >
         <div className="max-w-screen-2xl mx-auto flex items-center justify-between">
           <h1 className="text-xl font-semibold">Create Lead (Detailed)</h1>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" className="btn-outline-dark" onClick={handleBack}>Back</Button>
+            {/* Back uses neural glass outline */}
+            <Button
+              type="button"
+              variant="outline"
+              className="btn-outline-dark ng-btn-outline"
+              onClick={handleBack}
+              style={{ color: "#fff" }}
+            >
+              Back
+            </Button>
           </div>
         </div>
       </header>
@@ -759,7 +877,7 @@ export default function DetailedLeadForm({
               <div>
                 <label className="block text-sm text-white/70">Company</label>
                 <select
-                  className="dark-select w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+                  className="dark-select w-full rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white truncate"
                   style={{ colorScheme: "dark" as any }}
                   value={form.company_id}
                   onChange={(e) => setForm({ ...form, company_id: e.target.value })}
@@ -780,7 +898,7 @@ export default function DetailedLeadForm({
               <div>
                 <label className="block text-sm text-white/70">Pipeline</label>
                 <select
-                  className="dark-select w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+                  className="dark-select w-full rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white"
                   style={{ colorScheme: "dark" as any }}
                   value={form.pipeline_id}
                   onChange={(e) => setForm({ ...form, pipeline_id: e.target.value })}
@@ -798,7 +916,7 @@ export default function DetailedLeadForm({
               <div className="md:col-span-3">
                 <label className="block text-sm text-white/70">Stage</label>
                 <select
-                  className="dark-select w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+                  className="dark-select w-full rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white"
                   style={{ colorScheme: "dark" as any }}
                   value={form.stage_id}
                   onChange={(e) => setForm({ ...form, stage_id: e.target.value })}
@@ -822,12 +940,12 @@ export default function DetailedLeadForm({
               <div>
                 <label className="block text-sm text-white/70">Source (label)</label>
                 <select
-                  className="dark-select w-full inline-flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+                  className="dark-select w-full inline-flex items-center justify-between rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white"
                   style={{ colorScheme: "dark" as any }}
                   value={form.source_label}
                   onChange={(e) => setForm({ ...form, source_label: e.target.value })}
                 >
-                  {["Direct","Web","Referral","Campaign","Inbound Call","Outbound Call","Event","Social","Partner","Other"].map(opt =>
+                  { ["Direct","Web","Referral","Campaign","Inbound Call","Outbound Call","Event","Social","Partner","Other"].map(opt =>
                     <option key={opt} value={opt}>{opt}</option>
                   )}
                 </select>
@@ -846,11 +964,34 @@ export default function DetailedLeadForm({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
                 <label className="block text-sm text-white/70">Follow-up Date</label>
-                <Input
-                  type="date"
-                  value={form.follow_up_date}
-                  onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })}
-                />
+                <div className="relative flex items-center gap-2">
+                  {/* Native input to ensure showPicker() and native pickers work */}
+                  <input
+                    className="lead-date-input w-full rounded-2xl border border-white/8 bg-white/3 px-3 py-2 text-sm text-white"
+                    type="date"
+                    value={form.follow_up_date}
+                    onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })}
+                    ref={(el) => { followUpInputRef.current = el; }}
+                  />
+
+                  {/* Visible calendar button that reliably opens native picker */}
+                  <button
+                    type="button"
+                    aria-label="Open calendar"
+                    onClick={openNativeDatePicker}
+                    className="ml-2 rounded-full p-2 border border-white/8 bg-white/4 hover:bg-white/6 lead-calendar-button"
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                      <path d="M16 3v4M8 3v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                      <path d="M3 11h18" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="mt-1 text-xs opacity-60">
+                  Click the calendar icon or the input to pick a date. (Use <code>YYYY-MM-DD</code> if typing.)
+                </div>
               </div>
             </div>
           </section>
@@ -899,7 +1040,7 @@ export default function DetailedLeadForm({
                 {tagList.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {tagList.map((t: string) => (
-                      <span key={t} className="text-[11px] px-2 py-0.5 rounded-full border border-white/15 bg-white/5">{t}</span>
+                      <span key={t} className="text-[11px] px-2 py-0.5 rounded-full border border-white/15 bg-white/4">{t}</span>
                     ))}
                   </div>
                 )}
@@ -915,31 +1056,161 @@ export default function DetailedLeadForm({
       </main>
 
       {/* Single footer actions */}
-      <footer className="sticky bottom-0 z-40 border-t border-white/10 bg-black/70 backdrop-blur px-6 py-4">
+      <footer
+        style={{ ["--ng-btn-foreground" as any]: "#F8FAFC" } as React.CSSProperties}
+        className="sticky bottom-0 z-40 border-t border-white/10 bg-black/70 backdrop-blur px-6 py-4"
+      >
         <div className="max-w-screen-2xl mx-auto flex justify-end gap-2">
-          <Button type="button" variant="outline" className="btn-outline-dark" onClick={handleBack}>Cancel</Button>
-          <Button type="submit" form="leadForm" disabled={loading || !form.lead_name.trim()}>
+          <Button
+            type="button"
+            variant="outline"
+            className="btn-outline-dark ng-btn-outline"
+            onClick={handleBack}
+            style={{ color: "#fff" }}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" form="leadForm" disabled={loading || !form.lead_name.trim()} className="ng-btn-primary">
             {loading ? "Saving..." : "Save Lead"}
           </Button>
         </div>
       </footer>
 
-      {/* Force native selects to be readable on dark UIs */}
+      {/* Neural Glass global helpers */}
       <style jsx global>{`
         :root { color-scheme: dark; }
+        /* Neural Glass Design Language - subtle, high-contrast, readable */
+        .ng-btn {
+          background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+          border: 1px solid rgba(255,255,255,0.06);
+          color: #fff;
+          backdrop-filter: blur(6px) saturate(120%);
+        }
+        .ng-btn-outline {
+          background: transparent;
+          border: 1px solid rgba(255,255,255,0.12) !important;
+          color: var(--ng-btn-foreground, #F8FAFC) !important;
+          box-shadow: 0 4px 18px rgba(2,6,23,0.45);
+          padding-left: 0.9rem; padding-right: 0.9rem;
+        }
+        .ng-btn-primary {
+          background: linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+          border: 1px solid rgba(255,255,255,0.12);
+          color: #fff;
+          padding-left: 1rem; padding-right: 1rem;
+          border-radius: 12px;
+          box-shadow: 0 6px 30px rgba(2,6,23,0.55);
+        }
+
+        /* make sure button text is always legible on light backgrounds in the project */
+        button, .btn-outline-dark { color: inherit !important; }
+
+        /* Force native selects to be readable on dark UIs */
         select.dark-select { color: #fff; }
         select.dark-select option { background-color: #0a0a0a; color: #fff; }
-        input[type="date"], input[type="datetime-local"], select, textarea, input {
-          color-scheme: dark; background-color: #0a0a0a; color: #fff; border-color: rgba(255,255,255,0.1);
+
+        /* Inputs improvements: avoid removing native date pickers — apply appearance:none to everything BUT date/datetime-local */
+        select, textarea, input:not([type="date"]):not([type="datetime-local"]) {
+          -webkit-appearance: none;
+          appearance: none;
+          color-scheme: dark;
+          background-color: rgba(255,255,255,0.02);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,0.08);
+          padding: .5rem .75rem;
+          border-radius: 12px;
         }
+
+        /* Ensure native date/datetime pickers are available */
+        input[type="date"],
+        input[type="datetime-local"] {
+          -webkit-appearance: textfield !important;
+          appearance: textfield !important;
+          background-color: rgba(255,255,255,0.02);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,0.08);
+          padding: .5rem .75rem;
+          border-radius: 12px;
+        }
+
+        /* Make sure the picker indicator is visible */
         input[type="date"]::-webkit-calendar-picker-indicator,
-        input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.9); }
-        input:focus, select:focus, textarea:focus {
-          outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.25);
-        }
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator { display: inline-block; opacity: 1; filter: invert(1) brightness(1.2) contrast(1.05); }
+
+        input[type="date"]::placeholder, input[type="datetime-local"]::placeholder { color: rgba(255,255,255,0.6); }
+
+        /* On focus make the field pop slightly (Neural Glass halo) */
+        input:focus, select:focus, textarea:focus { outline: none; box-shadow: 0 0 0 3px rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); }
+
+        /* slightly brighter selects/options for readability */
+        option { color: #fff; }
+
         .btn-outline-dark { border-color: rgba(255,255,255,0.2) !important; }
-        .btn-outline-dark:hover { background-color: rgba(255,255,255,0.06) !important; }
+        .btn-outline-dark:hover { background-color: rgba(255,255,255,0.04) !important; }
         button[disabled], input[disabled], select[disabled] { opacity: 0.6; }
+
+        /* === STRONGER WAY TO HIDE top 'Create Lead' buttons across the app === */
+        .btn-create-lead,
+        .quick-lead-btn,
+        .detailed-lead-btn,
+        [data-create-lead],
+        a[data-create-lead],
+        button[data-create-lead],
+        [href*="/leads/new"],
+        a[href*="/leads/new"],
+        button[class*="create"],
+        a[class*="create"],
+        [data-testid*="create"] {
+          display: none !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
+
+        /* Extra defensive hide for create buttons (attribute + case-insensitive) */
+        [aria-label*="create" i],
+        [data-testid*="create" i],
+        button[class*="create" i],
+        a[class*="create" i],
+        a[href*="/leads/new" i],
+        [title*="create" i],
+        [data-create-lead] {
+          display: none !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
+          user-select: none !important;
+        }
+
+        /* ensure the small calendar button is visible on dark bg */
+        .lead-date-input + button,
+        .lead-date-input + .calendar-button {
+          color: #fff;
+        }
+
+        /* Make sure calendar button sits above other elements and is interactive */
+        .lead-calendar-button {
+          z-index: 40;
+          pointer-events: auto;
+          cursor: pointer;
+        }
+
+        /* Make the whole button easier to click */
+        .lead-calendar-button { padding: 8px; min-width: 40px; min-height: 40px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; }
+
+        /* If your layout has overlays, force it above them */
+        .lead-calendar-button, .lead-date-input { position: relative; }
+
+        /* High-specificity forced colors for outline buttons (extra safety) */
+        html body .btn-outline-dark,
+        html body button.ng-btn-outline,
+        html body .ng-btn-outline,
+        html body button.btn-outline-dark,
+        html body .btn-outline-dark.ng-btn-outline {
+          color: #ffffff !important;
+          fill: #ffffff !important;
+          -webkit-text-fill-color: #ffffff !important;
+          text-decoration-color: #ffffff !important;
+          opacity: 1 !important;
+        }
       `}</style>
     </div>
   );

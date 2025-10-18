@@ -185,3 +185,49 @@
 @media (prefers-reduced-motion: reduce) {
   .glow-pulse, [data-framer-motion], .neural-glow { animation: none !important; }
 }
+/* make native calendar icon visible and clickable in dark theme */
+input[type="date"],
+input[type="datetime-local"] {
+  position: relative;               /* allow indicator positioning */
+  z-index: 1;
+  -webkit-appearance: textfield;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  display: block !important;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  filter: invert(1) brightness(1.2) contrast(1.05);
+  opacity: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+
+/* ensure text value is visible */
+input[type="date"], input[type="datetime-local"] {
+  -webkit-text-fill-color: #fff !important;
+  color: #fff !important;
+}
+/* ✅ Hide create lead buttons ONLY when on the Detailed Lead page */
+/* Hide create-lead buttons only when body[data-page="lead-detailed"] is set */
+body[data-page="lead-detailed"] .quick-lead-btn,
+body[data-page="lead-detailed"] .detailed-lead-btn,
+body[data-page="lead-detailed"] [data-create-lead] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
+/* Ensure visible elsewhere */
+.quick-lead-btn,
+.detailed-lead-btn,
+[data-create-lead] {
+  display: inline-flex !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}

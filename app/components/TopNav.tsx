@@ -1,199 +1,196 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useCallback } from "react";
 
-type MeUser = {
-  id: string;
-  name?: string | null;
-  email?: string | null;
-  avatar_url?: string | null;
+type TopNavProps = {
+  user?: { name?: string; email?: string; avatarUrl?: string | null };
+  onToggleSidebar?: () => void;
 };
 
-export default function TopNav() {
-  const [me, setMe] = useState<MeUser | null>(null);
-  const [open, setOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const displayName = me?.name ?? me?.email ?? "User";
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
-        if (!r.ok) return;
-        const data = await r.json().catch(() => ({}));
-        if (!alive) return;
-        setMe((data?.user ?? data) as MeUser);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+export default function TopNav({ user, onToggleSidebar }: TopNavProps) {
+  const logout = useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {}
+    window.location.href = "/login";
   }, []);
 
+  const displayInitial =
+    (user?.name?.[0] || user?.email?.[0] || "U").toUpperCase();
+
   return (
-    <header className="sticky top-0 z-40 backdrop-blur-sm bg-gradient-to-b from-black/60 via-zinc-900/40 to-transparent border-b border-white/6">
-      <div className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 lg:px-6">
-        <div className="flex items-center gap-4 h-16">
-          {/* Left: Brand */}
-          <div className="flex items-center gap-3 min-w-0">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="flex items-center justify-center h-10 w-10 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 ring-1 ring-white/6">
-                {/* subtle logo mark (SVG) */}
-                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden className="opacity-90">
-                  <path fill="currentColor" d="M3 12h18v2H3zM12 3v18h2V3z" />
-                </svg>
-              </div>
-              <div className="hidden md:flex flex-col leading-tight">
-                <span className="text-sm font-semibold tracking-tight">GeniusGrid</span>
-                <span className="text-[11px] text-white/50 -mt-0.5">ERP • Multi-tenant • AI</span>
-              </div>
-            </Link>
-          </div>
+    <header
+      className="sticky top-0 z-50 h-14 backdrop-blur-md border-b border-white/10"
+      style={{
+        background:
+          "linear-gradient(90deg, rgba(10,12,24,0.75) 0%, rgba(20,18,40,0.6) 60%, rgba(30,22,60,0.55) 100%)",
+      }}
+    >
+      <div className="mx-auto flex h-full w-full max-w-screen-2xl items-center justify-between gap-3 px-3 lg:px-6">
+        {/* ───────── Left: Sidebar toggle + Brand ───────── */}
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Toggle sidebar"
+            onClick={onToggleSidebar}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 active:scale-95 sm:hidden"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"
+              />
+            </svg>
+          </button>
 
-          {/* Middle: Search (grow) */}
-          <div className="flex-1">
-            <div className="relative max-w-2xl">
-              <label htmlFor="site-search" className="sr-only">Search</label>
-              <div className="flex items-center bg-white/4 border border-white/6 rounded-xl px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-white/20">
-                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden className="opacity-70 mr-2">
-                  <path fill="currentColor" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" />
-                </svg>
-                <input
-                  id="site-search"
-                  className="bg-transparent outline-none placeholder:text-white/40 w-full text-sm"
-                  placeholder="Search leads, invoices, customers..."
-                  aria-label="Search leads, invoices, customers"
-                />
-                <div className="hidden sm:flex items-center gap-2 ml-3">
-                  <TagChip>Leads</TagChip>
-                  <TagChip>Customers</TagChip>
-                </div>
-              </div>
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-white/5"
+          >
+           
+            <div className="hidden xs:block leading-tight">
+              <div className="text-sm font-semibold">GeniusGrid ERP</div>
+              <div className="text-[10px] opacity-70">AI • CRM • Multi-Tenant</div>
             </div>
-          </div>
+          </Link>
+        </div>
 
-          {/* Right: Controls */}
-          <nav className="flex items-center gap-3">
-            {/* quick action - add */}
-            <Link
-              href="/crm/leads/new?mode=quick"
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-black shadow-md hover:scale-[.99] active:scale-[.97] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-              aria-label="Quick add"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" /></svg>
-              <span className="hidden sm:inline">Quick</span>
-            </Link>
+        {/* ───────── Middle / Spacer ───────── */}
+        <div className="flex-1" />
 
-            {/* tenant / workspace switch */}
-            <div className="hidden sm:flex items-center rounded-lg border border-white/6 bg-white/3 px-2 py-1 text-xs">
-              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="opacity-80 mr-1">
-                <path fill="currentColor" d="M12 2L2 7v6c0 5 4 9 10 9s10-4 10-9V7L12 2z" />
-              </svg>
-              <span className="truncate max-w-[90px]">{/* tenant name placeholder */}Acme Corp</span>
+        {/* ───────── Right Controls ───────── */}
+        <div className="flex items-center gap-3">
+          {/* Search */}
+          <button
+            type="button"
+            aria-label="Search"
+            className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 active:scale-[.98]"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5 21.5 20zM9.5 14C7 14 5 12 5 9.5S7 5 9.5 5 14 7 14 9.5 12 14 9.5 14z"
+              />
+            </svg>
+            <span>Search</span>
+          </button>
+
+          {/* Theme toggle */}
+          <button
+            type="button"
+            aria-label="Toggle theme"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 active:scale-95"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+              <path fill="currentColor" d="M12 3a9 9 0 1 0 9 9a7 7 0 0 1-9-9z" />
+            </svg>
+          </button>
+
+          {/* Notifications */}
+          <button
+            type="button"
+            aria-label="Notifications"
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 active:scale-95"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M12 22a2 2 0 0 0 2-2H10a2 2 0 0 0 2 2m6-6v-5a6 6 0 0 0-5-5.91V4a1 1 0 1 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1z"
+              />
+            </svg>
+            <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-black">
+              3
+            </span>
+          </button>
+
+          {/* Profile dropdown */}
+          <details className="relative">
+            <summary className="list-none">
               <button
-                onClick={() => {
-                  /* open workspace switcher modal - implement as needed */
-                  alert("Switch workspace — implement modal");
-                }}
-                className="ml-2 px-2 py-1 rounded bg-white/3 hover:bg-white/4 text-xs"
-                aria-label="Switch workspace"
-              >
-                Change
-              </button>
-            </div>
-
-            {/* notifications */}
-            <div className="relative">
-              <button
-                onClick={() => setNotifOpen((s) => !s)}
-                className="rounded-lg p-2 border border-white/6 bg-white/3 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
-                aria-label="Notifications"
-                title="Notifications"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M12 2a6 6 0 0 0-6 6v4H4v2h16v-2h-2V8a6 6 0 0 0-6-6zM8 20a4 4 0 0 0 8 0H8z"/></svg>
-                <span className="sr-only">Notifications</span>
-              </button>
-
-              {notifOpen && (
-                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-gradient-to-b from-zinc-900/90 to-zinc-950/95 border border-white/6 shadow-lg p-3 text-sm">
-                  <div className="flex items-center justify-between mb-2">
-                    <strong>Notifications</strong>
-                    <button className="text-xs opacity-70" onClick={() => setNotifOpen(false)}>Close</button>
-                  </div>
-                  <div className="space-y-2">
-                    <NotificationItem title="Lead assigned to you" sub="John Doe • 2h ago" />
-                    <NotificationItem title="Invoice overdue" sub="Invoice #234 • 1d ago" tone="danger" />
-                    <NotificationItem title="New signup" sub="Acme Ltd • 3d ago" />
-                  </div>
-                  <div className="mt-3 text-center">
-                    <Link href="/notifications" className="text-xs underline">View all</Link>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* avatar / menu */}
-            <div className="relative">
-              <button
-                onClick={() => setOpen((s) => !s)}
-                className="flex items-center gap-2 rounded-lg px-2 py-1 border border-white/6 bg-white/3 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+                type="button"
                 aria-label="Account menu"
-                title="Account"
+                className="h-9 w-9 overflow-hidden rounded-full ring-2 ring-white/10 hover:ring-indigo-400/30 active:scale-95"
               >
-                <Avatar src={me?.avatar_url} name={displayName} />
-                <span className="hidden sm:block text-sm">{shortName(displayName)}</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden className="ml-1 opacity-60">
-                  <path fill="currentColor" d="M7 10l5 5 5-5z" />
-                </svg>
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt="User avatar"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="grid h-full w-full place-items-center bg-gradient-to-br from-indigo-500/30 to-fuchsia-500/30 text-xs font-bold">
+                    {displayInitial}
+                  </div>
+                )}
               </button>
-
-              {open && (
-                <div className="absolute right-0 mt-2 w-56 rounded-xl bg-gradient-to-b from-zinc-900/90 to-zinc-950/95 border border-white/6 shadow-lg p-2">
-                  <Link href="/profile" className="block px-3 py-2 rounded hover:bg-white/3">Profile</Link>
-                  <Link href="/settings" className="block px-3 py-2 rounded hover:bg-white/3">Settings</Link>
-                  <Link href="/crm/leads" className="block px-3 py-2 rounded hover:bg-white/3">Open Leads</Link>
-                  <hr className="my-2 border-white/6" />
-                  <form method="post" action="/api/auth/logout" className="px-3">
-                    <button type="submit" className="w-full text-left rounded px-2 py-2 hover:bg-white/3">Sign out</button>
-                  </form>
+            </summary>
+            <div className="absolute right-0 mt-2 w-64 rounded-2xl border border-white/10 bg-black/80 p-2 shadow-xl backdrop-blur">
+              <div className="px-3 py-2 border-b border-white/10">
+                <div className="text-sm font-semibold text-white/90">
+                  {user?.name || user?.email || "User"}
                 </div>
-              )}
+                {user?.email && (
+                  <div className="text-xs opacity-70">{user.email}</div>
+                )}
+              </div>
+              <Link
+                href="/profile"
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-white/5"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    fill="currentColor"
+                    d="M12 12a5 5 0 1 0-5-5a5 5 0 0 0 5 5m0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"
+                  />
+                </svg>
+                Profile
+              </Link>
+              <Link
+                href="/settings"
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-white/5"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    fill="currentColor"
+                    d="M12 8a4 4 0 1 1-4 4a4 4 0 0 1 4-4m8.94 4a7.94 7.94 0 0 0-.15-1.5l2.11-1.65l-2-3.46l-2.49 1a8.12 8.12 0 0 0-2.6-1.5L13.5 1h-4l-.31 2.89a8.12 8.12 0 0 0-2.6 1.5l-2.49-1l-2 3.46L3.7 10.5A7.94 7.94 0 0 0 3.56 12a7.94 7.94 0 0 0 .15 1.5L1.6 15.15l2 3.46l2.49-1a8.12 8.12 0 0 0 2.6 1.5L9.5 23h4l.31-2.89a8.12 8.12 0 0 0 2.6-1.5l2.49 1l2-3.46L20.3 13.5c.1-.49.16-.99.16-1.5Z"
+                  />
+                </svg>
+                Settings
+              </Link>
             </div>
-          </nav>
+          </details>
+
+          {/* Logout button */}
+          <button
+            onClick={logout}
+            type="button"
+            className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-xl 
+                       bg-gradient-to-r from-rose-500/90 via-fuchsia-500/80 to-indigo-500/80 
+                       hover:from-rose-400 hover:via-fuchsia-400 hover:to-indigo-400
+                       text-white text-sm font-semibold
+                       border border-white/10
+                       shadow-[0_0_0_1px_rgba(255,255,255,0.08)]
+                       hover:shadow-[0_0_0_1px_rgba(255,255,255,0.12),0_8px_24px_rgba(0,0,0,0.35)]
+                       active:scale-[.98]
+                       focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300/50"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              aria-hidden
+              className="opacity-90 transition-transform group-hover:translate-x-[1px]"
+            >
+              <path
+                fill="currentColor"
+                d="M14 7v-2h-10v14h10v-2h2v4h-14v-18h14v4zM21 12l-5-5v3h-8v4h8v3z"
+              />
+            </svg>
+            <span>Logout</span>
+          </button>
         </div>
       </div>
     </header>
-  );
-}
-
-/* ───────── Small UI primitives (reusable) ───────── */
-
-function Avatar({ src, name }: { src?: string | null; name: string }) {
-  const initials = (name || "U").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
-  if (src) {
-    return <img src={src} alt={name} className="h-8 w-8 rounded-full object-cover" />;
-  }
-  return <div className="h-8 w-8 rounded-full bg-white/5 flex items-center justify-center text-xs font-semibold">{initials}</div>;
-}
-
-function shortName(full: string) {
-  // "John Doe" -> "John"
-  return (full || "").split(" ")[0];
-}
-
-function TagChip({ children }: { children: React.ReactNode }) {
-  return <span className="text-[11px] px-2 py-0.5 rounded bg-white/4 border border-white/6">{children}</span>;
-}
-
-function NotificationItem({ title, sub, tone }: { title: string; sub?: string; tone?: "default" | "danger" }) {
-  return (
-    <div className="rounded-md p-2 hover:bg-white/3">
-      <div className={`text-sm ${tone === "danger" ? "text-rose-300" : "text-white"}`}>{title}</div>
-      {sub && <div className="text-xs opacity-70 mt-0.5">{sub}</div>}
-    </div>
   );
 }

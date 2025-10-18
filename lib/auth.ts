@@ -19,10 +19,11 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
  * Build a Cookie header from the server's incoming request cookies.
  * This forwards the user's sid cookie to the API when called on the server.
  */
-function buildCookieHeaderFromNext() {
+async function buildCookieHeaderFromNext(): Promise<string> {
   try {
-    const jar = cookies();
-    const pairs = jar.getAll().map(c => `${c.name}=${encodeURIComponent(c.value)}`);
+    // cookies() may return a Promise<ReadonlyRequestCookies> in some Next versions/envs
+    const jar = await cookies();
+    const pairs = jar.getAll().map((c) => `${c.name}=${encodeURIComponent(c.value)}`);
     return pairs.join("; ");
   } catch {
     return "";
@@ -34,7 +35,7 @@ function buildCookieHeaderFromNext() {
  * Use this in Server Components / loaders.
  */
 export async function getSession(): Promise<SessionResp> {
-  const cookieHeader = buildCookieHeaderFromNext();
+  const cookieHeader = await buildCookieHeaderFromNext();
   const res = await fetch(`${API}/auth/session`, {
     method: "GET",
     headers: {

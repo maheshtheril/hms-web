@@ -3,11 +3,11 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import FireworksOnce from "./FireworksOnce";
-import TopNav from "@/app/components/TopNav";
 import LeadCalendar from "@/app/dashboard/components/LeadCalendar";
 import PrimaryButton from "@/app/components/ng/PrimaryButton";
 import { GhostButton } from "@/app/components/ng/GhostButton";
+import QuickLeadDrawer from "@/app/components/leads/QuickLeadDrawer";
+import { useToast } from "@/components/ui/use-toast";
 
 /* ───────── Types ───────── */
 type KpisPayload = {
@@ -16,6 +16,7 @@ type KpisPayload = {
   todays_followups?: number;
   followups_today?: number;
   open_leads_trend?: string;
+  conversion_percentage?: number | string;
 };
 type MeUser = {
   id: string;
@@ -45,7 +46,7 @@ function detailedHref(src: string, ret = "/dashboard") {
 
 /* ───────── Client data hooks ───────── */
 function useAuthTolerant() {
-  const [authed, setAuthed] = useState<boolean | null>(null); // null=loading, true/false final
+  const [authed, setAuthed] = useState<boolean | null>(null);
   const [me, setMe] = useState<MeResponse | null>(null);
 
   useEffect(() => {
@@ -97,40 +98,56 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     return pool.length > 0 ? has(pool) : !!me?.user?.role && /sales|salesman|salesperson|bd[e]?/i.test(me.user.role!);
   }, [me]);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (authed !== true) return;
+  const fetchKpis = useMemo(() => {
+    return async (): Promise<KpisPayload | null> => {
+      if (authed !== true) return null;
+      setLoading(true);
       try {
         const url = new URL("/api/kpis", window.location.origin);
         url.searchParams.set(mine ? "mine" : "scope", mine ? "1" : "all");
         url.searchParams.set("table", "leads");
         const r = await fetch(url.toString(), { credentials: "include", cache: "no-store" });
-        if (!alive) return;
         if (!r.ok) {
           setKpis(null);
+          return null;
         } else {
           const data = (await r.json()) as KpisPayload;
           setKpis(data ?? null);
+          return data ?? null;
         }
-      } catch {
-        if (alive) setKpis(null);
+      } catch (e) {
+        console.error("[useKpis] fetch error", e);
+        setKpis(null);
+        return null;
       } finally {
-        if (alive) setLoading(false);
+        setLoading(false);
+      }
+    };
+  }, [authed, mine]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (authed !== true) return;
+      try {
+        await fetchKpis();
+      } catch {
+        if (!alive) return;
       }
     })();
     return () => {
       alive = false;
     };
-  }, [authed, mine]);
+  }, [authed, fetchKpis]);
 
-  return { kpis, loading, mine };
+  return { kpis, loading, mine, refetch: fetchKpis, setKpis };
 }
 
 /* ───────── Page ───────── */
 export default function DashboardPage() {
   const { authed, me } = useAuthTolerant();
-  const { kpis, loading: kpiLoading, mine } = useKpis(authed, me);
+  const { kpis, loading: kpiLoading, mine, refetch, setKpis } = useKpis(authed, me);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (authed === false) {
@@ -140,21 +157,75 @@ export default function DashboardPage() {
 
   const loading = authed === null;
   const displayName = me?.user?.name?.trim() || me?.user?.email || "User";
-  const openLeads = String(kpis?.open_leads ?? kpis?.open_leads_count ?? "–");
-  const todaysFollowups = String(kpis?.todays_followups ?? kpis?.followups_today ?? "–");
-  const openLeadsTrend = String(kpis?.open_leads_trend ?? "–");
+
+  // local optimistic KPIs so UI updates instantly while we refetch authoritative numbers
+  const [localKpis, setLocalKpis] = useState<KpisPayload | null>(null);
+  useEffect(() => {
+    if (kpis) setLocalKpis(kpis);
+  }, [kpis]);
+
+  const openLeads = String(localKpis?.open_leads ?? localKpis?.open_leads_count ?? "–");
+  const todaysFollowups = String(localKpis?.todays_followups ?? localKpis?.followups_today ?? "–");
+  const openLeadsTrend = String(localKpis?.open_leads_trend ?? "–");
+  const conversion = localKpis?.conversion_percentage ? String(localKpis.conversion_percentage) : "–";
+
+  // local state to show/hide quick lead drawer
+  const [showQuick, setShowQuick] = useState(false);
+
+  // key to force LeadCalendar remount (simple reload)
+  const [calendarKey, setCalendarKey] = useState(0);
+
+  /* ---------- handler when quick lead created ---------- */
+  async function handleCreated(lead: any) {
+    try {
+      // optimistic local increment of open leads (if present)
+      setLocalKpis((prev) => {
+        if (!prev) return prev;
+        const copy = { ...prev };
+        const numeric = Number(prev.open_leads ?? prev.open_leads_count ?? 0);
+        if (typeof prev.open_leads === "number") copy.open_leads = numeric + 1;
+        if (typeof prev.open_leads_count === "number") copy.open_leads_count = numeric + 1;
+        return copy;
+      });
+
+      // close drawer immediately
+      setShowQuick(false);
+
+      // refetch authoritative KPIs and apply them when returned
+      const fresh = await refetch?.();
+      console.log("[Dashboard] refetch KPIs result:", fresh);
+      if (fresh) {
+        setKpis?.(fresh);
+        setLocalKpis(fresh);
+        toast({ title: "Dashboard updated", description: "KPIs refreshed." });
+      } else {
+        // if server didn't return KPIs, notify user — server may be slow
+        toast({ title: "Saved", description: "Lead saved. KPIs will update shortly.", variant: "default" });
+        console.warn("[Dashboard] refetch returned null — check /api/kpis");
+      }
+
+      // force calendar reload
+      setCalendarKey((k) => k + 1);
+    } catch (e) {
+      console.error("[Dashboard] handleCreated error:", e);
+      // still force calendar reload and show basic toast
+      setCalendarKey((k) => k + 1);
+      toast({ title: "Lead saved", description: "Saved but KPI refresh failed.", variant: "destructive" });
+    }
+  }
 
   return (
-    <div className="min-h-dvh bg-gradient-to-b from-zinc-950 via-zinc-900 to-black text-zinc-100 antialiased">
-      {/* celebration: keeps existing behaviour (FireworksOnce handles once-only) */}
-      <FireworksOnce />
-      <TopNav />
-
-      <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-8">
-        {/* AUTH / KPI REGION */}
+    <div
+      className="min-h-dvh text-zinc-100 antialiased"
+      style={{
+        background:
+          "radial-gradient(800px 300px at 50% 8%, rgba(80,100,220,0.12), transparent 12%), radial-gradient(600px 260px at 10% 75%, rgba(60,50,130,0.06), transparent 10%), linear-gradient(180deg,#04050a 0%, #03030b 70%)",
+      }}
+    >
+      <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-12">
         {loading ? (
           <div className="space-y-6">
-            <div className="rounded-2xl border border-white/8 bg-white/4 p-6 animate-pulse" />
+            <div className="rounded-2xl border border-white/6 bg-white/4/10 p-6 animate-pulse" />
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="h-28 rounded-2xl border border-white/8 bg-white/4 animate-pulse" />
               <div className="h-28 rounded-2xl border border-white/8 bg-white/4 animate-pulse" />
@@ -164,42 +235,53 @@ export default function DashboardPage() {
         ) : authed === true ? (
           <>
             {/* HERO / WELCOME */}
-            <section className="rounded-3xl border border-white/6 bg-gradient-to-r from-zinc-900/60 via-zinc-900/40 to-black/40 p-6 sm:p-8 mb-6 shadow-lg">
+            <section
+              className="mx-auto max-w-5xl rounded-3xl p-8 mb-8 shadow-2xl"
+              style={{
+                background:
+                  "linear-gradient(135deg, rgba(12,18,40,0.64), rgba(32,18,48,0.44))",
+                border: "1px solid rgba(255,255,255,0.06)",
+                backdropFilter: "blur(12px)",
+              }}
+            >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                  <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
                     Welcome back, <span className="text-white/95">{displayName}</span>
                   </h1>
-                  <p className="mt-1 text-sm text-white/70 max-w-xl">
+                  <p className="mt-2 text-sm text-white/70 max-w-xl">
                     Secure session active — your tenant and company data are scoped and protected. {mine ? <span className="italic">Showing KPIs for your assignments.</span> : null}
                   </p>
 
-                  <div className="mt-4 flex flex-wrap gap-2 items-center">
-                    {/* Quick lead — use PrimaryButton for visual consistency */}
-                    <Link href={quickHref("welcome_quick")} className="inline-block">
-                      <PrimaryButton className="px-3 py-2 text-xs">+ Quick Lead</PrimaryButton>
-                    </Link>
+                  <div className="mt-5 flex flex-wrap gap-3 items-center">
+                    {/* Open Drawer via local state */}
+                    <button
+                      type="button"
+                      onClick={() => setShowQuick(true)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 to-violet-500 px-4 py-2 text-sm font-semibold text-black shadow-md hover:opacity-95 active:scale-[.99]"
+                    >
+                      + Quick Lead
+                    </button>
 
-                    {/* Detailed lead */}
-                    <GhostButton href={detailedHref("welcome_detailed")} className="px-3 py-2 text-xs">
+                    <GhostButton href={detailedHref("welcome_detailed")} className="px-4 py-2 text-sm">
                       + Detailed Lead
                     </GhostButton>
 
-                    {/* Open leads */}
                     <Link href="/crm/leads" className="inline-block">
-                      <GhostButton className="px-3 py-2 text-xs">Open Leads</GhostButton>
+                      <GhostButton className="px-4 py-2 text-sm">Open Leads</GhostButton>
                     </Link>
 
-                    {/* Schedule call */}
                     <Link href={quickHref("welcome_schedule_call")} className="inline-block">
-                      <GhostButton className="px-3 py-2 text-xs">Schedule Call</GhostButton>
+                      <GhostButton className="px-4 py-2 text-sm">Schedule Call</GhostButton>
                     </Link>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  {/* small summary pill */}
-                  <div className="rounded-full bg-white/6 px-3 py-2 text-xs font-medium">
+                <div className="flex items-center gap-4">
+                  <div
+                    className="rounded-full px-3 py-2 text-xs font-medium"
+                    style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))", border: "1px solid rgba(255,255,255,0.04)" }}
+                  >
                     <span className="block text-[11px] text-white/80">Tenant</span>
                     <span className="block text-sm font-semibold">Acme Corp</span>
                   </div>
@@ -212,53 +294,30 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* KPI GRID */}
-            <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <KpiCardEnhanced
-                label="Open Leads"
-                value={kpiLoading ? "…" : openLeads}
-                trend={kpiLoading ? "…" : openLeadsTrend}
-                icon={<IconLeads />}
-              />
-              <KpiCardEnhanced
-                label="Today’s Follow-ups"
-                value={kpiLoading ? "…" : todaysFollowups}
-                trend={kpiLoading ? "…" : "On track"}
-                icon={<IconCalendar />}
-              />
-              <KpiCardEnhanced
-                label="Conversion (est.)"
-                value={kpiLoading ? "…" : "12%"}
-                trend={kpiLoading ? "…" : "+1.2%"}
-                icon={<IconGauge />}
-              />
+            {/* KPI grid */}
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <KpiCardEnhanced label="Open Leads" value={kpiLoading ? "…" : openLeads} trend={kpiLoading ? "…" : openLeadsTrend} icon={<IconLeads />} />
+              <KpiCardEnhanced label="Today’s Follow-ups" value={kpiLoading ? "…" : todaysFollowups} trend={kpiLoading ? "…" : "On track"} icon={<IconCalendar />} />
+              <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? "…" : conversion} trend={kpiLoading ? "…" : "+1.2%"} icon={<IconGauge />} />
             </section>
 
-            {/* MAIN ROW: Calendar + Activity */}
+            {/* Main: calendar + aside */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900 to-zinc-950 p-5 sm:p-6 shadow-sm">
+              <div className="lg:col-span-2 rounded-2xl p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
                   <span className="text-xs text-white/50">Drag to reschedule • Click to edit</span>
                 </div>
 
-                <Suspense
-                  fallback={
-                    <div className="mt-2 animate-pulse space-y-3">
-                      <div className="h-6 w-40 rounded bg-white/10" />
-                      <div className="h-64 rounded-xl border border-white/10 bg-white/5" />
-                    </div>
-                  }
-                >
-                  {/* calendar component is left untouched */}
-                  <LeadCalendar />
+                <Suspense fallback={<div className="mt-2 animate-pulse space-y-3"><div className="h-6 w-40 rounded bg-white/10" /><div className="h-64 rounded-xl border border-white/10 bg-white/5" /></div>}>
+                  <LeadCalendar key={calendarKey} />
                 </Suspense>
               </div>
 
-              <aside className="rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900/50 to-zinc-950 p-4">
+              <aside className="rounded-2xl p-4" style={{ background: "linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))", border: "1px solid rgba(255,255,255,0.04)" }}>
                 <h3 className="text-sm font-semibold">Today</h3>
                 <div className="mt-3 space-y-3">
-                  <div className="rounded-md p-3 bg-white/3 border border-white/6">
+                  <div className="rounded-md p-3 bg-white/5 border border-white/10">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium">Call: John Doe</div>
@@ -268,64 +327,51 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-md p-3 bg-white/3 border border-white/6">
+                  <div className="rounded-md p-3 bg-white/5 border border-white/10">
                     <div className="text-sm font-medium">Invoice #234 overdue</div>
                     <div className="text-xs text-white/60">Customer: Acme Ltd</div>
                   </div>
                 </div>
 
-                <div className="mt-4">
-                  <Link href="/activities" className="text-xs underline">
-                    View all activities
-                  </Link>
-                </div>
+                <div className="mt-4"><Link href="/activities" className="text-xs underline">View all activities</Link></div>
               </aside>
             </section>
 
-            {/* Floating FAB */}
-            <Link
-              href={quickHref("fab")}
-              className="fixed right-6 bottom-8 inline-flex items-center gap-3 h-12 rounded-full bg-emerald-500 px-4 py-2 text-black font-semibold shadow-2xl hover:scale-[.99] active:scale-[.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-              aria-label="Quick add lead"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
-                <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2z" />
-              </svg>
-              <span className="hidden xs:inline">Quick lead</span>
-            </Link>
+            <footer className="mt-10 py-6 text-center text-xs opacity-60">© {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.</footer>
+
+            {/* Quick lead drawer portal */}
+            <QuickLeadDrawer
+              open={showQuick}
+              onClose={() => setShowQuick(false)}
+              onCreated={handleCreated}
+            />
           </>
         ) : null}
       </main>
-
-      <footer className="mt-10 py-6 text-center text-xs opacity-60">
-        © {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.
-      </footer>
     </div>
   );
 }
 
-/* ───────── Small UI pieces ───────── */
-
+/* ───────── UI helpers ───────── */
 function KpiCardEnhanced({ label, value, trend, icon }: { label: string; value: string; trend: string; icon?: React.ReactNode }) {
   return (
-    <div className="group rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900 to-zinc-950 p-4 transform transition-transform duration-200 hover:-translate-y-1 shadow-sm">
+    <div className="group rounded-2xl p-4 transform transition-transform duration-200 hover:-translate-y-1" style={{ background: "linear-gradient(180deg, rgba(18,24,40,0.5), rgba(8,10,18,0.45))", border: "1px solid rgba(255,255,255,0.04)", boxShadow: "0 6px 18px rgba(15,23,42,0.4)" }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="h-11 w-11 rounded-xl bg-white/6 flex items-center justify-center">{icon}</div>
+          <div className="h-11 w-11 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.03)" }}>{icon}</div>
           <div className="min-w-0">
             <div className="text-xs text-white/70">{label}</div>
             <div className="mt-1 flex items-baseline gap-3">
               <div className="text-2xl sm:text-3xl font-extrabold tracking-tight">{value}</div>
-              <div className="text-[11px] rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-300 border border-emerald-500/20">{trend}</div>
+              <div className="text-[11px] rounded-full px-2 py-0.5" style={{ background: "rgba(16,185,129,0.08)", color: "#86efac", border: "1px solid rgba(16,185,129,0.12)" }}>{trend}</div>
             </div>
           </div>
         </div>
 
-        {/* subtle sparkline placeholder (SVG decorative) */}
         <div className="hidden md:block">
           <svg width="64" height="28" viewBox="0 0 64 28" className="opacity-60" aria-hidden>
-            <polyline fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2" points="0,20 12,12 24,16 36,8 48,14 64,6" />
-            <polyline fill="none" stroke="rgba(16,185,129,0.7)" strokeWidth="2" points="0,20 12,12 24,16 36,8 48,14 64,6" />
+            <polyline fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="2" points="0,20 12,12 24,16 36,8 48,14 64,6" />
+            <polyline fill="none" stroke="rgba(99,102,241,0.7)" strokeWidth="2" points="0,20 12,12 24,16 36,8 48,14 64,6" />
           </svg>
         </div>
       </div>

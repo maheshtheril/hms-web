@@ -3,7 +3,7 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 // import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopNav from "@/app/components/TopNav";
+// TopNav removed to avoid duplicate nav bar
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -353,15 +353,15 @@ export default async function LeadsPage({ searchParams }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-gradient-to-b from-zinc-950 via-zinc-900 to-black text-zinc-100">
-      <TopNav />
+      {/* header area — removed TopNav (assume app layout supplies it). */}
       <main className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 lg:px-6 py-6 sm:py-8">
-        {/* Header */}
+        {/* Header (Neural Glass) */}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Leads</h1>
             <p className="text-sm text-white/60 mt-1">Smart filters, search, AI next-steps, and pagination.</p>
 
-            {/* Search bar */}
+            {/* Search bar (glass) */}
             <form action="/crm/leads" className="mt-3 flex items-center gap-2">
               {/* preserve existing params */}
               {["filter","sort","dir","size"].map((k) => {
@@ -374,11 +374,11 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                 name="q"
                 defaultValue={getParam(spObj, "q") ?? ""}
                 placeholder="Search name, email, phone, status, tags…"
-                className="w-72 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/20"
+                className="w-72 rounded-full border border-white/6 bg-white/3 px-3 py-2 text-sm placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/10 backdrop-blur-sm"
               />
               <button
                 type="submit"
-                className="rounded-xl border border-white/10 px-3 py-2 text-sm hover:bg-white/10"
+                className="rounded-full border border-white/10 px-3 py-2 text-sm hover:bg-white/6 shadow-sm"
               >
                 Search
               </button>
@@ -393,43 +393,43 @@ export default async function LeadsPage({ searchParams }: PageProps) {
           <div className="flex flex-wrap gap-2">
             <Link
               href={`/crm/leads/new?mode=detailed&src=leads_page_detailed&return=${returnTo}`}
-              className="rounded-xl bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-zinc-100 shadow-sm"
+              className="rounded-full bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-zinc-100 shadow-2xl shadow-black/30"
             >
               + Detailed Lead
             </Link>
             <Link
               href={`/crm/leads/new?mode=quick&src=leads_page_quick&return=${returnTo}`}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm hover:bg-white/10"
+              className="rounded-full border border-white/10 px-4 py-2 text-sm hover:bg-white/6"
             >
               Quick Lead
             </Link>
           </div>
         </div>
 
-        {/* Smart filters */}
+        {/* Smart filters (glass chips) */}
         <div className="mb-4 flex flex-wrap gap-2 text-xs">
           <span className="opacity-70 self-center">Quick filters:</span>
-          <Link href={mk({ filter: undefined, page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">All</Link>
-          <Link href={mk({ filter: "overdue", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Overdue</Link>
-          <Link href={mk({ filter: "week", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Due this week</Link>
-          <Link href={mk({ filter: "high", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">High value</Link>
-          <Link href={mk({ filter: "unassigned", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Unassigned</Link>
+          <Link href={mk({ filter: undefined, page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">All</Link>
+          <Link href={mk({ filter: "overdue", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Overdue</Link>
+          <Link href={mk({ filter: "week", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Due this week</Link>
+          <Link href={mk({ filter: "high", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">High value</Link>
+          <Link href={mk({ filter: "unassigned", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Unassigned</Link>
           <Link href={mk({ filter: "deleted", page: "1" })} className="rounded-full border border-red-500/30 px-2 py-1 hover:bg-red-500/10 text-red-200">Trash</Link>
 
           <span className="opacity-70 self-center ml-3">Sort:</span>
-          <Link href={mk({ sort: "exp", dir: "desc", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Expected Rev ↓</Link>
-          <Link href={mk({ sort: "follow", dir: "asc", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Soonest Follow-up</Link>
-          <Link href={mk({ sort: "prob", dir: "desc", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">Probability ↓</Link>
-          <Link href={mk({ sort: "score", dir: "desc", page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">AI Score ↓</Link>
+          <Link href={mk({ sort: "exp", dir: "desc", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Expected Rev ↓</Link>
+          <Link href={mk({ sort: "follow", dir: "asc", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Soonest Follow-up</Link>
+          <Link href={mk({ sort: "prob", dir: "desc", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">Probability ↓</Link>
+          <Link href={mk({ sort: "score", dir: "desc", page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">AI Score ↓</Link>
 
           <span className="opacity-70 self-center ml-3">Page size:</span>
           {["10","25","50","100"].map(s => (
-            <Link key={s} href={mk({ size: s, page: "1" })} className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/10">{s}</Link>
+            <Link key={s} href={mk({ size: s, page: "1" })} className="rounded-full border border-white/8 px-2 py-1 hover:bg-white/6">{s}</Link>
           ))}
         </div>
 
         {!list.ok && (
-          <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-sm">
+          <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/8 p-3 text-sm">
             <div className="font-semibold">Couldn’t load leads</div>
             <div className="opacity-80">HTTP {list.status}</div>
             {list.text && (
@@ -438,15 +438,15 @@ export default async function LeadsPage({ searchParams }: PageProps) {
           </div>
         )}
 
-        {/* Table wrapper */}
-        <div className="group relative overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-sm shadow-[0_0_0_1px_rgb(255_255_255/0.04)]">
+        {/* Table wrapper (Neural Glass) */}
+        <div className="group relative overflow-x-auto rounded-2xl border border-white/6 bg-white/4 backdrop-blur-md shadow-[0_6px_30px_rgba(0,0,0,0.6)]">
           <div className="pointer-events-none absolute right-0 top-0 h-full w-6 bg-gradient-to-l from-black/40 to-transparent z-30" />
           <table className="w-full text-sm min-w-[1120px]">
             <colgroup>
               <col /><col /><col /><col /><col /><col /><col /><col /><col /><col />
               <col /><col style={{ width: "6.5rem" }} />
             </colgroup>
-            <thead className="bg-white/5 sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-white/5">
+            <thead className="bg-white/6 sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-white/6">
               <tr className="text-left text-xs uppercase tracking-wide">
                 <th className="px-4 py-3">Lead</th>
                 <th className="px-4 py-3">Email</th>
@@ -459,7 +459,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                 <th className="px-4 py-3">AI Score</th>
                 <th className="px-4 py-3">AI Next Step</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 sticky right-0 z-40 bg-zinc-900/90 backdrop-blur supports-[backdrop-filter]:bg-zinc-900/70">Actions</th>
+                <th className="px-4 py-3 sticky right-0 z-40 bg-zinc-900/80 backdrop-blur supports-[backdrop-filter]:bg-zinc-900/70">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -488,7 +488,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                   return (
                     <tr
                       key={l.id}
-                      className={`border-t border-white/10 hover:bg-white/[0.06] align-top transition-colors ${deleted ? "opacity-60" : ""}`}
+                      className={`border-t border-white/8 hover:bg-white/[0.03] align-top transition-colors ${deleted ? "opacity-60" : ""}`}
                     >
                       <td className="px-4 py-3 font-medium max-w-[240px] truncate">
                         {deleted ? <span className="line-through">{l.name}</span> : l.name}
@@ -503,7 +503,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                       <td className="px-4 py-3">
                         <div className="grid place-items-center">
                           <div className="h-2 w-14 rounded bg-white/10 overflow-hidden" aria-label={`AI score ${ai.score}`}>
-                            <div className="h-2" style={{ width: `${ai.score}%` }} />
+                            <div className="h-2" style={{ width: `${ai.score}%`, background: "linear-gradient(90deg,#7C3AED,#06B6D4)" }} />
                           </div>
                           <div className="text-[10px] opacity-70 mt-1">{ai.score}</div>
                         </div>
@@ -555,7 +555,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
           <div className="flex items-center gap-2">
             <Link
               href={mk({ page: curPage > 1 ? String(curPage - 1) : "1" })}
-              className={`rounded-lg border border-white/10 px-3 py-1.5 hover:bg-white/10 ${curPage <= 1 ? "pointer-events-none opacity-40" : ""}`}
+              className={`rounded-lg border border-white/10 px-3 py-1.5 hover:bg-white/6 ${curPage <= 1 ? "pointer-events-none opacity-40" : ""}`}
             >
               Prev
             </Link>
@@ -565,7 +565,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
             </span>
             <Link
               href={mk({ page: curPage < pages ? String(curPage + 1) : String(pages) })}
-              className={`rounded-lg border border-white/10 px-3 py-1.5 hover:bg-white/10 ${curPage >= pages ? "pointer-events-none opacity-40" : ""}`}
+              className={`rounded-lg border border-white/10 px-3 py-1.5 hover:bg-white/6 ${curPage >= pages ? "pointer-events-none opacity-40" : ""}`}
             >
               Next
             </Link>
