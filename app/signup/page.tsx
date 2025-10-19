@@ -165,8 +165,20 @@ export default function SignupPage() {
       const res = await api.post("/api/tenant-signup", form);
       if (res.status === 201 || res.data?.ok) {
         setOk(true);
-        // small delay to show success
+
+        // ====== MINIMAL FIX: ensure session is established before redirecting ======
+        // This forces the browser to receive and commit the session cookie
+        // (prevents mobile race where signup redirects before cookie is usable).
+        try {
+          await api.get("/api/auth/me");
+        } catch (e) {
+          // ignore errors — we still redirect; this just increases reliability on mobile
+          console.warn("post-signup session check failed", e);
+        }
+
+        // small delay to show success then navigate
         setTimeout(() => router.push("/dashboard"), 800);
+        // ========================================================================
       } else {
         // server responded 2xx but not created — show message if present
         setErr(res.data?.error || "Signup failed");
