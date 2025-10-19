@@ -1,4 +1,3 @@
-// app/dashboard/page.tsx
 "use client";
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
@@ -33,6 +32,18 @@ type MeResponse = Partial<{
   roles: string[];
 }>;
 
+type Tenant = {
+  id: string;
+  name: string;
+};
+
+type Activity = {
+  id: string;
+  title: string;
+  meta?: string;
+  duration?: string;
+};
+
 /* ───────── Utils ───────── */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const safe = <T,>(v: T | undefined | null, fallback: T): T => (v == null ? fallback : v);
@@ -52,7 +63,7 @@ function useAuthTolerant() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      await delay(300);
+      await delay(200);
       async function tryMe(): Promise<boolean> {
         try {
           const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
@@ -149,6 +160,11 @@ export default function DashboardPage() {
   const { kpis, loading: kpiLoading, mine, refetch, setKpis } = useKpis(authed, me);
   const { toast } = useToast();
 
+  // tenant + activities live state
+  const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [lastLogin, setLastLogin] = useState<string | null>(null);
+  const [activities, setActivities] = useState<Activity[] | null>(null);
+
   useEffect(() => {
     if (authed === false) {
       window.location.replace("/login");
@@ -175,6 +191,41 @@ export default function DashboardPage() {
   // key to force LeadCalendar remount (simple reload)
   const [calendarKey, setCalendarKey] = useState(0);
 
+  // load tenant, activities, last login — keep it resilient to failures
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (authed !== true) return;
+      try {
+        const [tResp, aResp, loginResp] = await Promise.all([
+          fetch('/api/tenant', { credentials: 'include', cache: 'no-store' }).catch(() => null),
+          fetch('/api/activities?for=today&limit=6', { credentials: 'include', cache: 'no-store' }).catch(() => null),
+          fetch('/api/auth/last-login', { credentials: 'include', cache: 'no-store' }).catch(() => null),
+        ]);
+
+        if (!alive) return;
+
+        if (tResp && tResp.ok) {
+          const td = await tResp.json().catch(() => null);
+          if (td) setTenant(td as Tenant);
+        }
+
+        if (aResp && aResp.ok) {
+          const ad = await aResp.json().catch(() => null);
+          if (ad && Array.isArray(ad)) setActivities(ad as Activity[]);
+        }
+
+        if (loginResp && loginResp.ok) {
+          const ld = await loginResp.json().catch(() => null);
+          if (ld?.last_login) setLastLogin(String(ld.last_login));
+        }
+      } catch (e) {
+        console.warn('[Dashboard] auxiliary data load failed', e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [authed]);
+
   /* ---------- handler when quick lead created ---------- */
   async function handleCreated(lead: any) {
     try {
@@ -183,8 +234,8 @@ export default function DashboardPage() {
         if (!prev) return prev;
         const copy = { ...prev };
         const numeric = Number(prev.open_leads ?? prev.open_leads_count ?? 0);
-        if (typeof prev.open_leads === "number") copy.open_leads = numeric + 1;
-        if (typeof prev.open_leads_count === "number") copy.open_leads_count = numeric + 1;
+        if (typeof prev.open_leads === 'number') copy.open_leads = numeric + 1;
+        if (typeof prev.open_leads_count === 'number') copy.open_leads_count = numeric + 1;
         return copy;
       });
 
@@ -196,17 +247,17 @@ export default function DashboardPage() {
       if (fresh) {
         setKpis?.(fresh);
         setLocalKpis(fresh);
-        toast({ title: "Dashboard updated", description: "KPIs refreshed." });
+        toast({ title: 'Dashboard updated', description: 'KPIs refreshed.' });
       } else {
-        toast({ title: "Saved", description: "Lead saved. KPIs will update shortly.", variant: "default" });
+        toast({ title: 'Saved', description: 'Lead saved. KPIs will update shortly.', variant: 'default' });
       }
 
       // force calendar reload
       setCalendarKey((k) => k + 1);
     } catch (e) {
-      console.error("[Dashboard] handleCreated error:", e);
+      console.error('[Dashboard] handleCreated error:', e);
       setCalendarKey((k) => k + 1);
-      toast({ title: "Lead saved", description: "Saved but KPI refresh failed.", variant: "destructive" });
+      toast({ title: 'Lead saved', description: 'Saved but KPI refresh failed.', variant: 'destructive' });
     }
   }
 
@@ -215,7 +266,7 @@ export default function DashboardPage() {
       className="min-h-dvh text-zinc-100 antialiased"
       style={{
         background:
-          "radial-gradient(800px 300px at 50% 8%, rgba(80,100,220,0.12), transparent 12%), radial-gradient(600px 260px at 10% 75%, rgba(60,50,130,0.06), transparent 10%), linear-gradient(180deg,#04050a 0%, #03030b 70%)",
+          'radial-gradient(800px 300px at 50% 8%, rgba(80,100,220,0.12), transparent 12%), radial-gradient(600px 260px at 10% 75%, rgba(60,50,130,0.06), transparent 10%), linear-gradient(180deg,#04050a 0%, #03030b 70%)',
       }}
     >
       <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
@@ -234,9 +285,9 @@ export default function DashboardPage() {
             <section
               className="mx-auto max-w-5xl rounded-3xl p-6 sm:p-8 mb-6 sm:mb-8 shadow-2xl"
               style={{
-                background: "linear-gradient(135deg, rgba(12,18,40,0.64), rgba(32,18,48,0.44))",
-                border: "1px solid rgba(255,255,255,0.06)",
-                backdropFilter: "blur(12px)",
+                background: 'linear-gradient(135deg, rgba(12,18,40,0.64), rgba(32,18,48,0.44))',
+                border: '1px solid rgba(255,255,255,0.06)',
+                backdropFilter: 'blur(12px)',
               }}
             >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -250,13 +301,14 @@ export default function DashboardPage() {
                   </p>
 
                   <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row sm:items-center gap-3">
-                    <PrimaryButton
-                      type="button"
+                    {/* Quick lead: visually consistent with other buttons but highlighted */}
+                    <GhostButton
+                      as="button"
                       onClick={() => setShowQuick(true)}
-                      className="w-full sm:w-auto justify-center"
+                      className="w-full sm:w-auto justify-center ring-1 ring-indigo-500/20 hover:ring-indigo-500/40"
                     >
                       + Quick Lead
-                    </PrimaryButton>
+                    </GhostButton>
 
                     <GhostButton href={detailedHref("welcome_detailed")} className="w-full sm:w-auto justify-center">
                       + Detailed Lead
@@ -273,14 +325,14 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
-                  <div className="rounded-full px-3 py-2 text-xs font-medium min-w-[96px] text-center" style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))", border: "1px solid rgba(255,255,255,0.04)" }}>
+                  <div className="rounded-full px-3 py-2 text-xs font-medium min-w-[96px] text-center" style={{ background: 'linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))', border: '1px solid rgba(255,255,255,0.04)' }}>
                     <span className="block text-[11px] text-white/80">Tenant</span>
-                    <span className="block text-sm font-semibold">Acme Corp</span>
+                    <span className="block text-sm font-semibold">{tenant?.name ?? '—'}</span>
                   </div>
 
                   <div className="flex flex-col items-end text-right sm:text-right">
                     <span className="text-xs text-white/60">Last login</span>
-                    <span className="text-sm font-medium">Today</span>
+                    <span className="text-sm font-medium">{lastLogin ? new Date(lastLogin).toLocaleString() : '—'}</span>
                   </div>
                 </div>
               </div>
@@ -288,14 +340,14 @@ export default function DashboardPage() {
 
             {/* KPI grid */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              <KpiCardEnhanced label="Open Leads" value={kpiLoading ? "…" : openLeads} trend={kpiLoading ? "…" : openLeadsTrend} icon={<IconLeads />} />
-              <KpiCardEnhanced label="Today’s Follow-ups" value={kpiLoading ? "…" : todaysFollowups} trend={kpiLoading ? "…" : "On track"} icon={<IconCalendar />} />
-              <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? "…" : conversion} trend={kpiLoading ? "…" : "+1.2%"} icon={<IconGauge />} />
+              <KpiCardEnhanced label="Open Leads" value={kpiLoading ? '…' : openLeads} trend={kpiLoading ? '…' : openLeadsTrend} icon={<IconLeads />} />
+              <KpiCardEnhanced label="Today’s Follow-ups" value={kpiLoading ? '…' : todaysFollowups} trend={kpiLoading ? '…' : 'On track'} icon={<IconCalendar />} />
+              <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? '…' : conversion} trend={kpiLoading ? '…' : '+1.2%'} icon={<IconGauge />} />
             </section>
 
             {/* Main: calendar + aside (stack on mobile) */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-              <div className="lg:col-span-2 rounded-2xl p-4 sm:p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
+              <div className="lg:col-span-2 rounded-2xl p-4 sm:p-6" style={{ background: 'linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))', border: '1px solid rgba(255,255,255,0.04)', backdropFilter: 'blur(10px)' }}>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm sm:text-base font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
                   <span className="text-xs text-white/50">Drag to reschedule • Tap to edit</span>
@@ -308,23 +360,26 @@ export default function DashboardPage() {
                 </Suspense>
               </div>
 
-              <aside className="rounded-2xl p-3 sm:p-4" style={{ background: "linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))", border: "1px solid rgba(255,255,255,0.04)" }}>
+              <aside className="rounded-2xl p-3 sm:p-4" style={{ background: 'linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))', border: '1px solid rgba(255,255,255,0.04)' }}>
                 <h3 className="text-sm font-semibold">Today</h3>
                 <div className="mt-3 space-y-3 max-h-[48vh] sm:max-h-[60vh] overflow-auto pr-2">
-                  <div className="rounded-md p-3 bg-white/5 border border-white/10">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">Call: John Doe</div>
-                        <div className="text-xs text-white/60">At 3:30 PM • Reminder set</div>
+                  {activities && activities.length > 0 ? (
+                    activities.map((a) => (
+                      <div key={a.id} className="rounded-md p-3 bg-white/5 border border-white/10">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium">{a.title}</div>
+                            <div className="text-xs text-white/60">{a.meta ?? ''}</div>
+                          </div>
+                          <div className="text-xs text-white/60">{a.duration ?? ''}</div>
+                        </div>
                       </div>
-                      <div className="text-xs text-white/60">10m</div>
+                    ))
+                  ) : (
+                    <div className="rounded-md p-3 bg-white/5 border border-white/10">
+                      <div className="text-sm text-white/60">No activities for today.</div>
                     </div>
-                  </div>
-
-                  <div className="rounded-md p-3 bg-white/5 border border-white/10">
-                    <div className="text-sm font-medium">Invoice #234 overdue</div>
-                    <div className="text-xs text-white/60">Customer: Acme Ltd</div>
-                  </div>
+                  )}
                 </div>
 
                 <div className="mt-4"><Link href="/activities" className="text-xs underline">View all activities</Link></div>
@@ -349,15 +404,15 @@ export default function DashboardPage() {
 /* ───────── UI helpers ───────── */
 function KpiCardEnhanced({ label, value, trend, icon }: { label: string; value: string; trend: string; icon?: React.ReactNode }) {
   return (
-    <div className="group rounded-2xl p-3 sm:p-4 transform transition-transform duration-200 hover:-translate-y-1" style={{ background: "linear-gradient(180deg, rgba(18,24,40,0.5), rgba(8,10,18,0.45))", border: "1px solid rgba(255,255,255,0.04)", boxShadow: "0 6px 18px rgba(15,23,42,0.4)" }}>
+    <div className="group rounded-2xl p-3 sm:p-4 transform transition-transform duration-200 hover:-translate-y-1" style={{ background: 'linear-gradient(180deg, rgba(18,24,40,0.5), rgba(8,10,18,0.45))', border: '1px solid rgba(255,255,255,0.04)', boxShadow: '0 6px 18px rgba(15,23,42,0.4)' }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="h-11 w-11 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.03)" }}>{icon}</div>
+          <div className="h-11 w-11 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))', border: '1px solid rgba(255,255,255,0.03)' }}>{icon}</div>
           <div className="min-w-0">
             <div className="text-xs text-white/70">{label}</div>
             <div className="mt-1 flex items-baseline gap-3">
               <div className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight">{value}</div>
-              <div className="text-[11px] rounded-full px-2 py-0.5" style={{ background: "rgba(16,185,129,0.08)", color: "#86efac", border: "1px solid rgba(16,185,129,0.12)" }}>{trend}</div>
+              <div className="text-[11px] rounded-full px-2 py-0.5" style={{ background: 'rgba(16,185,129,0.08)', color: '#86efac', border: '1px solid rgba(16,185,129,0.12)' }}>{trend}</div>
             </div>
           </div>
         </div>
