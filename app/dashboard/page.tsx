@@ -163,6 +163,10 @@ export default function DashboardPage() {
   // tenant live state
   const [tenant, setTenant] = useState<Tenant | null>(null);
 
+  // calendar focus ref + visual focus state
+  const calendarRef = React.useRef<HTMLDivElement | null>(null);
+  const [calendarFocused, setCalendarFocused] = useState(false);
+
   useEffect(() => {
     if (authed === false) {
       window.location.replace("/login");
@@ -308,9 +312,33 @@ export default function DashboardPage() {
                       <GhostButton className="w-full sm:w-auto justify-center">Open Leads</GhostButton>
                     </Link>
 
-                    <Link href={quickHref("welcome_schedule_call")} className="w-full sm:w-auto">
+                    {/* Schedule Call: scrolls & focuses the calendar below */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const el = calendarRef.current || document.getElementById("lead-calendar");
+                          if (el) {
+                            el.scrollIntoView({ behavior: "smooth", block: "center" });
+                            // small delay to allow scroll to start, then focus + highlight
+                            setTimeout(() => {
+                              try {
+                                (el as HTMLElement).focus();
+                                setCalendarFocused(true);
+                                setTimeout(() => setCalendarFocused(false), 1600);
+                              } catch {
+                                // ignore focus errors
+                              }
+                            }, 220);
+                          }
+                        } catch (err) {
+                          console.warn("focus calendar failed", err);
+                        }
+                      }}
+                      className="w-full sm:w-auto"
+                    >
                       <GhostButton className="w-full sm:w-auto justify-center">Schedule Call</GhostButton>
-                    </Link>
+                    </button>
                   </div>
                 </div>
 
@@ -345,7 +373,12 @@ export default function DashboardPage() {
                 </div>
 
                 <Suspense fallback={<div className="mt-2 animate-pulse space-y-3"><div className="h-6 w-40 rounded bg-white/10" /><div className="h-64 rounded-xl border border-white/10 bg-white/5" /></div>}>
-                  <div className="min-h-[280px] sm:min-h-[360px]">
+                  <div
+                    id="lead-calendar"
+                    ref={calendarRef}
+                    tabIndex={-1}
+                    className={`min-h-[280px] sm:min-h-[360px] outline-none transition-shadow duration-300 ${calendarFocused ? "ring-2 ring-indigo-500/60 rounded-xl" : ""}`}
+                  >
                     <LeadCalendar key={calendarKey} />
                   </div>
                 </Suspense>
