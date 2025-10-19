@@ -160,9 +160,8 @@ export default function DashboardPage() {
   const { kpis, loading: kpiLoading, mine, refetch, setKpis } = useKpis(authed, me);
   const { toast } = useToast();
 
-  // tenant + lastLogin live state
+  // tenant live state
   const [tenant, setTenant] = useState<Tenant | null>(null);
-  const [lastLogin, setLastLogin] = useState<string | null>(null);
 
   useEffect(() => {
     if (authed === false) {
@@ -190,18 +189,13 @@ export default function DashboardPage() {
   // key to force LeadCalendar remount (simple reload)
   const [calendarKey, setCalendarKey] = useState(0);
 
-  // load tenant and last login — keep it resilient to failures
+  // load tenant — keep it resilient to failures
   useEffect(() => {
     let alive = true;
     (async () => {
       if (authed !== true) return;
       try {
-        const [tResp, loginResp] = await Promise.all([
-          // NOTE: backend mounts tenants at /api/tenants (plural)
-          fetch("/api/tenants", { credentials: "include", cache: "no-store" }).catch(() => null),
-          // auth router is mounted at /auth
-          fetch("/auth/last-login", { credentials: "include", cache: "no-store" }).catch(() => null),
-        ]);
+        const tResp = await fetch("/api/tenants", { credentials: "include", cache: "no-store" }).catch(() => null);
 
         if (!alive) return;
 
@@ -212,12 +206,6 @@ export default function DashboardPage() {
             if (td.tenant) setTenant(td.tenant as Tenant);
             else if (td.id) setTenant(td as Tenant);
           }
-        }
-
-        // last-login: { last_login: "..." }
-        if (loginResp && loginResp.ok) {
-          const ld = await loginResp.json().catch(() => null);
-          if (ld?.last_login) setLastLogin(String(ld.last_login));
         }
       } catch (e) {
         console.warn("[Dashboard] auxiliary data load failed", e);
@@ -336,11 +324,6 @@ export default function DashboardPage() {
                   >
                     <span className="block text-[11px] text-white/80">Tenant</span>
                     <span className="block text-sm font-semibold">{tenant?.name ?? "—"}</span>
-                  </div>
-
-                  <div className="flex flex-col items-end text-right sm:text-right">
-                    <span className="text-xs text-white/60">Last login</span>
-                    <span className="text-sm font-medium">{lastLogin ? new Date(lastLogin).toLocaleString() : "—"}</span>
                   </div>
                 </div>
               </div>
