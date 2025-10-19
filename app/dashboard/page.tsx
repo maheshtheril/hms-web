@@ -109,22 +109,65 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     return pool.length > 0 ? has(pool) : !!me?.user?.role && /sales|salesman|salesperson|bd[e]?/i.test(me.user.role!);
   }, [me]);
 
+  const normalizePayload = (data: any): KpisPayload => {
+    // be permissive: accept number or string; normalize to number where appropriate
+    const getNum = (keys: string[]) => {
+      for (const k of keys) {
+        const v = data?.[k];
+        if (v === undefined || v === null) continue;
+        // numeric already
+        if (typeof v === "number") return v;
+        // numeric string
+        if (typeof v === "string" && v.trim() !== "") {
+          const parsed = Number(v);
+          if (!Number.isNaN(parsed)) return parsed;
+        }
+      }
+      return 0;
+    };
+
+    const normalized: KpisPayload = {
+      open_leads: getNum(["open_leads", "open_leads_count"]),
+      open_leads_count: getNum(["open_leads_count", "open_leads"]),
+      todays_followups: getNum(["todays_followups", "followups_today", "followups", "today_followups"]),
+      followups_today: getNum(["followups_today", "todays_followups", "followups"]),
+      open_leads_trend: data?.open_leads_trend ?? data?.trend ?? "+0%",
+      conversion_percentage: data?.conversion_percentage ?? data?.conversion ?? "–",
+    };
+    return normalized;
+  };
+
   const fetchKpis = useMemo(() => {
     return async (): Promise<KpisPayload | null> => {
       if (authed !== true) return null;
       setLoading(true);
       try {
         const url = new URL("/api/kpis", window.location.origin);
-        url.searchParams.set(mine ? "mine" : "scope", mine ? "1" : "all");
+        // NOTE: server does not use "mine=1" param explicitly, but harmless to include
+        if (mine) url.searchParams.set("mine", "1");
         url.searchParams.set("table", "leads");
+
         const r = await fetch(url.toString(), { credentials: "include", cache: "no-store" });
-        if (!r.ok) {
+        // debug
+        console.debug("[useKpis] GET", url.toString(), "status", r.status);
+        const raw = await r.text().catch(() => "");
+        // try parse JSON for logging; if parse fails, dump raw
+        let parsed: any = null;
+        try {
+          parsed = raw ? JSON.parse(raw) : null;
+        } catch (parseErr) {
+          console.warn("[useKpis] response not JSON:", raw.slice(0, 1000));
+          parsed = null;
+        }
+        console.debug("[useKpis] raw payload:", parsed ?? raw);
+
+        if (!r.ok || !parsed) {
           setKpis(null);
           return null;
         } else {
-          const data = (await r.json()) as KpisPayload;
-          setKpis(data ?? null);
-          return data ?? null;
+          const normalized = normalizePayload(parsed);
+          setKpis(normalized);
+          return normalized;
         }
       } catch (e) {
         console.error("[useKpis] fetch error", e);
@@ -136,23 +179,34 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     };
   }, [authed, mine]);
 
+  // initial fetch and short polling fallback in case SSE isn't used
   useEffect(() => {
     let alive = true;
     (async () => {
       if (authed !== true) return;
       try {
         await fetchKpis();
-      } catch {
-        if (!alive) return;
+      } catch (e) {
+        console.warn("[useKpis] initial fetch failed", e);
       }
     })();
+
+    // simple polling every 30s while component mounted (can be tuned or removed)
+    const poll = setInterval(() => {
+      if (!alive) return;
+      if (authed !== true) return;
+      fetchKpis().catch(() => {});
+    }, 30000);
+
     return () => {
       alive = false;
+      clearInterval(poll);
     };
   }, [authed, fetchKpis]);
 
   return { kpis, loading, mine, refetch: fetchKpis, setKpis };
 }
+
 
 /* ───────── Page ───────── */
 export default function DashboardPage() {
@@ -182,8 +236,15 @@ export default function DashboardPage() {
     if (kpis) setLocalKpis(kpis);
   }, [kpis]);
 
-  const openLeads = String(localKpis?.open_leads ?? localKpis?.open_leads_count ?? "–");
-  const todaysFollowups = String(localKpis?.todays_followups ?? localKpis?.followups_today ?? "–");
+  const openLeads = (() => {
+  const n = localKpis?.open_leads ?? localKpis?.open_leads_count ?? null;
+  return n === null || n === undefined ? "–" : String(n);
+})();
+const todaysFollowups = (() => {
+  const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
+  return n === null || n === undefined ? "–" : String(n);
+})();
+
   const openLeadsTrend = String(localKpis?.open_leads_trend ?? "–");
   const conversion = localKpis?.conversion_percentage ? String(localKpis.conversion_percentage) : "–";
 
