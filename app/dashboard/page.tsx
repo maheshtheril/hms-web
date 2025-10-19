@@ -160,10 +160,9 @@ export default function DashboardPage() {
   const { kpis, loading: kpiLoading, mine, refetch, setKpis } = useKpis(authed, me);
   const { toast } = useToast();
 
-  // tenant + activities live state
+  // tenant + lastLogin live state
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [lastLogin, setLastLogin] = useState<string | null>(null);
-  const [activities, setActivities] = useState<Activity[] | null>(null);
 
   useEffect(() => {
     if (authed === false) {
@@ -191,16 +190,15 @@ export default function DashboardPage() {
   // key to force LeadCalendar remount (simple reload)
   const [calendarKey, setCalendarKey] = useState(0);
 
-  // load tenant, activities, last login — keep it resilient to failures
+  // load tenant and last login — keep it resilient to failures
   useEffect(() => {
     let alive = true;
     (async () => {
       if (authed !== true) return;
       try {
-        const [tResp, aResp, loginResp] = await Promise.all([
+        const [tResp, loginResp] = await Promise.all([
           // NOTE: backend mounts tenants at /api/tenants (plural)
           fetch("/api/tenants", { credentials: "include", cache: "no-store" }).catch(() => null),
-          fetch("/api/activities?for=today&limit=6", { credentials: "include", cache: "no-store" }).catch(() => null),
           // auth router is mounted at /auth
           fetch("/auth/last-login", { credentials: "include", cache: "no-store" }).catch(() => null),
         ]);
@@ -213,15 +211,6 @@ export default function DashboardPage() {
           if (td) {
             if (td.tenant) setTenant(td.tenant as Tenant);
             else if (td.id) setTenant(td as Tenant);
-          }
-        }
-
-        // activities: could be { activities: [...] } or an array
-        if (aResp && aResp.ok) {
-          const ad = await aResp.json().catch(() => null);
-          if (ad) {
-            if (Array.isArray(ad)) setActivities(ad as Activity[]);
-            else if (ad.activities && Array.isArray(ad.activities)) setActivities(ad.activities as Activity[]);
           }
         }
 
@@ -364,9 +353,9 @@ export default function DashboardPage() {
               <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? "…" : conversion} trend={kpiLoading ? "…" : "+1.2%"} icon={<IconGauge />} />
             </section>
 
-            {/* Main: calendar + aside (stack on mobile) */}
-            <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-              <div className="lg:col-span-2 rounded-2xl p-4 sm:p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
+            {/* Main: full-width calendar (aside removed) */}
+            <section className="grid grid-cols-1 gap-6 mb-8">
+              <div className="rounded-2xl p-4 sm:p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm sm:text-base font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
                   <span className="text-xs text-white/50">Drag to reschedule • Tap to edit</span>
@@ -378,35 +367,6 @@ export default function DashboardPage() {
                   </div>
                 </Suspense>
               </div>
-
-              <aside className="rounded-2xl p-3 sm:p-4" style={{ background: "linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))", border: "1px solid rgba(255,255,255,0.04)" }}>
-                <h3 className="text-sm font-semibold">Today</h3>
-                <div className="mt-3 space-y-3 max-h-[48vh] sm:max-h-[60vh] overflow-auto pr-2">
-                  {activities && activities.length > 0 ? (
-                    activities.map((a) => (
-                      <div key={a.id} className="rounded-md p-3 bg-white/5 border border-white/10">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium">{a.title}</div>
-                            <div className="text-xs text-white/60">{a.meta ?? ""}</div>
-                          </div>
-                          <div className="text-xs text-white/60">{a.duration ?? ""}</div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-md p-3 bg-white/5 border border-white/10">
-                      <div className="text-sm text-white/60">No activities for today.</div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-4">
-                  <Link href="/activities" className="text-xs underline">
-                    View all activities
-                  </Link>
-                </div>
-              </aside>
             </section>
 
             <footer className="mt-6 sm:mt-10 py-6 text-center text-xs opacity-60">© {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.</footer>
