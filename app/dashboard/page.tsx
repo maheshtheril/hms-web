@@ -193,22 +193,18 @@ export default function DashboardPage() {
 
       // refetch authoritative KPIs and apply them when returned
       const fresh = await refetch?.();
-      console.log("[Dashboard] refetch KPIs result:", fresh);
       if (fresh) {
         setKpis?.(fresh);
         setLocalKpis(fresh);
         toast({ title: "Dashboard updated", description: "KPIs refreshed." });
       } else {
-        // if server didn't return KPIs, notify user — server may be slow
         toast({ title: "Saved", description: "Lead saved. KPIs will update shortly.", variant: "default" });
-        console.warn("[Dashboard] refetch returned null — check /api/kpis");
       }
 
       // force calendar reload
       setCalendarKey((k) => k + 1);
     } catch (e) {
       console.error("[Dashboard] handleCreated error:", e);
-      // still force calendar reload and show basic toast
       setCalendarKey((k) => k + 1);
       toast({ title: "Lead saved", description: "Saved but KPI refresh failed.", variant: "destructive" });
     }
@@ -222,7 +218,7 @@ export default function DashboardPage() {
           "radial-gradient(800px 300px at 50% 8%, rgba(80,100,220,0.12), transparent 12%), radial-gradient(600px 260px at 10% 75%, rgba(60,50,130,0.06), transparent 10%), linear-gradient(180deg,#04050a 0%, #03030b 70%)",
       }}
     >
-      <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-12">
+      <main className="mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         {loading ? (
           <div className="space-y-6">
             <div className="rounded-2xl border border-white/6 bg-white/4/10 p-6 animate-pulse" />
@@ -236,57 +232,53 @@ export default function DashboardPage() {
           <>
             {/* HERO / WELCOME */}
             <section
-              className="mx-auto max-w-5xl rounded-3xl p-8 mb-8 shadow-2xl"
+              className="mx-auto max-w-5xl rounded-3xl p-6 sm:p-8 mb-6 sm:mb-8 shadow-2xl"
               style={{
-                background:
-                  "linear-gradient(135deg, rgba(12,18,40,0.64), rgba(32,18,48,0.44))",
+                background: "linear-gradient(135deg, rgba(12,18,40,0.64), rgba(32,18,48,0.44))",
                 border: "1px solid rgba(255,255,255,0.06)",
                 backdropFilter: "blur(12px)",
               }}
             >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight">
                     Welcome back, <span className="text-white/95">{displayName}</span>
                   </h1>
-                  <p className="mt-2 text-sm text-white/70 max-w-xl">
-                    Secure session active — your tenant and company data are scoped and protected. {mine ? <span className="italic">Showing KPIs for your assignments.</span> : null}
+                  <p className="mt-2 text-sm sm:text-base text-white/70 max-w-xl">
+                    Secure session active — your tenant and company data are scoped and protected.
+                    {mine ? <span className="italic"> Showing KPIs for your assignments.</span> : null}
                   </p>
 
-                  <div className="mt-5 flex flex-wrap gap-3 items-center">
-                    {/* Open Drawer via local state */}
-                    <button
+                  <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <PrimaryButton
                       type="button"
                       onClick={() => setShowQuick(true)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 to-violet-500 px-4 py-2 text-sm font-semibold text-black shadow-md hover:opacity-95 active:scale-[.99]"
+                      className="w-full sm:w-auto justify-center"
                     >
                       + Quick Lead
-                    </button>
+                    </PrimaryButton>
 
-                    <GhostButton href={detailedHref("welcome_detailed")} className="px-4 py-2 text-sm">
+                    <GhostButton href={detailedHref("welcome_detailed")} className="w-full sm:w-auto justify-center">
                       + Detailed Lead
                     </GhostButton>
 
-                    <Link href="/crm/leads" className="inline-block">
-                      <GhostButton className="px-4 py-2 text-sm">Open Leads</GhostButton>
+                    <Link href="/crm/leads" className="w-full sm:w-auto">
+                      <GhostButton className="w-full sm:w-auto justify-center">Open Leads</GhostButton>
                     </Link>
 
-                    <Link href={quickHref("welcome_schedule_call")} className="inline-block">
-                      <GhostButton className="px-4 py-2 text-sm">Schedule Call</GhostButton>
+                    <Link href={quickHref("welcome_schedule_call")} className="w-full sm:w-auto">
+                      <GhostButton className="w-full sm:w-auto justify-center">Schedule Call</GhostButton>
                     </Link>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div
-                    className="rounded-full px-3 py-2 text-xs font-medium"
-                    style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))", border: "1px solid rgba(255,255,255,0.04)" }}
-                  >
+                <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                  <div className="rounded-full px-3 py-2 text-xs font-medium min-w-[96px] text-center" style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))", border: "1px solid rgba(255,255,255,0.04)" }}>
                     <span className="block text-[11px] text-white/80">Tenant</span>
                     <span className="block text-sm font-semibold">Acme Corp</span>
                   </div>
 
-                  <div className="flex flex-col items-end">
+                  <div className="flex flex-col items-end text-right sm:text-right">
                     <span className="text-xs text-white/60">Last login</span>
                     <span className="text-sm font-medium">Today</span>
                   </div>
@@ -295,28 +287,30 @@ export default function DashboardPage() {
             </section>
 
             {/* KPI grid */}
-            <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               <KpiCardEnhanced label="Open Leads" value={kpiLoading ? "…" : openLeads} trend={kpiLoading ? "…" : openLeadsTrend} icon={<IconLeads />} />
               <KpiCardEnhanced label="Today’s Follow-ups" value={kpiLoading ? "…" : todaysFollowups} trend={kpiLoading ? "…" : "On track"} icon={<IconCalendar />} />
               <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? "…" : conversion} trend={kpiLoading ? "…" : "+1.2%"} icon={<IconGauge />} />
             </section>
 
-            {/* Main: calendar + aside */}
-            <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 rounded-2xl p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
+            {/* Main: calendar + aside (stack on mobile) */}
+            <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              <div className="lg:col-span-2 rounded-2xl p-4 sm:p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
-                  <span className="text-xs text-white/50">Drag to reschedule • Click to edit</span>
+                  <h2 className="text-sm sm:text-base font-semibold tracking-wide">Lead Follow-ups Calendar</h2>
+                  <span className="text-xs text-white/50">Drag to reschedule • Tap to edit</span>
                 </div>
 
                 <Suspense fallback={<div className="mt-2 animate-pulse space-y-3"><div className="h-6 w-40 rounded bg-white/10" /><div className="h-64 rounded-xl border border-white/10 bg-white/5" /></div>}>
-                  <LeadCalendar key={calendarKey} />
+                  <div className="min-h-[280px] sm:min-h-[360px]">
+                    <LeadCalendar key={calendarKey} />
+                  </div>
                 </Suspense>
               </div>
 
-              <aside className="rounded-2xl p-4" style={{ background: "linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))", border: "1px solid rgba(255,255,255,0.04)" }}>
+              <aside className="rounded-2xl p-3 sm:p-4" style={{ background: "linear-gradient(180deg, rgba(10,12,20,0.5), rgba(8,8,12,0.45))", border: "1px solid rgba(255,255,255,0.04)" }}>
                 <h3 className="text-sm font-semibold">Today</h3>
-                <div className="mt-3 space-y-3">
+                <div className="mt-3 space-y-3 max-h-[48vh] sm:max-h-[60vh] overflow-auto pr-2">
                   <div className="rounded-md p-3 bg-white/5 border border-white/10">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -337,7 +331,7 @@ export default function DashboardPage() {
               </aside>
             </section>
 
-            <footer className="mt-10 py-6 text-center text-xs opacity-60">© {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.</footer>
+            <footer className="mt-6 sm:mt-10 py-6 text-center text-xs opacity-60">© {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.</footer>
 
             {/* Quick lead drawer portal */}
             <QuickLeadDrawer
@@ -355,14 +349,14 @@ export default function DashboardPage() {
 /* ───────── UI helpers ───────── */
 function KpiCardEnhanced({ label, value, trend, icon }: { label: string; value: string; trend: string; icon?: React.ReactNode }) {
   return (
-    <div className="group rounded-2xl p-4 transform transition-transform duration-200 hover:-translate-y-1" style={{ background: "linear-gradient(180deg, rgba(18,24,40,0.5), rgba(8,10,18,0.45))", border: "1px solid rgba(255,255,255,0.04)", boxShadow: "0 6px 18px rgba(15,23,42,0.4)" }}>
+    <div className="group rounded-2xl p-3 sm:p-4 transform transition-transform duration-200 hover:-translate-y-1" style={{ background: "linear-gradient(180deg, rgba(18,24,40,0.5), rgba(8,10,18,0.45))", border: "1px solid rgba(255,255,255,0.04)", boxShadow: "0 6px 18px rgba(15,23,42,0.4)" }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-11 w-11 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))", border: "1px solid rgba(255,255,255,0.03)" }}>{icon}</div>
           <div className="min-w-0">
             <div className="text-xs text-white/70">{label}</div>
             <div className="mt-1 flex items-baseline gap-3">
-              <div className="text-2xl sm:text-3xl font-extrabold tracking-tight">{value}</div>
+              <div className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight">{value}</div>
               <div className="text-[11px] rounded-full px-2 py-0.5" style={{ background: "rgba(16,185,129,0.08)", color: "#86efac", border: "1px solid rgba(16,185,129,0.12)" }}>{trend}</div>
             </div>
           </div>
