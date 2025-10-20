@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 /* Backend base */
-const API_BASE = process.env.BACKEND_URL || "http://localhost:4000";
+// ensures we always know what the frontend will call
+if (!process.env.NEXT_PUBLIC_BACKEND_URL) {
+  // fail fast so we don't silently call localhost in prod
+  throw new Error("NEXT_PUBLIC_BACKEND_URL must be set in the frontend environment");
+}
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL!;
+console.log("CLIENT API_BASE =", API_BASE);
+
 
 /* ───────── Multi-tenant headers ───────── */
 /* ───────── Multi-tenant headers ───────── */
