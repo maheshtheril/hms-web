@@ -10,12 +10,12 @@ import { useToast } from "@/components/ui/use-toast";
 
 /* ───────── Types ───────── */
 type KpisPayload = {
-  open_leads?: number;
-  open_leads_count?: number;
-  todays_followups?: number;
-  followups_today?: number;
+  open_leads?: number | null;
+  open_leads_count?: number | null;
+  todays_followups?: number | null;
+  followups_today?: number | null;
   open_leads_trend?: string;
-  conversion_percentage?: number | string;
+  conversion_percentage?: number | string | null;
 };
 type MeUser = {
   id: string;
@@ -110,20 +110,19 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
   }, [me]);
 
   const normalizePayload = (data: any): KpisPayload => {
-    // be permissive: accept number or string; normalize to number where appropriate
-    const getNum = (keys: string[]) => {
+    // be permissive: accept number or string; return number when present, null when missing
+    const getNum = (keys: string[]): number | null => {
       for (const k of keys) {
         const v = data?.[k];
         if (v === undefined || v === null) continue;
-        // numeric already
         if (typeof v === "number") return v;
-        // numeric string
         if (typeof v === "string" && v.trim() !== "") {
           const parsed = Number(v);
           if (!Number.isNaN(parsed)) return parsed;
         }
+        // if other types, ignore
       }
-      return 0;
+      return null; // important: null = "no value returned"
     };
 
     const normalized: KpisPayload = {
@@ -143,15 +142,12 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
       setLoading(true);
       try {
         const url = new URL("/api/kpis", window.location.origin);
-        // NOTE: server does not use "mine=1" param explicitly, but harmless to include
         if (mine) url.searchParams.set("mine", "1");
         url.searchParams.set("table", "leads");
 
         const r = await fetch(url.toString(), { credentials: "include", cache: "no-store" });
-        // debug
         console.debug("[useKpis] GET", url.toString(), "status", r.status);
         const raw = await r.text().catch(() => "");
-        // try parse JSON for logging; if parse fails, dump raw
         let parsed: any = null;
         try {
           parsed = raw ? JSON.parse(raw) : null;
@@ -191,7 +187,6 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
       }
     })();
 
-    // simple polling every 30s while component mounted (can be tuned or removed)
     const poll = setInterval(() => {
       if (!alive) return;
       if (authed !== true) return;
@@ -206,7 +201,6 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
 
   return { kpis, loading, mine, refetch: fetchKpis, setKpis };
 }
-
 
 /* ───────── Page ───────── */
 export default function DashboardPage() {
@@ -237,13 +231,14 @@ export default function DashboardPage() {
   }, [kpis]);
 
   const openLeads = (() => {
-  const n = localKpis?.open_leads ?? localKpis?.open_leads_count ?? null;
-  return n === null || n === undefined ? "–" : String(n);
-})();
-const todaysFollowups = (() => {
-  const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
-  return n === null || n === undefined ? "–" : String(n);
-})();
+    const n = localKpis?.open_leads ?? localKpis?.open_leads_count ?? null;
+    return n === null || n === undefined ? "–" : String(n);
+  })();
+
+  const todaysFollowups = (() => {
+    const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
+    return n === null || n === undefined ? "–" : String(n);
+  })();
 
   const openLeadsTrend = String(localKpis?.open_leads_trend ?? "–");
   const conversion = localKpis?.conversion_percentage ? String(localKpis.conversion_percentage) : "–";
@@ -264,7 +259,6 @@ const todaysFollowups = (() => {
 
         if (!alive) return;
 
-        // tenant response: server returns { tenant: {...} } for current tenant
         if (tResp && tResp.ok) {
           const td = await tResp.json().catch(() => null);
           if (td) {
@@ -289,8 +283,8 @@ const todaysFollowups = (() => {
         if (!prev) return prev;
         const copy = { ...prev };
         const numeric = Number(prev.open_leads ?? prev.open_leads_count ?? 0);
-        if (typeof prev.open_leads === "number") copy.open_leads = numeric + 1;
-        if (typeof prev.open_leads_count === "number") copy.open_leads_count = numeric + 1;
+        if (typeof prev.open_leads === "number" || prev.open_leads === null) copy.open_leads = numeric + 1;
+        if (typeof prev.open_leads_count === "number" || prev.open_leads_count === null) copy.open_leads_count = numeric + 1;
         return copy;
       });
 
@@ -356,7 +350,6 @@ const todaysFollowups = (() => {
                   </p>
 
                   <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row sm:items-center gap-3">
-                    {/* Quick lead: visually consistent with other buttons but highlighted */}
                     <GhostButton
                       as="button"
                       onClick={() => setShowQuick(true)}
@@ -373,7 +366,6 @@ const todaysFollowups = (() => {
                       <GhostButton className="w-full sm:w-auto justify-center">Open Leads</GhostButton>
                     </Link>
 
-                    {/* Schedule Call: scrolls & focuses the calendar below */}
                     <button
                       type="button"
                       onClick={() => {
@@ -381,7 +373,6 @@ const todaysFollowups = (() => {
                           const el = calendarRef.current || document.getElementById("lead-calendar");
                           if (el) {
                             el.scrollIntoView({ behavior: "smooth", block: "center" });
-                            // small delay to allow scroll to start, then focus + highlight
                             setTimeout(() => {
                               try {
                                 (el as HTMLElement).focus();
