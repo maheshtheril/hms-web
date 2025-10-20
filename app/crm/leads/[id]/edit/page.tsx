@@ -3,7 +3,7 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import TopNav from "@/app/components/TopNav";
+//import TopNav from "@/app/components/TopNav";
 import EditLeadFormClient from "./EditLeadFormClient";
 
 export const dynamic = "force-dynamic";
@@ -109,7 +109,7 @@ export default async function LeadEdit({ params, searchParams }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-gradient-to-b from-zinc-950 via-zinc-900 to-black text-zinc-100">
-      <TopNav />
+      {/* <TopNav /> */}
       <main className="mx-auto w-full max-w-screen-lg px-3 sm:px-4 lg:px-6 py-6 sm:py-8">
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Edit Lead</h1>
