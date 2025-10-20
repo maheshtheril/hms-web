@@ -136,6 +136,32 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     return normalized;
   };
 
+  const fetchTodaysFromServer = async (): Promise<number | null> => {
+    try {
+      const r = await fetch("/kpis/todays", { credentials: "include", cache: "no-store" });
+      if (!r.ok) {
+        // try /api/kpis/todays as fallback (if you proxy to /api)
+        const r2 = await fetch("/api/kpis/todays", { credentials: "include", cache: "no-store" }).catch(() => null);
+        if (!r2 || !r2.ok) return null;
+        const d2 = await r2.json().catch(() => null);
+        if (d2 && (typeof d2.todays_followups === "number" || typeof d2.todays_followups === "string")) {
+          const p = Number(d2.todays_followups);
+          return Number.isNaN(p) ? null : p;
+        }
+        return null;
+      }
+      const data = await r.json().catch(() => null);
+      if (!data) return null;
+      const v = data.todays_followups ?? data.todaysFollowups ?? data.count ?? null;
+      if (v === undefined || v === null) return null;
+      const parsed = Number(v);
+      return Number.isNaN(parsed) ? null : parsed;
+    } catch (e) {
+      console.warn("[useKpis] fetchTodaysFromServer failed", e);
+      return null;
+    }
+  };
+
   const fetchKpis = useMemo(() => {
     return async (): Promise<KpisPayload | null> => {
       if (authed !== true) return null;
@@ -162,6 +188,14 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
           return null;
         } else {
           const normalized = normalizePayload(parsed);
+
+          // Try to fetch tenant-wide todays count from dedicated endpoint and prefer it when present
+          const tenantWide = await fetchTodaysFromServer();
+          if (tenantWide !== null) {
+            normalized.todays_followups = tenantWide;
+            normalized.followups_today = tenantWide;
+          }
+
           setKpis(normalized);
           return normalized;
         }
@@ -233,8 +267,8 @@ export default function DashboardPage() {
 
   const todaysFollowups = (() => {
     const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
-    // return "–" when missing OR explicitly zero:
-    if (n === null || n === undefined || Number(n) === 0) return "–";
+    // previously you hid zero as "–"; now show 0 explicitly. Only missing values are "–"
+    if (n === null || n === undefined) return "–";
     return String(n);
   })();
 
@@ -339,13 +373,12 @@ export default function DashboardPage() {
                   </p>
 
                   <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row sm:items-center gap-3">
-                   <GhostButton
-  onClick={() => setShowQuick(true)}
-  className="w-full sm:w-auto justify-center ring-1 ring-indigo-500/20 hover:ring-indigo-500/40"
->
-  + Quick Lead
-</GhostButton>
-
+                    <GhostButton
+                      onClick={() => setShowQuick(true)}
+                      className="w-full sm:w-auto justify-center ring-1 ring-indigo-500/20 hover:ring-indigo-500/40"
+                    >
+                      + Quick Lead
+                    </GhostButton>
 
                     <GhostButton href={detailedHref("welcome_detailed")} className="w-full sm:w-auto justify-center">
                       + Detailed Lead
