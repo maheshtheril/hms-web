@@ -1,3 +1,4 @@
+// app/leads/[id]/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -8,14 +9,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 
-/* ───────────────────────────────── Types ───────────────────────────────── */
+/* -------------------------------------------------------------------------- */
+/* Neural Glass Design Language (Lead detail page — production wiring)
+   - Uses real apiClient (no mocks)
+   - Accessible Back button and focus-visible rings
+   - Frosted glass cards, neon accents, deep gradient background
+*/
+/* Notes:
+   - This file expects your existing `apiClient` to throw/return axios-like errors
+     (i.e. e.response?.data?.error). Adjust error handling if your client differs.
+*/
+
+/* ------------------------------ Types ------------------------------------- */
 
 type LeadMeta = {
   follow_up_date?: string | null;
   expected_revenue?: number | null;
-  profession?: string | null;
-  notes?: string | null;
-  address?: Record<string, any> | null;
   [k: string]: any;
 };
 
@@ -25,13 +34,13 @@ interface Lead {
   email?: string | null;
   phone?: string | null;
   status?: string | null;
-  stage?: string | null; // display name (may be null from backend)
+  stage?: string | null;
   company_id?: string | null;
   owner_id?: string | null;
   pipeline_id?: string | null;
-  stage_id?: string | null; // UUID
+  stage_id?: string | null;
   estimated_value?: number | null;
-  probability?: number | null; // %
+  probability?: number | null;
   tags?: string[] | null;
   meta?: LeadMeta | null;
   created_at?: string | null;
@@ -41,9 +50,10 @@ interface Lead {
 interface LeadNote {
   id: string;
   body: string;
-  author_id: string;
+  author_id?: string | null;
   created_at: string;
 }
+
 interface LeadTask {
   id: string;
   title: string;
@@ -67,96 +77,92 @@ interface StageChange {
 }
 
 interface Stage {
-  id: string; // normalized to string
+  id: string;
   name: string;
   pipeline_id?: string | null;
   order_index?: number | null;
 }
 
-/* ───────────────────────────── Toast helpers ───────────────────────────── */
+/* ------------------------------ Helpers ----------------------------------- */
+
+const inr0 = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 0,
+});
+const inr2 = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 2,
+});
+const fmtMoney = (n?: number | null, frac: 0 | 2 = 0) =>
+  n === null || n === undefined || isNaN(Number(n))
+    ? "—"
+    : (frac === 0 ? inr0 : inr2).format(Number(n));
+const clampPct = (p?: number | null) =>
+  p === null || p === undefined || isNaN(Number(p))
+    ? null
+    : Math.min(100, Math.max(0, Math.round(Number(p))));
+const fmtDate = (d?: string | null) =>
+  d
+    ? new Date(d.length <= 10 ? `${d}T00:00:00` : d).toLocaleDateString("en-IN", {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      })
+    : "—";
+
+function expectedRevenueOf(lead?: Lead | null) {
+  if (!lead) return null;
+  const metaER = lead.meta?.expected_revenue;
+  if (metaER !== undefined && metaER !== null) return Number(metaER);
+  const v = Number(lead.estimated_value ?? NaN);
+  const p = clampPct(lead.probability);
+  if (!isFinite(v) || p === null) return null;
+  return Math.round(v * (p / 100) * 100) / 100;
+}
+
+function normalizeId(v: any): string {
+  return v === null || v === undefined ? "" : String(v);
+}
+
+function latestHistoryStage(h: StageChange[] | undefined) {
+  if (!h || h.length === 0) return { id: "", name: "" };
+  const sorted = [...h].sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const last = sorted[sorted.length - 1];
+  return {
+    id: normalizeId(last.to_stage_id ?? ""),
+    name: String(last.to_stage ?? ""),
+  };
+}
+
+const toNumOrUndef = (x: string) => {
+  if (x === "") return undefined;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : undefined;
+};
+const toNumOrNull = (x: string) => {
+  if (x === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
+
+/* ------------------------------ Component --------------------------------- */
 
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { toast } = useToast();
 
-  // keep your existing call sites working:
   const success = (title: string, description?: string) =>
     toast({ title, description });
   const error = (title: string, description?: string) =>
-    toast({ variant: "destructive", title, description });
+    toast({ title, description, variant: "destructive" });
 
-  /* ─────────────────────────────── Helpers ─────────────────────────────── */
-
-  const inr0 = new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  });
-  const inr2 = new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  });
-  const fmtMoney = (n?: number | null, frac: 0 | 2 = 0) =>
-    n === null || n === undefined || isNaN(Number(n))
-      ? "—"
-      : (frac === 0 ? inr0 : inr2).format(Number(n));
-  const clampPct = (p?: number | null) =>
-    p === null || p === undefined || isNaN(Number(p))
-      ? null
-      : Math.min(100, Math.max(0, Math.round(Number(p))));
-  const fmtDate = (d?: string | null) =>
-    d
-      ? new Date(
-          d.length <= 10 ? `${d}T00:00:00` : d
-        ).toLocaleDateString("en-IN", {
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-        })
-      : "—";
-
-  function expectedRevenueOf(lead?: Lead | null) {
-    if (!lead) return null;
-    const metaER = lead.meta?.expected_revenue;
-    if (metaER !== undefined && metaER !== null) return Number(metaER);
-    const v = Number(lead.estimated_value ?? NaN);
-    const p = clampPct(lead.probability);
-    if (!isFinite(v) || p === null) return null;
-    return Math.round(v * (p / 100) * 100) / 100;
-  }
-
-  function normalizeId(v: any): string {
-    return v === null || v === undefined ? "" : String(v);
-  }
-
-  function latestHistoryStage(h: StageChange[] | undefined) {
-    if (!h || h.length === 0) return { id: "", name: "" };
-    const sorted = [...h].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-    const last = sorted[sorted.length - 1];
-    return {
-      id: normalizeId(last.to_stage_id ?? ""),
-      name: String(last.to_stage ?? ""),
-    };
-  }
-
-  const toNumOrUndef = (x: string) => {
-    if (x === "") return undefined;
-    const n = Number(x);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const toNumOrNull = (x: string) => {
-    if (x === "") return null;
-    const n = Number(x);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  /* ───────────────────────────────── State ───────────────────────────────── */
-
+  /* state */
   const [lead, setLead] = useState<Lead | null>(null);
   const [notes, setNotes] = useState<LeadNote[]>([]);
   const [tasks, setTasks] = useState<LeadTask[]>([]);
@@ -174,14 +180,12 @@ export default function LeadDetailPage() {
     expected_revenue: "",
   });
 
-  // Stage picker state (with graceful fallback)
   const [stages, setStages] = useState<Stage[]>([]);
   const [stagesLoading, setStagesLoading] = useState(false);
-  const [stageSelId, setStageSelId] = useState<string>(""); // always string
+  const [stageSelId, setStageSelId] = useState<string>("");
   const [stageManual, setStageManual] = useState<string>("");
 
-  /* ─────────────────────────────── Effects ─────────────────────────────── */
-
+  /* load lead */
   async function load() {
     try {
       setLoading(true);
@@ -189,22 +193,21 @@ export default function LeadDetailPage() {
       const { data } = await apiClient.get(`/leads/${id}`, {
         withCredentials: true,
       });
-      const lead: Lead = data.lead;
-      setLead(lead);
+      const l: Lead = data.lead;
+      setLead(l);
       setNotes(Array.isArray(data.notes) ? data.notes : []);
       setTasks(Array.isArray(data.tasks) ? data.tasks : []);
       setEdit({
-        name: lead.name || "",
-        email: lead.email || "",
-        phone: lead.phone || "",
+        name: l.name || "",
+        email: l.email || "",
+        phone: l.phone || "",
         estimated_value:
-          lead.estimated_value != null ? String(lead.estimated_value) : "",
-        probability:
-          lead.probability != null ? String(lead.probability) : "",
-        follow_up_date: lead.meta?.follow_up_date || "",
+          l.estimated_value != null ? String(l.estimated_value) : "",
+        probability: l.probability != null ? String(l.probability) : "",
+        follow_up_date: l.meta?.follow_up_date || "",
         expected_revenue:
-          lead.meta?.expected_revenue != null
-            ? String(lead.meta.expected_revenue)
+          l.meta?.expected_revenue != null
+            ? String(l.meta.expected_revenue)
             : "",
       });
 
@@ -223,6 +226,7 @@ export default function LeadDetailPage() {
     }
   }
 
+  /* load stages */
   async function loadStages() {
     try {
       setStagesLoading(true);
@@ -253,24 +257,23 @@ export default function LeadDetailPage() {
       } else {
         setStages([]);
       }
-    } catch {
+    } catch (e) {
       setStages([]);
     } finally {
       setStagesLoading(false);
     }
   }
 
-  // Load once
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
   useEffect(() => {
     loadStages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Preselect stage when possible (lead.stage_id → latest history)
   useEffect(() => {
     if (!stages.length) return;
     const currId = normalizeId(lead?.stage_id);
@@ -285,15 +288,13 @@ export default function LeadDetailPage() {
   }, [lead, stages, history]);
 
   const computedER = useMemo(() => {
-    if (!edit.estimated_value || !edit.probability)
-      return expectedRevenueOf(lead);
+    if (!edit.estimated_value || !edit.probability) return expectedRevenueOf(lead);
     const v = Number(edit.estimated_value),
       p = Number(edit.probability);
     if (!isFinite(v) || !isFinite(p)) return expectedRevenueOf(lead);
     return Math.round(v * (Math.min(100, Math.max(0, p)) / 100) * 100) / 100;
   }, [edit.estimated_value, edit.probability, lead]);
 
-  // Robust display name for stage (server → id map → history)
   const displayStageName = useMemo(() => {
     if (lead?.stage) return lead.stage;
     const byId = stages.find((s) => s.id === normalizeId(lead?.stage_id));
@@ -302,8 +303,7 @@ export default function LeadDetailPage() {
     return latest.name || undefined;
   }, [lead, stages, history]);
 
-  /* ─────────────────────────────── Actions ─────────────────────────────── */
-
+  /* actions */
   async function patchLead(payload: any, toastMsg = "Saved") {
     try {
       setErr(null);
@@ -321,7 +321,7 @@ export default function LeadDetailPage() {
     patchLead({
       name: edit.name || undefined,
       email: edit.email || undefined,
-      phone: edit.phone || undefined, // persist phone too
+      phone: edit.phone || undefined,
       estimated_value: toNumOrUndef(edit.estimated_value),
       probability: toNumOrUndef(edit.probability),
     });
@@ -429,7 +429,7 @@ export default function LeadDetailPage() {
         return;
       }
 
-      // optimistic update (so UI reflects immediately)
+      // optimistic update
       const picked = stages.find((s) => s.id === targetId);
       setLead((prev) =>
         prev
@@ -439,56 +439,79 @@ export default function LeadDetailPage() {
       setStageSelId(targetId);
       setStageManual("");
 
-      // include lead_id in body to satisfy servers that require it
       await apiClient.post(
         `/leads/${id}/move`,
         { lead_id: id, stage_id: targetId },
         { withCredentials: true }
       );
       success("Stage updated");
-      await load(); // reconcile with server truth
+      await load();
     } catch (e: any) {
       error("Move failed", e?.response?.data?.error || e?.message || "");
     }
   }
 
-  // Inline inputs for notes/tasks
+  /* inline inputs */
   const [noteText, setNoteText] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDue, setTaskDue] = useState("");
 
   const isClosed = lead?.status === "won" || lead?.status === "lost";
 
-  /* ─────────────────────────────── Render ─────────────────────────────── */
+  const baseButtonFocus =
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60";
 
   return (
-    <div className="min-h-dvh bg-black text-white">
-      <main className="mx-auto w-full max-w-screen-2xl px-4 py-6">
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold">Lead Detail</h1>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => router.back()}>
-              Back
+    <div className="min-h-dvh bg-gradient-to-b from-[#030316] via-[#061226] to-[#041428] text-slate-50 antialiased">
+      <main className="mx-auto w-full max-w-screen-2xl px-6 py-8">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[#9be7ff] via-[#b38bff] to-[#ffb3c1]">
+              Lead Detail
+            </h1>
+            <div className="mt-1 text-sm text-white/60">Neural Glass · Frosted CRM</div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => router.back()}
+              aria-label="Go back"
+              className={
+                "rounded-full border border-cyan-400/30 bg-cyan-600/12 text-white hover:bg-cyan-600/20 px-4 py-2 text-sm font-medium shadow-[0_6px_18px_rgba(34,211,238,0.12)] backdrop-blur-md transition-colors " +
+                baseButtonFocus
+              }
+            >
+              ← Back
             </Button>
+
             {!isClosed ? (
               <>
                 <Button
-                  className="bg-emerald-600 hover:bg-emerald-500"
                   onClick={() => closeLead("won")}
+                  className={
+                    "rounded-full bg-gradient-to-r from-emerald-400/30 to-emerald-200/10 px-4 py-2 text-sm shadow-[0_8px_24px_rgba(16,185,129,0.08)] " +
+                    baseButtonFocus
+                  }
                 >
                   Mark Won
                 </Button>
                 <Button
-                  className="bg-rose-600 hover:bg-rose-500"
                   onClick={() => closeLead("lost")}
+                  className={
+                    "rounded-full bg-gradient-to-r from-rose-400/30 to-rose-200/10 px-4 py-2 text-sm shadow-[0_8px_24px_rgba(244,63,94,0.08)] " +
+                    baseButtonFocus
+                  }
                 >
                   Mark Lost
                 </Button>
               </>
             ) : (
               <Button
-                className="bg-amber-600 hover:bg-amber-500"
                 onClick={reopenLead}
+                className={
+                  "rounded-full bg-amber-400/10 px-4 py-2 text-sm text-white " +
+                  baseButtonFocus
+                }
               >
                 Reopen
               </Button>
@@ -497,7 +520,7 @@ export default function LeadDetailPage() {
         </div>
 
         {err && (
-          <div className="mb-4 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-500/6 px-4 py-3 text-sm text-red-100">
             {err}
           </div>
         )}
@@ -510,93 +533,79 @@ export default function LeadDetailPage() {
           <div className="space-y-8">
             {/* Overview */}
             <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 md:col-span-2">
-                <div className="mb-2 text-[11px] uppercase tracking-wider text-white/60">
+              <div className="md:col-span-2 rounded-3xl border border-white/8 bg-white/4 backdrop-blur-md p-6 shadow-lg">
+                <div className="mb-3 text-[11px] uppercase tracking-wider text-white/60">
                   Overview
                 </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <label className="block text-sm text-white/70">
-                      Lead Name
-                    </label>
+                    <label className="block text-sm text-white/70">Lead Name</label>
                     <Input
                       value={edit.name}
-                      onChange={(e) =>
-                        setEdit({ ...edit, name: e.target.value })
-                      }
+                      onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                      className="mt-2 bg-black/30 border-white/8"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-sm text-white/70">
-                      Email
-                    </label>
+                    <label className="block text-sm text-white/70">Email</label>
                     <Input
                       type="email"
                       value={edit.email}
-                      onChange={(e) =>
-                        setEdit({ ...edit, email: e.target.value })
-                      }
+                      onChange={(e) => setEdit({ ...edit, email: e.target.value })}
+                      className="mt-2 bg-black/30 border-white/8"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-sm text-white/70">
-                      Phone
-                    </label>
+                    <label className="block text-sm text-white/70">Phone</label>
                     <Input
                       value={edit.phone}
-                      onChange={(e) =>
-                        setEdit({ ...edit, phone: e.target.value })
-                      }
+                      onChange={(e) => setEdit({ ...edit, phone: e.target.value })}
+                      className="mt-2 bg-black/30 border-white/8"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-sm text-white/70">
-                      Value (₹)
-                    </label>
+                    <label className="block text-sm text-white/70">Value (₹)</label>
                     <Input
                       type="number"
                       inputMode="decimal"
                       value={edit.estimated_value}
-                      onChange={(e) =>
-                        setEdit({ ...edit, estimated_value: e.target.value })
-                      }
+                      onChange={(e) => setEdit({ ...edit, estimated_value: e.target.value })}
+                      className="mt-2 bg-black/30 border-white/8"
                     />
                   </div>
+
                   <div>
-                    <label className="block text-sm text-white/70">
-                      Probability (%)
-                    </label>
+                    <label className="block text-sm text-white/70">Probability (%)</label>
                     <Input
                       type="number"
                       inputMode="numeric"
                       value={edit.probability}
-                      onChange={(e) =>
-                        setEdit({ ...edit, probability: e.target.value })
-                      }
+                      onChange={(e) => setEdit({ ...edit, probability: e.target.value })}
+                      className="mt-2 bg-black/30 border-white/8"
                     />
                   </div>
                 </div>
-                <div className="mt-3 flex items-center justify-between">
-                  <div className="text-sm opacity-80">
+
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="text-sm opacity-90">
                     Expected Revenue:{" "}
-                    <span className="font-medium">
-                      {fmtMoney(computedER, 2)}
-                    </span>
+                    <span className="font-medium text-slate-100">{fmtMoney(computedER, 2)}</span>
                   </div>
-                  <Button onClick={saveBasics}>Save Basics</Button>
+                  <Button onClick={saveBasics} className={"px-4 py-2 " + baseButtonFocus}>
+                    Save Basics
+                  </Button>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div className="mb-2 text-[11px] uppercase tracking-wider text-white/60">
-                  Status
-                </div>
-                <div className="space-y-1 text-sm">
+              <div className="rounded-3xl border border-white/8 bg-white/4 backdrop-blur-md p-6 shadow-lg">
+                <div className="mb-2 text-[11px] uppercase tracking-wider text-white/60">Status</div>
+                <div className="space-y-2 text-sm">
                   <div>
                     <span className="opacity-70">Current:</span>{" "}
-                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-xs">
-                      {lead.status ?? "new"}
-                    </span>
+                    <span className="inline-flex items-center rounded-full border border-white/6 px-3 py-1 text-xs bg-black/30">{lead.status ?? "new"}</span>
                   </div>
                   <div>
                     <span className="opacity-70">Stage:</span>{" "}
@@ -604,15 +613,13 @@ export default function LeadDetailPage() {
                   </div>
                 </div>
 
-                {/* Stage picker (auto or manual) */}
-                <div className="mt-3 text-sm">
-                  <label className="mb-1 block text-sm text-white/70">
-                    Move to Stage
-                  </label>
+                {/* Stage picker */}
+                <div className="mt-4 text-sm">
+                  <label className="mb-2 block text-sm text-white/70">Move to Stage</label>
                   {stages.length > 0 ? (
                     <div className="flex items-center gap-2">
                       <select
-                        className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-white/20"
+                        className="w-full rounded-xl border border-white/8 bg-black/30 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/10"
                         value={stageSelId}
                         onChange={(e) => {
                           setStageSelId(e.target.value);
@@ -622,17 +629,13 @@ export default function LeadDetailPage() {
                       >
                         <option value="">Select stage…</option>
                         {stages.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
+                          <option key={s.id} value={s.id}>{s.name}</option>
                         ))}
                       </select>
                       <Button
-                        className="shrink-0"
                         onClick={moveStage}
-                        disabled={
-                          stagesLoading || (!stageSelId && !stageManual.trim())
-                        }
+                        disabled={stagesLoading || (!stageSelId && !stageManual.trim())}
+                        className="shrink-0 px-4 py-2"
                       >
                         Move
                       </Button>
@@ -643,100 +646,71 @@ export default function LeadDetailPage() {
                         placeholder="Type stage name (e.g., Qualified)"
                         value={stageManual}
                         onChange={(e) => setStageManual(e.target.value)}
+                        className="bg-black/30 border-white/8"
                       />
-                      <Button
-                        className="shrink-0"
-                        onClick={moveStage}
-                        disabled={!stageManual.trim()}
-                      >
-                        Move
-                      </Button>
+                      <Button onClick={moveStage} disabled={!stageManual.trim()} className="shrink-0 px-4 py-2">Move</Button>
                     </div>
                   )}
-                  {stagesLoading && (
-                    <div className="mt-2 text-xs opacity-60">
-                      Loading stages…
-                    </div>
-                  )}
+
+                  {stagesLoading && <div className="mt-2 text-xs opacity-60">Loading stages…</div>}
                 </div>
 
-                <div className="mt-3 text-sm">
-                  <label className="block text-sm text-white/70">
-                    Follow-up Date
-                  </label>
+                <div className="mt-4 text-sm">
+                  <label className="block text-sm text-white/70">Follow-up Date</label>
                   <Input
                     type="date"
                     value={edit.follow_up_date}
-                    onChange={(e) =>
-                      setEdit({ ...edit, follow_up_date: e.target.value })
-                    }
+                    onChange={(e) => setEdit({ ...edit, follow_up_date: e.target.value })}
+                    className="mt-2 bg-black/30 border-white/8"
                   />
-                  <div className="mt-2 flex justify-end">
-                    <Button onClick={saveFollowUp}>Save Follow-up</Button>
+                  <div className="mt-3 flex justify-end">
+                    <Button onClick={saveFollowUp} className="px-4 py-2">Save Follow-up</Button>
                   </div>
                 </div>
 
-                <div className="mt-3 text-sm">
-                  <label className="block text-sm text-white/70">
-                    Expected Revenue (override)
-                  </label>
+                <div className="mt-4 text-sm">
+                  <label className="block text-sm text-white/70">Expected Revenue (override)</label>
                   <Input
                     type="number"
                     inputMode="decimal"
                     value={edit.expected_revenue}
                     placeholder={computedER != null ? String(computedER) : ""}
-                    onChange={(e) =>
-                      setEdit({ ...edit, expected_revenue: e.target.value })
-                    }
+                    onChange={(e) => setEdit({ ...edit, expected_revenue: e.target.value })}
+                    className="mt-2 bg-black/30 border-white/8"
                   />
-                  <div className="mt-2 flex justify-end">
-                    <Button onClick={saveExpectedRevenue}>Save Expected</Button>
+                  <div className="mt-3 flex justify-end">
+                    <Button onClick={saveExpectedRevenue} className="px-4 py-2">Save Expected</Button>
                   </div>
                 </div>
               </div>
             </section>
 
             {/* Notes */}
-            <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <section className="rounded-3xl border border-white/8 bg-white/4 backdrop-blur-md p-6 shadow-lg">
               <div className="flex items-center justify-between">
-                <div className="text-[11px] uppercase tracking-wider text-white/60">
-                  Notes
-                </div>
+                <div className="text-[11px] uppercase tracking-wider text-white/60">Notes</div>
               </div>
-              <div className="mt-3 space-y-3">
-                <div className="flex gap-2">
+
+              <div className="mt-4 space-y-3">
+                <div className="flex gap-3">
                   <Textarea
                     rows={2}
                     placeholder="Add a note…"
                     value={noteText}
                     onChange={(e) => setNoteText(e.target.value)}
+                    className="bg-black/30 border-white/8"
                   />
-                  <Button
-                    onClick={() => {
-                      const v = noteText.trim();
-                      if (!v) return;
-                      setNoteText("");
-                      addNote(v);
-                    }}
-                  >
-                    Add
-                  </Button>
+                  <Button onClick={() => { const v = noteText.trim(); if (!v) return; setNoteText(""); addNote(v); }} className="px-4 py-2">Add</Button>
                 </div>
+
                 {notes.length === 0 ? (
                   <div className="text-sm opacity-60">No notes yet.</div>
                 ) : (
-                  <ul className="space-y-2">
+                  <ul className="space-y-3">
                     {notes.map((n) => (
-                      <li
-                        key={n.id}
-                        className="rounded-xl border border-white/10 bg-black/30 p-3"
-                      >
-                        <div className="whitespace-pre-wrap text-sm">
-                          {n.body}
-                        </div>
-                        <div className="mt-1 text-[11px] opacity-60">
-                          {new Date(n.created_at).toLocaleString("en-IN")}
-                        </div>
+                      <li key={n.id} className="rounded-2xl border border-white/8 bg-black/30 p-3">
+                        <div className="whitespace-pre-wrap text-sm">{n.body}</div>
+                        <div className="mt-1 text-[11px] opacity-60">{new Date(n.created_at).toLocaleString("en-IN")}</div>
                       </li>
                     ))}
                   </ul>
@@ -745,86 +719,47 @@ export default function LeadDetailPage() {
             </section>
 
             {/* Tasks */}
-            <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <section className="rounded-3xl border border-white/8 bg-white/4 backdrop-blur-md p-6 shadow-lg">
               <div className="flex items-center justify-between">
-                <div className="text-[11px] uppercase tracking-wider text-white/60">
-                  Tasks
-                </div>
+                <div className="text-[11px] uppercase tracking-wider text-white/60">Tasks</div>
               </div>
 
-              <div className="mt-3 flex flex-col items-stretch gap-2 md:flex-row">
+              <div className="mt-4 flex flex-col items-stretch gap-3 md:flex-row">
                 <Input
-                  className="min-w-0 flex-1 md:flex-[1_1_60%]"
+                  className="min-w-0 flex-1 md:flex-[1_1_60%] bg-black/30 border-white/8"
                   placeholder="Task title"
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
                 />
                 <Input
                   type="date"
-                  className="w-full shrink-0 md:w-36 md:flex-none"
+                  className="w-full shrink-0 md:w-36 md:flex-none bg-black/30 border-white/8"
                   value={taskDue}
                   onChange={(e) => setTaskDue(e.target.value)}
                 />
-                <Button
-                  className="shrink-0 md:flex-none"
-                  onClick={() => {
-                    const t = taskTitle.trim();
-                    if (!t) return;
-                    const d = taskDue;
-                    setTaskTitle("");
-                    setTaskDue("");
-                    addTask(t, d);
-                  }}
-                >
-                  Add Task
-                </Button>
+                <Button onClick={() => { const t = taskTitle.trim(); if (!t) return; const d = taskDue; setTaskTitle(""); setTaskDue(""); addTask(t, d); }} className="shrink-0 md:flex-none px-4 py-2">Add Task</Button>
               </div>
 
-              <div className="mt-3 space-y-2">
+              <div className="mt-4 space-y-3">
                 {tasks.length === 0 ? (
                   <div className="text-sm opacity-60">No tasks yet.</div>
                 ) : (
                   <ul className="space-y-2">
                     {tasks.map((t) => (
-                      <li
-                        key={t.id}
-                        className="flex items-center justify-between rounded-xl border border-white/10 bg-black/30 p-3"
-                      >
+                      <li key={t.id} className="flex items-center justify-between rounded-2xl border border-white/8 bg-black/30 p-3">
                         <div>
-                          <div className="text-sm font-medium">
-                            {t.title}
+                          <div className="text-sm font-medium">{t.title}
                             {t.status !== "open" && (
-                              <span
-                                className={`ml-2 rounded-full border px-2 py-0.5 text-[11px] ${
-                                  t.status === "done"
-                                    ? "border-emerald-400/30 text-emerald-200"
-                                    : "border-white/20 text-white/70"
-                                }`}
-                              >
+                              <span className={`ml-2 rounded-full border px-2 py-0.5 text-[11px] ${t.status === "done" ? "border-emerald-400/40 text-emerald-200" : "border-white/20 text-white/70"}`}>
                                 {t.status}
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] opacity-60">
-                            {t.due_date
-                              ? `Due ${fmtDate(t.due_date)}`
-                              : "No due date"}
-                          </div>
+                          <div className="text-[11px] opacity-60">{t.due_date ? `Due ${fmtDate(t.due_date)}` : "No due date"}</div>
                         </div>
                         <div className="flex gap-2">
-                          {t.status !== "done" && (
-                            <Button onClick={() => setTaskStatus(t.id, "done")}>
-                              Mark Done
-                            </Button>
-                          )}
-                          {t.status === "open" && (
-                            <Button
-                              variant="outline"
-                              onClick={() => setTaskStatus(t.id, "canceled")}
-                            >
-                              Cancel
-                            </Button>
-                          )}
+                          {t.status !== "done" && <Button onClick={() => setTaskStatus(t.id, "done")} className="px-3 py-1">Mark Done</Button>}
+                          {t.status === "open" && <Button variant="outline" onClick={() => setTaskStatus(t.id, "canceled")} className="px-3 py-1">Cancel</Button>}
                         </div>
                       </li>
                     ))}
@@ -834,37 +769,25 @@ export default function LeadDetailPage() {
             </section>
 
             {/* Stage History */}
-            <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <section className="rounded-3xl border border-white/8 bg-white/4 backdrop-blur-md p-6 shadow-lg">
               <div className="flex items-center justify-between">
-                <div className="text-[11px] uppercase tracking-wider text-white/60">
-                  Stage history
-                </div>
+                <div className="text-[11px] uppercase tracking-wider text-white/60">Stage history</div>
               </div>
 
-              <div className="mt-3">
+              <div className="mt-4">
                 {history.length === 0 ? (
                   <div className="text-sm opacity-60">No stage changes yet.</div>
                 ) : (
-                  <ul className="space-y-2">
+                  <ul className="space-y-3">
                     {history.map((h) => (
-                      <li
-                        key={h.id}
-                        className="rounded-xl border border-white/10 bg-black/30 p-3"
-                      >
+                      <li key={h.id} className="rounded-2xl border border-white/8 bg-black/30 p-3">
                         <div className="text-sm">
                           <span className="opacity-70">Moved:</span>{" "}
-                          <span className="font-medium">
-                            {h.from_stage ?? "—"}
-                          </span>{" "}
+                          <span className="font-medium">{h.from_stage ?? "—"}</span>{" "}
                           <span className="opacity-70">→</span>{" "}
-                          <span className="font-medium">
-                            {h.to_stage ?? "—"}
-                          </span>
+                          <span className="font-medium">{h.to_stage ?? "—"}</span>
                         </div>
-                        <div className="mt-1 text-[11px] opacity-60">
-                          {new Date(h.created_at).toLocaleString("en-IN")}
-                          {h.changed_by_name ? ` · by ${h.changed_by_name}` : ""}
-                        </div>
+                        <div className="mt-1 text-[11px] opacity-60">{new Date(h.created_at).toLocaleString("en-IN")}{h.changed_by_name ? ` · by ${h.changed_by_name}` : ""}</div>
                       </li>
                     ))}
                   </ul>
