@@ -3,7 +3,15 @@ import { cookies } from "next/headers";
 export type SessionUser = { id: string; email: string; role: string; tenantId?: string; companyId?: string };
 export type SessionResp = { user: SessionUser | null };
 
-const BACKEND = process.env.BACKEND_URL || "http://localhost:4000";
+// lib/auth-server.ts (server side)
+const BACKEND =
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  (() => { throw new Error("BACKEND_URL or NEXT_PUBLIC_BACKEND_URL must be set on the server"); })();
+
+// use BACKEND inside functions, do not re-declare `export` inside functions
+export { BACKEND };
+
 const SSR_COOKIE = "ssr_sid";
 
 export async function getSession(): Promise<SessionResp> {

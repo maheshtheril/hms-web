@@ -13,7 +13,13 @@ export type SessionUser = {
 
 export type SessionResp = { user: SessionUser | null };
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// lib/auth.ts
+if (!process.env.NEXT_PUBLIC_BACKEND_URL) {
+  throw new Error("NEXT_PUBLIC_BACKEND_URL must be set");
+}
+export const API = process.env.NEXT_PUBLIC_BACKEND_URL;
+export default API;
+
 
 /**
  * Build a Cookie header from the server's incoming request cookies.
