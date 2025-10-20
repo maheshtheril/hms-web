@@ -120,7 +120,7 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
           const parsed = Number(v);
           if (!Number.isNaN(parsed)) return parsed;
         }
-        // if other types, ignore
+        // ignore other types
       }
       return null; // important: null = "no value returned"
     };
@@ -175,7 +175,6 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     };
   }, [authed, mine]);
 
-  // initial fetch and short polling fallback in case SSE isn't used
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -208,10 +207,8 @@ export default function DashboardPage() {
   const { kpis, loading: kpiLoading, mine, refetch, setKpis } = useKpis(authed, me);
   const { toast } = useToast();
 
-  // tenant live state
   const [tenant, setTenant] = useState<Tenant | null>(null);
 
-  // calendar focus ref + visual focus state
   const calendarRef = React.useRef<HTMLDivElement | null>(null);
   const [calendarFocused, setCalendarFocused] = useState(false);
 
@@ -224,7 +221,6 @@ export default function DashboardPage() {
   const loading = authed === null;
   const displayName = me?.user?.name?.trim() || me?.user?.email || "User";
 
-  // local optimistic KPIs so UI updates instantly while we refetch authoritative numbers
   const [localKpis, setLocalKpis] = useState<KpisPayload | null>(null);
   useEffect(() => {
     if (kpis) setLocalKpis(kpis);
@@ -237,19 +233,17 @@ export default function DashboardPage() {
 
   const todaysFollowups = (() => {
     const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
-    return n === null || n === undefined ? "–" : String(n);
+    // return "–" when missing OR explicitly zero:
+    if (n === null || n === undefined || Number(n) === 0) return "–";
+    return String(n);
   })();
 
   const openLeadsTrend = String(localKpis?.open_leads_trend ?? "–");
   const conversion = localKpis?.conversion_percentage ? String(localKpis.conversion_percentage) : "–";
 
-  // local state to show/hide quick lead drawer
   const [showQuick, setShowQuick] = useState(false);
-
-  // key to force LeadCalendar remount (simple reload)
   const [calendarKey, setCalendarKey] = useState(0);
 
-  // load tenant — keep it resilient to failures
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -275,10 +269,8 @@ export default function DashboardPage() {
     };
   }, [authed]);
 
-  /* ---------- handler when quick lead created ---------- */
   async function handleCreated(lead: any) {
     try {
-      // optimistic local increment of open leads (if present)
       setLocalKpis((prev) => {
         if (!prev) return prev;
         const copy = { ...prev };
@@ -288,10 +280,8 @@ export default function DashboardPage() {
         return copy;
       });
 
-      // close drawer immediately
       setShowQuick(false);
 
-      // refetch authoritative KPIs and apply them when returned
       const fresh = await refetch?.();
       if (fresh) {
         setKpis?.(fresh);
@@ -301,7 +291,6 @@ export default function DashboardPage() {
         toast({ title: "Saved", description: "Lead saved. KPIs will update shortly.", variant: "default" });
       }
 
-      // force calendar reload
       setCalendarKey((k) => k + 1);
     } catch (e) {
       console.error("[Dashboard] handleCreated error:", e);
@@ -350,13 +339,13 @@ export default function DashboardPage() {
                   </p>
 
                   <div className="mt-4 sm:mt-5 flex flex-col sm:flex-row sm:items-center gap-3">
-                    <GhostButton
-                      as="button"
-                      onClick={() => setShowQuick(true)}
-                      className="w-full sm:w-auto justify-center ring-1 ring-indigo-500/20 hover:ring-indigo-500/40"
-                    >
-                      + Quick Lead
-                    </GhostButton>
+                   <GhostButton
+  onClick={() => setShowQuick(true)}
+  className="w-full sm:w-auto justify-center ring-1 ring-indigo-500/20 hover:ring-indigo-500/40"
+>
+  + Quick Lead
+</GhostButton>
+
 
                     <GhostButton href={detailedHref("welcome_detailed")} className="w-full sm:w-auto justify-center">
                       + Detailed Lead
