@@ -5,19 +5,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 /* Backend base */
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+const API_BASE = process.env.BACKEND_URL || "http://localhost:4000";
 
+/* ───────── Multi-tenant headers ───────── */
 /* ───────── Multi-tenant headers ───────── */
 const TENANT_ID =
   process.env.NEXT_PUBLIC_TENANT_ID ||
-  (typeof window !== "undefined" && localStorage.getItem("tenant_id")) ||
-  "26b7a805-2f6b-4899-b295-d03be045056f";
+  (typeof window !== "undefined" ? localStorage.getItem("tenant_id") : null);
 
 const COMPANY_ID =
   process.env.NEXT_PUBLIC_COMPANY_ID ||
-  (typeof window !== "undefined" && localStorage.getItem("company_id")) ||
-  "af3b367a-d61c-4748-9536-3fe94fe2d247";
+  (typeof window !== "undefined" ? localStorage.getItem("company_id") : null);
 
+
+/** Only add JSON content-type when actually sending JSON (reduces preflights). */
 /** Only add JSON content-type when actually sending JSON (reduces preflights). */
 function authHeaders(
   extra?: Record<string, string>,
@@ -25,13 +26,21 @@ function authHeaders(
 ) {
   const base: Record<string, string> = {
     Accept: "application/json",
-    "X-Tenant-Id": TENANT_ID,
-    "X-Company-Id": COMPANY_ID,
   };
+
+  // Add multi-tenant headers only if available
+  if (TENANT_ID) base["X-Tenant-Id"] = TENANT_ID;
+  if (COMPANY_ID) base["X-Company-Id"] = COMPANY_ID;
+
   const method = (opts?.method || "GET").toUpperCase();
-  if (!opts?.isForm && method !== "GET") base["Content-Type"] = "application/json";
+
+  if (!opts?.isForm && method !== "GET") {
+    base["Content-Type"] = "application/json";
+  }
+
   return { ...base, ...(extra || {}) };
 }
+
 
 /* ───────────────── Types ──────────────── */
 type Lead = {
