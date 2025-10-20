@@ -54,7 +54,7 @@ function up(m?: string) {
    Use NEXT_PUBLIC_API_URL if present (normalized to end with /api).
    Else fall back to same-origin /api (Next rewrite).
 ──────────────────────────────────────────── */
-const envBase = resolveApiBase(process.env.NEXT_PUBLIC_API_URL);
+const envBase = resolveApiBase(process.env.BACKEND_URL);
 const computedBaseURL = envBase || "/api";
 
 /* ───────────────── axios instance ───────────────── */
