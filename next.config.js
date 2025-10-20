@@ -3,8 +3,11 @@ const path = require("path");
 
 // Server-only: do NOT expose this to the browser
 // next.config.js
-const NEXT_PUBLIC_BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND =
+  (process.env.NEXT_PUBLIC_BACKEND_URL && process.env.NEXT_PUBLIC_BACKEND_URL.trim()) ||
+  (process.env.BACKEND_URL && process.env.BACKEND_URL.trim()) ||
+  "http://localhost:4000";
+
 
 module.exports = {
   reactStrictMode: true,
