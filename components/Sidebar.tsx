@@ -57,53 +57,53 @@ const SECTIONS: Section[] = [
         children: [
           { label: "Capture & Create", header: true },
           { label: "All Leads", href: "/crm/leads", keywords: ["index", "list", "table"] },
-          { label: "Create Lead", href: "/leads/new", keywords: ["add", "new"] },
+          // { label: "Create Lead", href: "/leads/new", keywords: ["add", "new"] },
           { label: "Import Leads", href: "/leads/import", keywords: ["csv", "xlsx", "bulk"] },
 
-          { label: "Search & Intelligence", header: true },
-          { label: "Smart Search", href: "/leads/search", keywords: ["tsvector", "filter"] },
+          // { label: "Search & Intelligence", header: true },
+          // { label: "Smart Search", href: "/leads/search", keywords: ["tsvector", "filter"] },
 
-          { label: "Pipelines & Stages", header: true },
-          { label: "Pipelines", href: "/pipelines" },
-          { label: "Pipeline Stages", href: "/pipelines/stages" },
+          // { label: "Pipelines & Stages", header: true },
+          // { label: "Pipelines", href: "/pipelines" },
+          // { label: "Pipeline Stages", href: "/pipelines/stages" },
         ],
       },
 
       // ⬇️ CRM → Accounts (external companies: customers/partners)
-      {
-        label: "Accounts",
-        keywords: ["companies", "customers", "partners", "vendors"],
-        children: [
-          { label: "All Accounts", href: "/crm/accounts" },
-          { label: "Create Account", href: "/crm/accounts/new" },
-        ],
-      },
+      // {
+      //   label: "Accounts",
+      //   keywords: ["companies", "customers", "partners", "vendors"],
+      //   children: [
+      //     { label: "All Accounts", href: "/crm/accounts" },
+      //     { label: "Create Account", href: "/crm/accounts/new" },
+      //   ],
+      // },
 
     
   // ─────────────────── Contacts ───────────────────
-  {
-    label: "Contacts",
-    keywords: ["people", "clients", "individuals", "stakeholders"],
-    children: [
-      { label: "Standard Level", header: true },
-      { label: "All Contacts", href: "/crm/contacts" },
-      { label: "Create Contact", href: "/crm/contacts/new" },
-      { label: "Import Contacts", href: "/crm/contacts/import" },
-    ],
-  },
+  // {
+  //   label: "Contacts",
+  //   keywords: ["people", "clients", "individuals", "stakeholders"],
+  //   children: [
+  //     { label: "Standard Level", header: true },
+  //     { label: "All Contacts", href: "/crm/contacts" },
+  //     { label: "Create Contact", href: "/crm/contacts/new" },
+  //     { label: "Import Contacts", href: "/crm/contacts/import" },
+  //   ],
+  // },
 
   // ─────────────────── Opportunities ───────────────────
-  {
-    label: "Opportunities",
-    keywords: ["deals", "sales", "negotiations", "revenue"],
-    children: [
-      { label: "Standard Level", header: true },
-      { label: "All Opportunities", href: "/crm/opportunities" },
-      { label: "Create Opportunity", href: "/crm/opportunities/new" },
-      { label: "Pipeline View", href: "/crm/opportunities/pipeline" },
-      { label: "Performance Insights", href: "/crm/opportunities/insights" },
-    ],
-  },
+  // {
+  //   label: "Opportunities",
+  //   keywords: ["deals", "sales", "negotiations", "revenue"],
+  //   children: [
+  //     { label: "Standard Level", header: true },
+  //     { label: "All Opportunities", href: "/crm/opportunities" },
+  //     { label: "Create Opportunity", href: "/crm/opportunities/new" },
+  //     { label: "Pipeline View", href: "/crm/opportunities/pipeline" },
+  //     { label: "Performance Insights", href: "/crm/opportunities/insights" },
+  //   ],
+  // },
 
   // ─────────────────── Activities ───────────────────
   {

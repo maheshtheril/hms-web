@@ -317,6 +317,40 @@ async function fetchCompanyNames(leads: Lead[], cookieHeader: string): Promise<C
   return map;
 }
 
+/* ───────────────── Status badge helper ───────────────── */
+/**
+ * Returns a tailwind class string for different lead statuses.
+ * Adjust or expand this map as your app uses more statuses.
+ */
+function statusBadge(status?: string | null, deleted = false) {
+  if (deleted) {
+    return {
+      label: "Deleted",
+      cls: "rounded-full px-2 py-0.5 text-xs border border-red-500/30 bg-red-500/10 text-red-200",
+    };
+  }
+  const s = (status ?? "new").toString().toLowerCase();
+  switch (s) {
+    case "new":
+      return { label: "New", cls: "rounded-full px-2 py-0.5 text-xs border border-blue-500/30 bg-blue-500/8 text-blue-200" };
+    case "contacted":
+    case "in contact":
+      return { label: "Contacted", cls: "rounded-full px-2 py-0.5 text-xs border border-amber-500/30 bg-amber-500/8 text-amber-200" };
+    case "qualified":
+    case "opportunity":
+      return { label: "Qualified", cls: "rounded-full px-2 py-0.5 text-xs border border-emerald-500/30 bg-emerald-500/8 text-emerald-200" };
+    case "won":
+      return { label: "Won", cls: "rounded-full px-2 py-0.5 text-xs border border-green-500/30 bg-green-500/8 text-green-200" };
+    case "lost":
+    case "lost lead":
+      return { label: "Lost", cls: "rounded-full px-2 py-0.5 text-xs border border-red-500/30 bg-red-500/10 text-red-200" };
+    case "nurture":
+      return { label: "Nurture", cls: "rounded-full px-2 py-0.5 text-xs border border-violet-500/30 bg-violet-500/8 text-violet-200" };
+    default:
+      return { label: status ?? "—", cls: "rounded-full px-2 py-0.5 text-xs border border-white/10" };
+  }
+}
+
 /* ───────────────── Page ───────────────── */
 export default async function LeadsPage({ searchParams }: PageProps) {
   const cookieHeader = await makeCookieHeader();
@@ -390,7 +424,17 @@ export default async function LeadsPage({ searchParams }: PageProps) {
             </form>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
+            {/* Back to Dashboard button */}
+            <Link
+              href="/"
+              className="rounded-full border border-white/10 px-3 py-2 text-sm hover:bg-white/6 flex items-center gap-2"
+              title="Back to dashboard"
+            >
+              <span className="text-sm">←</span>
+              <span className="text-sm">Dashboard</span>
+            </Link>
+
             <Link
               href={`/crm/leads/new?mode=detailed&src=leads_page_detailed&return=${returnTo}`}
               className="rounded-full bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-zinc-100 shadow-2xl shadow-black/30"
@@ -485,6 +529,8 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                     (l.company_id && companyMap[l.company_id]) ||
                     (l.company_id ? `#${l.company_id.slice(0, 8)}…` : "—");
 
+                  const status = statusBadge(l.status, deleted);
+
                   return (
                     <tr
                       key={l.id}
@@ -513,10 +559,9 @@ export default async function LeadsPage({ searchParams }: PageProps) {
                         <div className="text-[11px] opacity-60">{ai.reason}</div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${
-                          deleted ? "border border-red-500/30 bg-red-500/10 text-red-200" : "border border-white/10"
-                        }`}>
-                          {deleted ? "Deleted" : (l.status ?? "New")}
+                        {/* status with variant colors */}
+                        <span className={status.cls}>
+                          {status.label}
                         </span>
                       </td>
                       <td className="px-4 py-3 sticky right-0 z-30 bg-black/70 backdrop-blur supports-[backdrop-filter]:bg-black/50">
