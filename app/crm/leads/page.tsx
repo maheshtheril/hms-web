@@ -1,6 +1,8 @@
 // web/app/crm/leads/page.tsx
 import "server-only";
 import { cookies, headers } from "next/headers";
+import BackToDashboardButton from "../../components/BackToDashboardButton";
+
 // import { redirect } from "next/navigation";
 import Link from "next/link";
 // TopNav removed to avoid duplicate nav bar
@@ -425,15 +427,8 @@ export default async function LeadsPage({ searchParams }: PageProps) {
           </div>
 
           <div className="flex flex-wrap gap-2 items-center">
-            {/* Back to Dashboard button */}
-            <Link
-              href="/"
-              className="rounded-full border border-white/10 px-3 py-2 text-sm hover:bg-white/6 flex items-center gap-2"
-              title="Back to dashboard"
-            >
-              <span className="text-sm">←</span>
-              <span className="text-sm">Dashboard</span>
-            </Link>
+            {/* Back to Dashboard button (client-side push to fixed dashboard route) */}
+            <BackToDashboardButton />
 
             <Link
               href={`/crm/leads/new?mode=detailed&src=leads_page_detailed&return=${returnTo}`}
