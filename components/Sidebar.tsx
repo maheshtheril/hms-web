@@ -79,18 +79,7 @@ const SECTIONS: Section[] = [
         ],
       },
 
-     {
-    label: "Companies",
-    keywords: ["clients", "organizations", "partners", "vendors"],
-    children: [
-      { label: "Standard Level", header: true },
-      { label: "All Companies", href: "/crm/companies" },
-      { label: "Create Company", href: "/crm/companies/new" },
-      { label: "Import Companies", href: "/crm/companies/import" },
-      { label: "Company Insights", href: "/crm/companies/insights", keywords: ["ai", "summary", "metrics"] },
-    ],
-  },
-
+    
   // ─────────────────── Contacts ───────────────────
   {
     label: "Contacts",
@@ -152,12 +141,16 @@ const SECTIONS: Section[] = [
 
       // ⬇️ Organization: your OWN legal entities (multi-company)
       {
-        label: "Organization",
-        children: [
-          { label: "Legal Entities", href: "/dashboard/admin/org/companies", keywords: ["multi-company", "legal", "subsidiaries"] },
-          { label: "Create Legal Entity", href: "/dashboard/admin/org/companies/new", keywords: ["add", "new"] },
-        ],
-      },
+    label: "Companies",
+    keywords: ["clients", "organizations", "partners", "vendors"],
+    children: [
+      { label: "Standard Level", header: true },
+      { label: "All Companies", href: "/tenant/companies" },
+      { label: "Create Company", href: "/tenant/companies/new" },
+      { label: "Import Companies", href: "/tenant/companies/import" },
+      { label: "Company Insights", href: "/tenant/companies/insights", keywords: ["ai", "summary", "metrics"] },
+    ],
+  },
 
       {
         label: "RBAC",
