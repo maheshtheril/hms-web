@@ -13,20 +13,28 @@ if (!process.env.NEXT_PUBLIC_BACKEND_URL) {
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL!;
 console.log("CLIENT API_BASE =", API_BASE);
 
-
-/* ───────── Multi-tenant headers ───────── */
 /* ───────── Multi-tenant headers ───────── */
 const TENANT_ID =
-  process.env.NEXT_PUBLIC_TENANT_ID ||
-  (typeof window !== "undefined" ? localStorage.getItem("tenant_id") : null);
+  typeof window !== "undefined"
+    ? localStorage.getItem("tenant_id") || process.env.NEXT_PUBLIC_TENANT_ID || null
+    : process.env.NEXT_PUBLIC_TENANT_ID || null;
 
 const COMPANY_ID =
-  process.env.NEXT_PUBLIC_COMPANY_ID ||
-  (typeof window !== "undefined" ? localStorage.getItem("company_id") : null);
+  typeof window !== "undefined"
+    ? localStorage.getItem("company_id") || process.env.NEXT_PUBLIC_COMPANY_ID || null
+    : process.env.NEXT_PUBLIC_COMPANY_ID || null;
 
+/* ───────── Auth helpers ───────── */
+// read token (if you use Bearer tokens in the browser)
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token") || localStorage.getItem("token") || null;
+}
 
-/** Only add JSON content-type when actually sending JSON (reduces preflights). */
-/** Only add JSON content-type when actually sending JSON (reduces preflights). */
+/**
+ * authHeaders builds headers including Accept, Content-Type (when appropriate),
+ * tenant/company headers, and optional Authorization Bearer token if present.
+ */
 function authHeaders(
   extra?: Record<string, string>,
   opts?: { method?: string; isForm?: boolean }
@@ -45,9 +53,28 @@ function authHeaders(
     base["Content-Type"] = "application/json";
   }
 
+  const token = getAuthToken();
+  if (token) {
+    base["Authorization"] = `Bearer ${token}`;
+  }
+
   return { ...base, ...(extra || {}) };
 }
 
+/**
+ * apiFetch helper:
+ * - If path is relative and starts with /api, call same-origin endpoint (no cross-site cookies/CORS).
+ * - If path is an absolute URL, call it directly (preserves original behavior).
+ * This lets you call `/api/...` and have requests go to your Next server which can proxy/forward.
+ */
+function apiFetch(path: string, init?: RequestInit) {
+  if (/^\/api\//.test(path)) {
+    // same-origin call to Next.js API route
+    return fetch(path, init);
+  }
+  // absolute URL (fallback)
+  return fetch(path, init);
+}
 
 /* ───────────────── Types ──────────────── */
 type Lead = {
@@ -206,12 +233,15 @@ function CustomFieldInput({
   async function uploadOne(file: File) {
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(`${API_BASE}/api/uploads`, {
+
+    // Use same-origin uploads route so the server proxy can attach cookies / auth
+    const r = await apiFetch(`/api/uploads`, {
       method: "POST",
       body: fd,
       credentials: "include",
       headers: authHeaders({}, { method: "POST", isForm: true }),
     });
+
     if (!r.ok) throw new Error((await r.text().catch(() => "")) || "Upload failed");
     return r.json(); // { url, name, size, type, ... }
   }
@@ -364,24 +394,34 @@ function CustomFieldInput({
             </a>
           ) : null}
 
-          <input
-            type="file"
-            className={common}
-            accept={kind === "image" ? "image/*" : undefined}
-            onChange={async (e) => {
-              const f = e.currentTarget.files?.[0];
-              if (!f) return;
-              try {
-                const uploaded = await uploadOne(f);
-                onChange({ value_text: uploaded.url, value_json: uploaded });
-              } catch (err: any) {
-                alert(err?.message || "Upload failed");
-              } finally {
-                e.currentTarget.value = "";
-              }
-            }}
-            disabled={disabled}
-          />
+         <input
+  type="file"
+  className={common}
+  accept={kind === "image" ? "image/*" : undefined}
+  onChange={async (e) => {
+    // capture the input element and file synchronously (before any await)
+    const input = e.currentTarget;
+    const f = input.files?.[0];
+    if (!f) return;
+
+    try {
+      const uploaded = await uploadOne(f);
+      onChange({ value_text: uploaded.url, value_json: uploaded });
+    } catch (err: any) {
+      alert(err?.message || "Upload failed");
+    } finally {
+      // use the saved DOM element reference (not the synthetic event)
+      // guard against null just to be safe
+      try {
+        if (input) input.value = "";
+      } catch {
+        /* ignore */
+      }
+    }
+  }}
+  disabled={disabled}
+/>
+
         </div>
       );
     }
@@ -428,9 +468,10 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
         setCfErr(null);
         setCfLoading(true);
 
-        // 1) try richer joined endpoint
-        let url1 = `${API_BASE}/api/leads/${encodeURIComponent(lead.id)}/custom-fields`;
-        let resp = await fetch(url1, {
+        // 1) try richer joined endpoint (same-origin proxy)
+        const url1 = `/api/leads/${encodeURIComponent(lead.id)}/custom-fields`;
+        console.log("Fetching custom fields (lead-joined):", url1);
+        let resp = await apiFetch(url1, {
           credentials: "include",
           headers: authHeaders({}, { method: "GET" }),
           signal: controller.signal,
@@ -438,7 +479,11 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
 
         let data: any = null;
         if (resp.ok) {
-          data = await resp.json();
+          try {
+            data = await resp.json();
+          } catch {
+            data = null;
+          }
           const rows1 = ensureArrayRows(data);
           if (rows1.length) {
             if (!cancelled) {
@@ -448,16 +493,25 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
             }
             return;
           }
+        } else {
+          // log body for debugging
+          const t = await resp.text().catch(() => "");
+          console.warn("lead-joined fetch failed", resp.status, t);
         }
 
-        // 2) fallback to admin defs
-        const url2 = `${API_BASE}/api/admin/custom-fields?entity=lead`;
-        resp = await fetch(url2, {
+        // 2) fallback to admin defs (same-origin proxy)
+        const url2 = `/api/admin/custom-fields?entity=lead`;
+        console.log("Fetching custom fields (admin fallback):", url2);
+        resp = await apiFetch(url2, {
           credentials: "include",
           headers: authHeaders({}, { method: "GET" }),
           signal: controller.signal,
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => "");
+          throw new Error(txt || `HTTP ${resp.status}`);
+        }
 
         data = await resp.json();
         const rows2 = ensureArrayRows(data);
@@ -584,17 +638,16 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
         value_json: v.value_json ?? null,
       };
 
-      const r = await fetch(
-        `${API_BASE}/api/leads/${encodeURIComponent(lead.id)}/custom-fields/${encodeURIComponent(
-          def.definition_id
-        )}`,
-        {
-          method: "PUT",
-          headers: authHeaders({}, { method: "PUT" }),
-          credentials: "include",
-          body: JSON.stringify(body),
-        }
-      );
+      const url = `/api/leads/${encodeURIComponent(lead.id)}/custom-fields/${encodeURIComponent(
+        def.definition_id
+      )}`;
+
+      const r = await apiFetch(url, {
+        method: "PUT",
+        headers: authHeaders({}, { method: "PUT" }),
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
 
       if (!r.ok && r.status !== 204) {
         const text = await r.text().catch(() => "");
@@ -630,7 +683,7 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
     };
 
     try {
-      const r = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(lead.id)}`, {
+      const r = await apiFetch(`/api/leads/${encodeURIComponent(lead.id)}`, {
         method: "PATCH",
         headers: authHeaders({}, { method: "PATCH" }),
         credentials: "include",
@@ -663,7 +716,7 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
     setErr(null);
     setDeleting(true);
     try {
-      const r = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(lead.id)}`, {
+      const r = await apiFetch(`/api/leads/${encodeURIComponent(lead.id)}`, {
         method: "DELETE",
         credentials: "include",
         headers: authHeaders({}, { method: "DELETE" }),
