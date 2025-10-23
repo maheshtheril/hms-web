@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 /* -------------------------------------------------------------------------- */
 /* Neural Glass Design Language (Lead detail page — presentation cleanup)
    - added PageUp / PageDown keyboard support and floating up/down buttons
-   - only UI helpers added; business logic/API unchanged
+   - only UI helpers added; business logic/API unchanged (except safer error handling + toasts)
 */
 /* -------------------------------------------------------------------------- */
 
@@ -181,7 +181,7 @@ export default function LeadDetailPage() {
   /* refs for scrolling / keyboard */
   const mainRef = useRef<HTMLElement | null>(null);
 
-  /* load functions (unchanged) */
+  /* load functions (unchanged except safer catch handling) */
   async function load() {
     try {
       setLoading(true);
@@ -215,8 +215,10 @@ export default function LeadDetailPage() {
       } catch {
         setHistory([]);
       }
-    } catch (e: any) {
-      setErr(e?.response?.data?.error || e?.message || "Failed to load");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Failed to load";
+      setErr(msg);
     } finally {
       setLoading(false);
     }
@@ -252,7 +254,7 @@ export default function LeadDetailPage() {
       } else {
         setStages([]);
       }
-    } catch (e) {
+    } catch {
       setStages([]);
     } finally {
       setStagesLoading(false);
@@ -298,14 +300,19 @@ export default function LeadDetailPage() {
     return latest.name || undefined;
   }, [lead, stages, history]);
 
-  /* actions (unchanged) */
+  /* actions (safer catch handling + toast messages + optional notification dispatch) */
   async function patchLead(payload: any, toastMsg = "Saved") {
     try {
       setErr(null);
       await apiClient.patch(`/leads/${id}`, payload, { withCredentials: true });
       success(toastMsg);
+      // notify app listeners (TopNav etc.) that something changed - listeners can decide what to do
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", { detail: { type: "lead_updated", set: undefined } }));
+      } catch {}
       await load();
-    } catch (e: any) {
+    } catch (caught) {
+      const e = caught as any;
       const msg = e?.response?.data?.error || e?.message || "Update failed";
       setErr(msg);
       error("Update failed", msg);
@@ -341,9 +348,15 @@ export default function LeadDetailPage() {
         { withCredentials: true }
       );
       success("Note added");
+      // increment global notification count so nav shows new activity
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", { detail: { type: "note_added", increment: 1 } }));
+      } catch {}
       await load();
-    } catch (e: any) {
-      error("Add note failed", e?.response?.data?.error || e?.message || "");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Add note failed";
+      error("Add note failed", msg);
     }
   }
 
@@ -356,9 +369,14 @@ export default function LeadDetailPage() {
         { withCredentials: true }
       );
       success("Task added");
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", { detail: { type: "task_added", increment: 1 } }));
+      } catch {}
       await load();
-    } catch (e: any) {
-      error("Add task failed", e?.response?.data?.error || e?.message || "");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Add task failed";
+      error("Add task failed", msg);
     }
   }
 
@@ -372,12 +390,12 @@ export default function LeadDetailPage() {
         { status },
         { withCredentials: true }
       );
+      success("Task updated");
       await load();
-    } catch (e: any) {
-      error(
-        "Update task failed",
-        e?.response?.data?.error || e?.message || ""
-      );
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Update task failed";
+      error("Update task failed", msg);
     }
   }
 
@@ -390,9 +408,14 @@ export default function LeadDetailPage() {
         { withCredentials: true }
       );
       success(`Lead ${outcome}`);
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", { detail: { type: "lead_closed", increment: 1 } }));
+      } catch {}
       await load();
-    } catch (e: any) {
-      error("Close failed", e?.response?.data?.error || e?.message || "");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Close failed";
+      error("Close failed", msg);
     }
   }
 
@@ -401,8 +424,10 @@ export default function LeadDetailPage() {
       await apiClient.post(`/leads/${id}/reopen`, {}, { withCredentials: true });
       success("Lead reopened");
       await load();
-    } catch (e: any) {
-      error("Reopen failed", e?.response?.data?.error || e?.message || "");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Reopen failed";
+      error("Reopen failed", msg);
     }
   }
 
@@ -441,8 +466,10 @@ export default function LeadDetailPage() {
       );
       success("Stage updated");
       await load();
-    } catch (e: any) {
-      error("Move failed", e?.response?.data?.error || e?.message || "");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.response?.data?.error || e?.message || "Move failed";
+      error("Move failed", msg);
     }
   }
 

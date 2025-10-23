@@ -3,6 +3,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import { useToast } from "@/components/ui/use-toast";
 
 /* Backend base */
 // ensures we always know what the frontend will call
@@ -389,39 +390,39 @@ function CustomFieldInput({
               className="max-h-32 rounded-lg border border-white/10"
             />
           ) : url ? (
-            <a href={url} target="_blank" className="text-xs underline break-all">
+            <a href={url} target="_blank" className="text-xs underline break-all" rel="noreferrer">
               {meta?.name || url}
             </a>
           ) : null}
 
-         <input
-  type="file"
-  className={common}
-  accept={kind === "image" ? "image/*" : undefined}
-  onChange={async (e) => {
-    // capture the input element and file synchronously (before any await)
-    const input = e.currentTarget;
-    const f = input.files?.[0];
-    if (!f) return;
+          <input
+            type="file"
+            className={common}
+            accept={kind === "image" ? "image/*" : undefined}
+            onChange={async (e) => {
+              // capture the input element and file synchronously (before any await)
+              const input = e.currentTarget;
+              const f = input.files?.[0];
+              if (!f) return;
 
-    try {
-      const uploaded = await uploadOne(f);
-      onChange({ value_text: uploaded.url, value_json: uploaded });
-    } catch (err: any) {
-      alert(err?.message || "Upload failed");
-    } finally {
-      // use the saved DOM element reference (not the synthetic event)
-      // guard against null just to be safe
-      try {
-        if (input) input.value = "";
-      } catch {
-        /* ignore */
-      }
-    }
-  }}
-  disabled={disabled}
-/>
-
+              try {
+                const uploaded = await uploadOne(f);
+                onChange({ value_text: uploaded.url, value_json: uploaded });
+              } catch (err) {
+                const ee = err as any;
+                alert(ee?.message || "Upload failed");
+              } finally {
+                // use the saved DOM element reference (not the synthetic event)
+                // guard against null just to be safe
+                try {
+                  if (input) input.value = "";
+                } catch {
+                  /* ignore */
+                }
+              }
+            }}
+            disabled={disabled}
+          />
         </div>
       );
     }
@@ -458,6 +459,11 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
     () => (debugRaw ? JSON.stringify(debugRaw, null, 2) : ""),
     [debugRaw]
   );
+
+  const { toast } = useToast();
+  const success = (title: string, description?: string) => toast({ title, description });
+  const failure = (title: string, description?: string) =>
+    toast({ title, description, variant: "destructive" });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -521,7 +527,8 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
           setDebugRaw({ url: url2, data });
           applyRows(rows2);
         }
-      } catch (e: any) {
+      } catch (caught) {
+        const e = caught as any;
         if (!cancelled && e?.name !== "AbortError") {
           setCfErr(e?.message || "Could not load custom fields");
         }
@@ -593,7 +600,6 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
     }
 
     return () => {
-      cancelled = true;
       controller.abort();
     };
   }, [lead.id]);
@@ -699,12 +705,23 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
         await saveCustomFields();
       }
 
+      // Success toast + global notification event
+      success("Lead saved", `Updated ${payload.name ?? lead.name}`);
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", {
+          detail: { type: "lead_saved", increment: 1 },
+        }));
+      } catch {}
+
       startTransition(() => {
         router.push("/crm/leads");
         router.refresh();
       });
-    } catch (e: any) {
-      setErr(e?.message || "Update failed");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.message || "Update failed";
+      setErr(msg);
+      failure("Save failed", msg);
     }
   }
 
@@ -727,12 +744,21 @@ export default function EditLeadFormClient({ lead }: { lead: Lead }) {
         throw new Error(text || `HTTP ${r.status}`);
       }
 
+      // success
+      success("Lead deleted");
+      try {
+        window.dispatchEvent(new CustomEvent("app:notification", { detail: { type: "lead_deleted", increment: 1 } }));
+      } catch {}
+
       startTransition(() => {
         router.push("/crm/leads");
         router.refresh();
       });
-    } catch (e: any) {
-      setErr(e?.message || "Delete failed");
+    } catch (caught) {
+      const e = caught as any;
+      const msg = e?.message || "Delete failed";
+      setErr(msg);
+      failure("Delete failed", msg);
       setDeleting(false);
     }
   }

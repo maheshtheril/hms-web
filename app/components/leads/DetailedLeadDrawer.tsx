@@ -103,21 +103,6 @@ function AssignEmployee({
       setErr(e?.response?.data?.error || "Could not load team");
     } finally { setLoading(false); }
   }
-// --- Paste this inside DetailedLeadForm component body (after your hooks)
-
-
-useEffect(() => {
-  try {
-    document.body.setAttribute("data-page", "lead-detailed");
-  } catch {}
-  return () => {
-    try {
-      document.body.removeAttribute("data-page");
-    } catch {}
-  };
-}, []);
-
-
 
   useEffect(() => {
     if (open && users.length === 0 && !loading && !err) loadUsers();
@@ -670,12 +655,32 @@ export default function DetailedLeadForm({
 
       // 4) Success messages + callback
       if (noteError) {
-        setOk("Lead created successfully. (Note save failed — you can add it from the lead drawer.)");
+        setOk("Lead created successfully. (Note save failed — you can retry from the lead drawer.)");
         if (!err) setErr("Note creation failed. Please retry from the Notes tab.");
       } else {
         setOk(`Lead created successfully.${initialNote ? " Initial note saved." : ""}`);
       }
       onCreated?.(createdLead);
+
+      // <-- Dispatch app-level notification with toast payload so TopNav (or any listener) can update immediately -->
+      try {
+        window.dispatchEvent(
+          new CustomEvent("app:notification", {
+            detail: {
+              type: "lead_created",
+              lead: createdLead,
+              increment: 1,
+              toast: {
+                title: "Lead saved",
+                description: createdLead?.name ?? name,
+              },
+            },
+          })
+        );
+      } catch (e) {
+        console.warn("failed to dispatch app:notification", e);
+      }
+      // ------------------------------------------------------------------------------
 
       // 5) Reset form + CFs
       setForm((f: any) => ({

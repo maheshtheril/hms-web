@@ -1,14 +1,68 @@
+// app/components/TopNav.tsx
 "use client";
 
 import Link from "next/link";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type TopNavProps = {
   user?: { name?: string; email?: string; avatarUrl?: string | null };
   onToggleSidebar?: () => void;
+  initialNotifCount?: number;
 };
 
-export default function TopNav({ user, onToggleSidebar }: TopNavProps) {
+export default function TopNav({ user, onToggleSidebar, initialNotifCount = 0 }: TopNavProps) {
+  const [notifCount, setNotifCount] = useState<number>(initialNotifCount);
+
+  // toast state (transient little message)
+  const [toastMsg, setToastMsg] = useState<{ title: string; description?: string } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent)?.detail;
+      if (!d) return;
+
+      // badge updates (increment / set / decrement)
+      if (typeof d.increment === "number") {
+        setNotifCount((c) => c + d.increment);
+      }
+      if (typeof d.set === "number") {
+        setNotifCount(d.set);
+      }
+      if (typeof d.decrement === "number") {
+        setNotifCount((c) => Math.max(0, c - d.decrement));
+      }
+
+      // optional toast payload (e.g., { title, description })
+      if (d.toast && d.toast.title) {
+        try {
+          setToastMsg({
+            title: String(d.toast.title),
+            description: d.toast.description ? String(d.toast.description) : undefined,
+          });
+          // reset timer
+          if (toastTimerRef.current) {
+            clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
+          }
+          toastTimerRef.current = setTimeout(() => setToastMsg(null), 3500);
+        } catch (err) {
+          // ignore toast errors
+          console.warn("TopNav toast handling error:", err);
+        }
+      }
+    };
+
+    window.addEventListener("app:notification", handler as EventListener);
+    return () => {
+      window.removeEventListener("app:notification", handler as EventListener);
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -48,7 +102,6 @@ export default function TopNav({ user, onToggleSidebar }: TopNavProps) {
             href="/dashboard"
             className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-white/5"
           >
-           
             <div className="hidden xs:block leading-tight">
               <div className="text-sm font-semibold">GeniusGrid ERP</div>
               <div className="text-[10px] opacity-70">AI • CRM • Multi-Tenant</div>
@@ -100,7 +153,7 @@ export default function TopNav({ user, onToggleSidebar }: TopNavProps) {
               />
             </svg>
             <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-black">
-              3
+              {notifCount}
             </span>
           </button>
 
@@ -191,6 +244,18 @@ export default function TopNav({ user, onToggleSidebar }: TopNavProps) {
           </button>
         </div>
       </div>
+
+      {/* Transient toast (accessible) */}
+      {toastMsg && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed right-4 top-16 z-[1000000] max-w-xs rounded-lg border border-white/10 bg-black/90 p-3 shadow-xl backdrop-blur"
+        >
+          <div className="text-sm font-semibold text-white/95">{toastMsg.title}</div>
+          {toastMsg.description && <div className="text-xs opacity-70 mt-1">{toastMsg.description}</div>}
+        </div>
+      )}
     </header>
   );
 }

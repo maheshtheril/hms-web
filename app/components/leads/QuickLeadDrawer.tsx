@@ -299,7 +299,8 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
       try {
         created = await doCreate(basePayload);
         console.log("[QuickLeadDrawer] /leads response:", created);
-      } catch (apiErr) {
+      } catch (apiErr: any) {
+        // <-- typed apiErr as any so API error response properties are accessible
         console.error("[QuickLeadDrawer] POST /leads failed:", apiErr?.response?.status, apiErr?.response?.data || apiErr);
         try {
           toast({ title: "Save failed", description: apiErr?.response?.data?.error || apiErr?.message || "Error creating lead", variant: "destructive" });
@@ -320,13 +321,33 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
 
       try {
         onCreated?.(created);
-      } catch (cbErr) {
+      } catch (cbErr: any) {
         console.error("[QuickLeadDrawer] onCreated callback threw:", cbErr);
       }
 
+      // --- dispatch a global event so listeners (TopNav etc.) can update immediately ---
+      try {
+        window.dispatchEvent(
+          new CustomEvent("app:notification", {
+            detail: {
+              type: "lead_created",
+              lead: created,
+              increment: 1,
+              toast: {
+                title: "Lead saved",
+                description: created?.name ?? name,
+              },
+            },
+          })
+        );
+      } catch (e: any) {
+        console.warn("[QuickLeadDrawer] failed to dispatch app:notification:", e);
+      }
+      // -------------------------------------------------------------------------------
+
       try {
         onClose();
-      } catch (closeErr) {
+      } catch (closeErr: any) {
         console.warn("[QuickLeadDrawer] onClose threw:", closeErr);
       }
 
