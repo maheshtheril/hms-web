@@ -112,9 +112,9 @@ const SECTIONS: Section[] = [
     children: [
       { label: "Standard Level", header: true },
       { label: "All Activities", href: "/crm/activities" },
-      { label: "Calls", href: "/crm/activities/calls" },
-      { label: "Meetings", href: "/crm/activities/meetings" },
-      { label: "Tasks", href: "/crm/activities/tasks" },
+     // { label: "Calls", href: "/crm/activities/calls" },
+      //{ label: "Meetings", href: "/crm/activities/meetings" },
+      //{ label: "Tasks", href: "/crm/activities/tasks" },
     ],
   },
 
@@ -146,9 +146,9 @@ const SECTIONS: Section[] = [
     children: [
       { label: "Standard Level", header: true },
       { label: "All Companies", href: "/tenant/companies" },
-      { label: "Create Company", href: "/tenant/companies/new" },
-      { label: "Import Companies", href: "/tenant/companies/import" },
-      { label: "Company Insights", href: "/tenant/companies/insights", keywords: ["ai", "summary", "metrics"] },
+     // { label: "Create Company", href: "/tenant/companies/new" },
+     // { label: "Import Companies", href: "/tenant/companies/import" },
+     // { label: "Company Insights", href: "/tenant/companies/insights", keywords: ["ai", "summary", "metrics"] },
     ],
   },
 
