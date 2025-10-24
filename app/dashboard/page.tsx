@@ -1,3 +1,4 @@
+// app/dashboard/page.tsx
 "use client";
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
@@ -110,7 +111,6 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
   }, [me]);
 
   const normalizePayload = (data: any): KpisPayload => {
-    // be permissive: accept number or string; return number when present, null when missing
     const getNum = (keys: string[]): number | null => {
       for (const k of keys) {
         const v = data?.[k];
@@ -120,9 +120,8 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
           const parsed = Number(v);
           if (!Number.isNaN(parsed)) return parsed;
         }
-        // ignore other types
       }
-      return null; // important: null = "no value returned"
+      return null;
     };
 
     const normalized: KpisPayload = {
@@ -136,31 +135,51 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
     return normalized;
   };
 
-  const fetchTodaysFromServer = async (): Promise<number | null> => {
-    try {
-      const r = await fetch("/kpis/todays", { credentials: "include", cache: "no-store" });
-      if (!r.ok) {
-        // try /api/kpis/todays as fallback (if you proxy to /api)
-        const r2 = await fetch("/api/kpis/todays", { credentials: "include", cache: "no-store" }).catch(() => null);
-        if (!r2 || !r2.ok) return null;
-        const d2 = await r2.json().catch(() => null);
-        if (d2 && (typeof d2.todays_followups === "number" || typeof d2.todays_followups === "string")) {
-          const p = Number(d2.todays_followups);
-          return Number.isNaN(p) ? null : p;
+  // replace the current fetchTodaysFromServer with this block
+const fetchTodaysFromServer = async (): Promise<number | null> => {
+  try {
+    // primary endpoint
+    const r = await fetch("/api/kpis/todays", { credentials: "include", cache: "no-store" });
+
+    // If unauthorized, check auth status and redirect or bail gracefully
+    if (r.status === 401) {
+      // check if user session exists
+      try {
+        const me = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!me.ok) {
+          // no session: redirect to login (preserves current UX)
+          console.warn("[useKpis] session missing -> redirect to /login");
+          // don't force redirect during automated tests; only redirect in browser
+          if (typeof window !== "undefined") window.location.replace("/login");
+          return null;
         }
+        // If /api/auth/me is ok but kpis returned 401, return null and log
+        console.warn("[useKpis] /api/kpis/todays returned 401 even though auth/me is OK");
+        return null;
+      } catch (e) {
+        console.warn("[useKpis] auth check failed", e);
+        if (typeof window !== "undefined") window.location.replace("/login");
         return null;
       }
-      const data = await r.json().catch(() => null);
-      if (!data) return null;
-      const v = data.todays_followups ?? data.todaysFollowups ?? data.count ?? null;
-      if (v === undefined || v === null) return null;
-      const parsed = Number(v);
-      return Number.isNaN(parsed) ? null : parsed;
-    } catch (e) {
-      console.warn("[useKpis] fetchTodaysFromServer failed", e);
+    }
+
+    if (!r.ok) {
+      // other errors: treat as missing
       return null;
     }
-  };
+
+    const data = await r.json().catch(() => null);
+    if (!data) return null;
+    const v = data.todays_followups ?? data.todaysFollowups ?? data.count ?? null;
+    if (v === undefined || v === null) return null;
+    const parsed = Number(v);
+    return Number.isNaN(parsed) ? null : parsed;
+  } catch (e) {
+    console.warn("[useKpis] fetchTodaysFromServer failed", e);
+    return null;
+  }
+};
+
 
   const fetchKpis = useMemo(() => {
     return async (): Promise<KpisPayload | null> => {
@@ -189,7 +208,6 @@ function useKpis(authed: boolean | null, me: MeResponse | null) {
         } else {
           const normalized = normalizePayload(parsed);
 
-          // Try to fetch tenant-wide todays count from dedicated endpoint and prefer it when present
           const tenantWide = await fetchTodaysFromServer();
           if (tenantWide !== null) {
             normalized.todays_followups = tenantWide;
@@ -267,7 +285,6 @@ export default function DashboardPage() {
 
   const todaysFollowups = (() => {
     const n = localKpis?.todays_followups ?? localKpis?.followups_today ?? null;
-    // previously you hid zero as "–"; now show 0 explicitly. Only missing values are "–"
     if (n === null || n === undefined) return "–";
     return String(n);
   })();
@@ -353,7 +370,6 @@ export default function DashboardPage() {
           </div>
         ) : authed === true ? (
           <>
-            {/* HERO / WELCOME */}
             <section
               className="mx-auto max-w-5xl rounded-3xl p-6 sm:p-8 mb-6 sm:mb-8 shadow-2xl"
               style={{
@@ -431,14 +447,12 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            {/* KPI grid */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               <KpiCardEnhanced label="Open Leads" value={kpiLoading ? "…" : openLeads} trend={kpiLoading ? "…" : openLeadsTrend} icon={<IconLeads />} />
               <KpiCardEnhanced label="Today’s Follow-ups" value={kpiLoading ? "…" : todaysFollowups} trend={kpiLoading ? "…" : "On track"} icon={<IconCalendar />} />
               <KpiCardEnhanced label="Conversion (est.)" value={kpiLoading ? "…" : conversion} trend={kpiLoading ? "…" : "+1.2%"} icon={<IconGauge />} />
             </section>
 
-            {/* Main: full-width calendar (aside removed) */}
             <section className="grid grid-cols-1 gap-6 mb-8">
               <div className="rounded-2xl p-4 sm:p-6" style={{ background: "linear-gradient(180deg, rgba(12,16,30,0.55), rgba(8,10,16,0.5))", border: "1px solid rgba(255,255,255,0.04)", backdropFilter: "blur(10px)" }}>
                 <div className="mb-3 flex items-center justify-between">
@@ -461,7 +475,6 @@ export default function DashboardPage() {
 
             <footer className="mt-6 sm:mt-10 py-6 text-center text-xs opacity-60">© {new Date().getFullYear()} GeniusGrid — Made for speed, accuracy & AI.</footer>
 
-            {/* Quick lead drawer portal */}
             <QuickLeadDrawer open={showQuick} onClose={() => setShowQuick(false)} onCreated={handleCreated} />
           </>
         ) : null}

@@ -1,4 +1,3 @@
-// app/components/leads/QuickLeadDrawer.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -263,7 +262,6 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
     return data?.lead ?? data;
   }
 
-  /* ---------- submit (robust + logs + toast/alert fallback) ---------- */
   async function submit() {
     if (submittingRef.current) return;
     setErr(null);
@@ -276,7 +274,6 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
     try {
       submittingRef.current = true;
       setLoading(true);
-
       try {
         document.body.style.cursor = "wait";
       } catch {}
@@ -300,7 +297,6 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
         created = await doCreate(basePayload);
         console.log("[QuickLeadDrawer] /leads response:", created);
       } catch (apiErr: any) {
-        // <-- typed apiErr as any so API error response properties are accessible
         console.error("[QuickLeadDrawer] POST /leads failed:", apiErr?.response?.status, apiErr?.response?.data || apiErr);
         try {
           toast({ title: "Save failed", description: apiErr?.response?.data?.error || apiErr?.message || "Error creating lead", variant: "destructive" });
@@ -325,8 +321,9 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
         console.error("[QuickLeadDrawer] onCreated callback threw:", cbErr);
       }
 
-      // --- dispatch a global event so listeners (TopNav etc.) can update immediately ---
+      // dispatch a global event so listeners can update immediately
       try {
+        // keep the old event (for any existing listeners)
         window.dispatchEvent(
           new CustomEvent("app:notification", {
             detail: {
@@ -343,14 +340,41 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
       } catch (e: any) {
         console.warn("[QuickLeadDrawer] failed to dispatch app:notification:", e);
       }
-      // -------------------------------------------------------------------------------
 
-      try {
-        onClose();
-      } catch (closeErr: any) {
-        console.warn("[QuickLeadDrawer] onClose threw:", closeErr);
-      }
+      // NEW: dispatch app:messages (Topbar friendly shape)
+try {
+  const messagePayload = {
+    id: String(created?.id ?? `lead-${Date.now()}`),
+    title: "Lead saved",
+    body: created?.name ?? name,
+    from: created?.created_by ?? "System",
+    created_at: created?.created_at ?? new Date().toISOString(),
+    read: false,
+  };
 
+  console.info("[QuickLeadDrawer] about to dispatch app:messages", messagePayload);
+
+  window.dispatchEvent(
+    new CustomEvent("app:messages", {
+      detail: {
+        messagesIncrement: 1,
+        messages: [messagePayload],
+      },
+    })
+  );
+
+  // fallback
+  try {
+    const store = { ts: Date.now(), messagesIncrement: 1, messages: [messagePayload] };
+    localStorage.setItem("gg:messages:latest", JSON.stringify(store));
+  } catch (lsErr) {
+    console.warn("[QuickLeadDrawer] localStorage write failed", lsErr);
+  }
+
+  console.info("[QuickLeadDrawer] dispatched app:messages and wrote gg:messages:latest");
+} catch (e: any) {
+  console.warn("[QuickLeadDrawer] failed to dispatch app:messages:", e);
+}
       // reset
       setForm({
         lead_name: "",
@@ -398,9 +422,13 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
 
   if (!open || typeof document === "undefined") return null;
 
+  // Prefer layout-local portal root when available so drawer inherits layout theme & stacking
+  const mountNode =
+    (typeof document !== "undefined" && document.getElementById("portal-root")) || document.body;
+
   return ReactDOM.createPortal(
-    <>
-      {/* backdrop + right-side drawer panel */}
+    // Wrapper forces pointer-events handling and preserves layout theme when mounted into body
+    <div className="pointer-events-auto" aria-hidden={false}>
       <div
         role="dialog"
         aria-modal="true"
@@ -425,6 +453,7 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
             backdrop-blur-2xl
             shadow-[inset_0_0_60px_rgba(255,255,255,0.04),_0_8px_40px_rgba(100,100,255,0.08)]
             rounded-l-3xl
+            text-white
           "
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -551,7 +580,7 @@ export default function QuickLeadDrawer({ open, onClose, onCreated }: LeadDrawer
           <div style={{ height: 28 }} />
         </aside>
       </div>
-    </>,
-    document.body,
+    </div>,
+    mountNode,
   );
 }

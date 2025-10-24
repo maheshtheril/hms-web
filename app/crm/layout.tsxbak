@@ -1,0 +1,62 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
+import Sidebar from "@/components/Sidebar";
+import { Topbar } from "@/components/Topbar";
+import DashboardIntro from "@/components/DashboardIntro";
+import NeuralGlow from "@/components/NeuralGlow";
+
+/**
+ * Unified Dashboard layout
+ * Includes Sidebar, Topbar, background glow, and one-time intro animation.
+ */
+
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const [showIntro, setShowIntro] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem("seenDashboardIntro")) {
+        setShowIntro(true);
+        sessionStorage.setItem("seenDashboardIntro", "1");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  return (
+    <div className="relative min-h-screen flex bg-gradient-to-br from-black via-gray-900 to-black text-white overflow-hidden">
+      {/* Animated glow background */}
+      <div className="absolute -top-64 left-1/2 -translate-x-1/2 pointer-events-none z-0">
+        <NeuralGlow
+          size={1000}
+          intensity={0.75}
+          colorA="#60a5fa"
+          colorB="#818cf8"
+          colorC="#a78bfa"
+        />
+      </div>
+
+      {/* Intro animation (once per session) */}
+      {showIntro && <DashboardIntro onFinish={() => setShowIntro(false)} />}
+
+      {/* Sidebar */}
+      <Sidebar />
+
+      {/* Main content area */}
+      <div className="relative z-10 flex-1 min-w-0 backdrop-blur-[1px]">
+        <Topbar />
+        <main className="p-6 relative">
+          {children}
+          {/* portal root for layout-local modals/drawers
+              - absolute inset-0 so portal children can position relative to this area
+              - pointer-events-none lets only inner actionable elements receive pointer events
+              - give a medium z-index so portal content is above main content but can be managed */}
+          <div id="portal-root" className="absolute inset-0 pointer-events-none z-50" />
+        </main>
+      </div>
+    </div>
+  );
+}

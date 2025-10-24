@@ -1,5 +1,5 @@
-import Sidebar from "@/components/Sidebar";
-import { Topbar } from '@/components/Topbar';
+//import Sidebar from "@/components/Sidebar";
+//import { Topbar } from '@/components/Topbar';
 import { api } from "@/lib/api";
 import KanbanClient from "./reorder-client";
 import PipelineSwitcher from "./pipeline-switcher";
@@ -24,9 +24,9 @@ export default async function Kanban({
 
   return (
     <div className="flex">
-      <Sidebar />
+     
       <div className="flex-1 min-h-screen">
-        <Topbar />
+        
         <main className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-2xl font-bold">Leads · Kanban</h1>

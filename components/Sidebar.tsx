@@ -1,6 +1,4 @@
-// =============================================
-// components/Sidebar.tsx — RBAC + Tenant-aware
-// =============================================
+// components/Sidebar.tsx — production-ready RBAC-aware sidebar (with auth-update refetch)
 "use client";
 
 import Link from "next/link";
@@ -35,12 +33,6 @@ type SessionMe = {
 };
 
 /* ---------------------------- Static Menu Tree ---------------------------- */
-/** 
- * IMPORTANT:
- * - CRM “Companies” renamed to **Accounts** (customer/partner companies).
- * - Admin → Organization → **Legal Entities** = your tenant’s own companies (multi-company).
- * - Paths kept under /dashboard/* to match your existing style.
- */
 const SECTIONS: Section[] = [
   {
     id: "crm",
@@ -57,67 +49,14 @@ const SECTIONS: Section[] = [
         children: [
           { label: "Capture & Create", header: true },
           { label: "All Leads", href: "/crm/leads", keywords: ["index", "list", "table"] },
-          // { label: "Create Lead", href: "/leads/new", keywords: ["add", "new"] },
           { label: "Import Leads", href: "/leads/import", keywords: ["csv", "xlsx", "bulk"] },
-
-          // { label: "Search & Intelligence", header: true },
-          // { label: "Smart Search", href: "/leads/search", keywords: ["tsvector", "filter"] },
-
-          // { label: "Pipelines & Stages", header: true },
-          // { label: "Pipelines", href: "/pipelines" },
-          // { label: "Pipeline Stages", href: "/pipelines/stages" },
         ],
       },
-
-      // ⬇️ CRM → Accounts (external companies: customers/partners)
-      // {
-      //   label: "Accounts",
-      //   keywords: ["companies", "customers", "partners", "vendors"],
-      //   children: [
-      //     { label: "All Accounts", href: "/crm/accounts" },
-      //     { label: "Create Account", href: "/crm/accounts/new" },
-      //   ],
-      // },
-
-    
-  // ─────────────────── Contacts ───────────────────
-  // {
-  //   label: "Contacts",
-  //   keywords: ["people", "clients", "individuals", "stakeholders"],
-  //   children: [
-  //     { label: "Standard Level", header: true },
-  //     { label: "All Contacts", href: "/crm/contacts" },
-  //     { label: "Create Contact", href: "/crm/contacts/new" },
-  //     { label: "Import Contacts", href: "/crm/contacts/import" },
-  //   ],
-  // },
-
-  // ─────────────────── Opportunities ───────────────────
-  // {
-  //   label: "Opportunities",
-  //   keywords: ["deals", "sales", "negotiations", "revenue"],
-  //   children: [
-  //     { label: "Standard Level", header: true },
-  //     { label: "All Opportunities", href: "/crm/opportunities" },
-  //     { label: "Create Opportunity", href: "/crm/opportunities/new" },
-  //     { label: "Pipeline View", href: "/crm/opportunities/pipeline" },
-  //     { label: "Performance Insights", href: "/crm/opportunities/insights" },
-  //   ],
-  // },
-
-  // ─────────────────── Activities ───────────────────
-  {
-    label: "Activities",
-    keywords: ["tasks", "calls", "meetings", "follow-ups"],
-    children: [
-      { label: "Standard Level", header: true },
-      { label: "All Activities", href: "/crm/activities" },
-     // { label: "Calls", href: "/crm/activities/calls" },
-      //{ label: "Meetings", href: "/crm/activities/meetings" },
-      //{ label: "Tasks", href: "/crm/activities/tasks" },
-    ],
-  },
-
+      {
+        label: "Activities",
+        keywords: ["tasks", "calls", "meetings", "follow-ups"],
+        children: [{ label: "Standard Level", header: true }, { label: "All Activities", href: "/crm/activities" }],
+      },
     ],
   },
 
@@ -130,7 +69,6 @@ const SECTIONS: Section[] = [
       </svg>
     ),
     items: [
-      // Only Platform Admin should see this (gated below in filterSectionsForRBAC)
       {
         label: "Tenants",
         children: [
@@ -138,20 +76,11 @@ const SECTIONS: Section[] = [
           { label: "Create Tenant", href: "/dashboard/admin/tenants/new" },
         ],
       },
-
-      // ⬇️ Organization: your OWN legal entities (multi-company)
       {
-    label: "Companies",
-    keywords: ["clients", "organizations", "partners", "vendors"],
-    children: [
-      { label: "Standard Level", header: true },
-      { label: "All Companies", href: "/tenant/companies" },
-     // { label: "Create Company", href: "/tenant/companies/new" },
-     // { label: "Import Companies", href: "/tenant/companies/import" },
-     // { label: "Company Insights", href: "/tenant/companies/insights", keywords: ["ai", "summary", "metrics"] },
-    ],
-  },
-
+        label: "Companies",
+        keywords: ["clients", "organizations", "partners", "vendors"],
+        children: [{ label: "Standard Level", header: true }, { label: "All Companies", href: "/tenant/companies" }],
+      },
       {
         label: "RBAC",
         children: [
@@ -162,7 +91,6 @@ const SECTIONS: Section[] = [
           { label: "Audit Logs", href: "/dashboard/rbac/audit", keywords: ["history", "trail", "security"] },
         ],
       },
-
       {
         label: "Settings",
         children: [
@@ -224,29 +152,114 @@ function highlight(text: string, query: string) {
 const notNil = <T,>(x: T | null | undefined): x is T => x != null;
 
 /* ---------------------------- Session / Roles ---------------------------- */
+/**
+ * useSessionMe
+ * - Safe fetch handling
+ * - Flexible role extraction and normalization
+ * - Reacts to auth updates (auth:update event / storage)
+ */
 function useSessionMe() {
   const [me, setMe] = React.useState<SessionMe | null>(null);
   const [loading, setLoading] = React.useState(true);
 
-  React.useEffect(() => {
-    (async () => {
+  useEffect(() => {
+    let mounted = true;
+
+    const doFetch = async () => {
+      if (!mounted) return;
       try {
+        setLoading(true);
         const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
-        setMe(await r.json());
+        if (!r.ok) {
+          try {
+            const parsed = await r.json();
+            if (mounted) setMe(parsed);
+          } catch {
+            if (mounted) setMe({});
+          }
+        } else {
+          try {
+            const body = await r.json();
+            if (mounted) setMe(body);
+          } catch {
+            if (mounted) setMe({});
+          }
+        }
       } catch {
-        setMe({});
+        if (mounted) setMe({});
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
-    })();
+    };
+
+    // initial fetch
+    doFetch();
+
+    // small debounced handler to re-fetch when auth changes
+    let timer: any = null;
+    const handler = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        doFetch();
+        timer = null;
+      }, 50);
+    };
+
+    // listen for custom event dispatched after login/logout
+    window.addEventListener("auth:update", handler);
+
+    // listen for storage key changes (cross-tab login/logout)
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === "gg.auth.updated") handler();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      mounted = false;
+      window.removeEventListener("auth:update", handler);
+      window.removeEventListener("storage", onStorage);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
-  // local helper (renamed to avoid shadowing)
+  // normalize role candidate to canonical token: lowercase, underscores, no punctuation
+  const normalizeRoleString = (s: any) => {
+    if (s === null || s === undefined) return "";
+    const raw = String(s);
+    return raw.trim().toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^\w_]/g, "");
+  };
+
   const toSetAny = (v: any) => {
     const out = new Set<string>();
-    const add = (s: any) => s && out.add(String(s).toLowerCase());
-    if (Array.isArray(v)) for (const x of v) add(typeof x === "string" ? x : (x?.name || x?.code || x?.id));
-    else if (v && typeof v === "object") add(v.name || v.code || v.id);
+    const add = (s: any) => {
+      if (s === null || s === undefined) return;
+      if (typeof s === "object") {
+        const candidate = s.name ?? s.code ?? s.id ?? s.role ?? "";
+        const n = normalizeRoleString(candidate);
+        if (n) out.add(n);
+        return;
+      }
+      if (typeof s === "string") {
+        try {
+          const maybe = JSON.parse(s);
+          if (Array.isArray(maybe)) {
+            for (const x of maybe) add(x);
+            return;
+          }
+        } catch {}
+        const parts = s.split(/[ ,|;]+/).filter(Boolean);
+        if (parts.length > 1) {
+          for (const p of parts) add(p);
+          return;
+        }
+        const n = normalizeRoleString(s);
+        if (n) out.add(n);
+        return;
+      }
+      const n = normalizeRoleString(String(s));
+      if (n) out.add(n);
+    };
+    if (Array.isArray(v)) for (const x of v) add(x);
     else add(v);
     return out;
   };
@@ -259,53 +272,53 @@ function useSessionMe() {
     ...toSetAny(me?.user?.permissions),
   ]);
 
-  if (roles.has("owner")) roles.add("tenant_admin"); // ✅ owner can see Admin menus
+  // Map well-known owner-like aliases to tenant_admin
+  const ownerLikeAliases = [
+    "owner",
+    "tenant_owner",
+    "tenant_super_admin",
+    "super_admin",
+    "superadmin",
+    "platform_owner",
+  ];
+  const isOwnerLike = ownerLikeAliases.some((a) => roles.has(a));
+  if (isOwnerLike) roles.add("tenant_admin");
 
-  const ownerLike =
-    roles.has("owner") ||
-    roles.has("tenant_owner") ||
-    roles.has("tenant_super_admin") ||
-    roles.has("super_admin");
+  // also map explicit backend flags if present (defensive)
+  if ((me?.user as any)?.is_admin) roles.add("admin");
+  if ((me?.user as any)?.is_tenant_admin) roles.add("tenant_admin");
+  if ((me?.user as any)?.is_platform_admin) roles.add("platform_admin");
 
-  if (roles.has("owner")) roles.add("tenant_admin"); // owner should see Admin
+  const u = me?.user || ({} as any);
+  const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? (u as any).admin ?? false;
+  const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? (u as any).tenant_admin ?? false;
+  const isPlatformAdminFlag =
+    (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? (u as any).platform_admin ?? false;
 
-  // normalize snake_case / camelCase flags from backend
-  const u = me?.user || {};
-  const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? false;
-  const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? false;
-  const isPlatformAdminFlag = (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? false;
-
-  // unified booleans used by sidebar filter
   const isPlatformAdmin =
-    !!isPlatformAdminFlag || roles.has("platform_admin") || roles.has("global_super_admin");
+    !!isPlatformAdminFlag ||
+    roles.has("platform_admin") ||
+    roles.has("platformowner") ||
+    roles.has("platform_owner") ||
+    roles.has("global_super_admin");
 
-  const isTenantAdmin =
-    !!isTenantAdminFlag || roles.has("tenant_admin") || ownerLike;
+  const isTenantAdmin = !!isTenantAdminFlag || roles.has("tenant_admin") || isOwnerLike;
 
-  const isAdmin =
-    !!isAdminFlag || roles.has("admin") || roles.has("company_admin");
+  const isAdmin = !!isAdminFlag || roles.has("admin") || roles.has("company_admin") || roles.has("system_admin");
 
   return { me, isAdmin, isPlatformAdmin, isTenantAdmin, loading };
 }
 
-// 1) Include isAdmin in the filter function (UNCHANGED RBAC BEHAVIOR)
-function filterSectionsForRBAC(
-  src: Section[],
-  isPlatformAdmin: boolean,
-  isTenantAdmin: boolean,
-  isAdmin: boolean
-): Section[] {
-  // Allow any org-level admin to see Admin section; still gate Tenants by platform admin
+function filterSectionsForRBAC(src: Section[], isPlatformAdmin: boolean, isTenantAdmin: boolean, isAdmin: boolean): Section[] {
   const canSeeAdmin = isTenantAdmin || isPlatformAdmin || isAdmin;
   return src
-    .filter(s => (s.id !== "admin" ? true : canSeeAdmin))
-    .map(s =>
+    .filter((s) => (s.id !== "admin" ? true : canSeeAdmin))
+    .map((s) =>
       s.id !== "admin"
         ? s
         : {
             ...s,
-            // Only platform admins see “Tenants”
-            items: s.items.filter(it => (it.label === "Tenants" ? isPlatformAdmin : true)),
+            items: s.items.filter((it) => (it.label === "Tenants" ? isPlatformAdmin : true)),
           }
     );
 }
@@ -313,13 +326,25 @@ function filterSectionsForRBAC(
 /* ---------------------------- Sidebar ---------------------------- */
 export default function Sidebar() {
   const pathname = usePathname();
-
   const { isPlatformAdmin, isTenantAdmin, isAdmin, loading } = useSessionMe();
 
-  const sections = React.useMemo(
-    () => (loading ? [] : filterSectionsForRBAC(SECTIONS, isPlatformAdmin, isTenantAdmin, isAdmin)),
-    [loading, isPlatformAdmin, isTenantAdmin, isAdmin]
-  );
+  const sections = React.useMemo(() => {
+    const filtered = loading ? [] : filterSectionsForRBAC(SECTIONS, isPlatformAdmin, isTenantAdmin, isAdmin);
+
+    // Safety net: if RBAC says user can see Admin but the filtered set unexpectedly lacks it,
+    // append the canonical Admin section from SECTIONS so UI shows what user should see.
+    if (!loading) {
+      const hasAdminInFiltered = filtered.some((s) => s.id === "admin");
+      const canSeeAdmin = isTenantAdmin || isPlatformAdmin || isAdmin;
+      if (canSeeAdmin && !hasAdminInFiltered) {
+        const adminSec = SECTIONS.find((s) => s.id === "admin");
+        if (adminSec) {
+          return [...filtered, adminSec];
+        }
+      }
+    }
+    return filtered;
+  }, [loading, isPlatformAdmin, isTenantAdmin, isAdmin]);
 
   // Sidebar state
   const [pinnedSidebar, setPinnedSidebar] = useState(false);
@@ -396,17 +421,11 @@ export default function Sidebar() {
   useEffect(() => {
     if (!pathname || sections.length === 0) return;
     const match = sections.find((s) =>
-      s.items.some(
-        (it) =>
-          (it.href && pathname.startsWith(it.href)) ||
-          it.children?.some((ch) => ch.href && pathname.startsWith(ch.href))
-      )
+      s.items.some((it) => (it.href && pathname.startsWith(it.href)) || it.children?.some((ch) => ch.href && pathname.startsWith(ch.href)))
     );
     if (match && !openMap[match.id]) setOpenMap((m) => ({ ...m, [match.id]: true }));
     if (match) {
-      const parentWithChild = match.items.find((it) =>
-        it.children?.some((ch) => ch.href && pathname.startsWith(ch.href))
-      );
+      const parentWithChild = match.items.find((it) => it.children?.some((ch) => ch.href && pathname.startsWith(ch.href)));
       if (parentWithChild) {
         const childKey = `${match.id}:${parentWithChild.label}`;
         if (!openChildMap[childKey]) setOpenChildMap((m) => ({ ...m, [childKey]: true }));
@@ -461,14 +480,7 @@ export default function Sidebar() {
 
   // Flatten (filtered sections) for palette
   const FLAT = useMemo(() => {
-    const out: Array<{
-      sectionId: string;
-      section: string;
-      label: string;
-      href: string;
-      badge?: string;
-      keywords?: string[];
-    }> = [];
+    const out: Array<{ sectionId: string; section: string; label: string; href: string; badge?: string; keywords?: string[] }> = [];
     for (const s of sections) {
       for (const it of s.items) {
         if (it.href)
@@ -542,45 +554,25 @@ export default function Sidebar() {
   // Loading skeleton
   if (loading) {
     return (
-      <aside
-        className="sticky top-0 z-40 h-screen w-16 shrink-0 bg-black text-white border-r border-white/10"
-        aria-label="Primary navigation (loading)"
-      >
+      <aside className="sticky top-0 z-40 h-screen w-16 shrink-0 bg-black text-white border-r border-white/10" aria-label="Primary navigation (loading)">
         <div className="h-14 border-b border-white/10" />
       </aside>
     );
   }
 
-  // Render
+  // Render sidebar (UI preserved from your original file)
   return (
     <>
       {/* Command Palette */}
       {paletteOpen && (
         <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm" onClick={() => setPaletteOpen(false)} aria-hidden>
-          <div
-            className="mx-auto mt-24 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Command palette"
-          >
+          <div className="mx-auto mt-24 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Command palette">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
               <svg className="h-4 w-4 text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.3-4.3" />
               </svg>
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActiveIdx(0);
-                }}
-                onKeyDown={onPaletteKeyDown}
-                placeholder="Search CRM or Admin menus…"
-                className="flex-1 bg-transparent outline-none text-sm placeholder:text-white/40"
-                aria-label="Search menus"
-              />
+              <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); }} onKeyDown={onPaletteKeyDown} placeholder="Search CRM or Admin menus…" className="flex-1 bg-transparent outline-none text-sm placeholder:text-white/40" aria-label="Search menus" />
               <div className="text-[10px] text-white/40 hidden sm:block">Esc</div>
             </div>
             <ul className="max-h-[50vh] overflow-y-auto p-2">
@@ -588,29 +580,13 @@ export default function Sidebar() {
               {results.map((r, idx) => {
                 const active = idx === activeIdx;
                 return (
-                  <li
-                    key={`palette::${r.href}::${idx}`}
-                    className={`rounded-xl ${active ? "bg-white/10" : "hover:bg-white/5"}`}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                  >
-                    <Link
-                      href={r.href}
-                      data-href={r.href}
-                      className="flex items-center gap-3 px-3 py-2 text-sm"
-                      onClick={() => {
-                        setRecents((arr) => [r.href, ...arr.filter((x) => x !== r.href)].slice(0, 20));
-                        setPaletteOpen(false);
-                        setQuery("");
-                      }}
-                    >
+                  <li key={`palette::${r.href}::${idx}`} className={`rounded-xl ${active ? "bg-white/10" : "hover:bg-white/5"}`} onMouseEnter={() => setActiveIdx(idx)}>
+                    <Link href={r.href} data-href={r.href} className="flex items-center gap-3 px-3 py-2 text-sm" onClick={() => { setRecents((arr) => [r.href, ...arr.filter((x) => x !== r.href)].slice(0, 20)); setPaletteOpen(false); setQuery(""); }}>
                       <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
                         <span className="h-1.5 w-1.5 rounded-sm bg-white/70" />
                       </span>
                       <div className="min-w-0">
-                        <div className="truncate">
-                          {highlight(r.label, query)} <span className="text-white/40">·</span>{" "}
-                          <span className="text-white/60">{highlight(r.section, query)}</span>
-                        </div>
+                        <div className="truncate">{highlight(r.label, query)} <span className="text-white/40">·</span> <span className="text-white/60">{highlight(r.section, query)}</span></div>
                         <div className="text-[11px] text-white/40 truncate">{r.href}</div>
                       </div>
                     </Link>
@@ -636,32 +612,12 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Sidebar */}
-      <aside
-        ref={asideRef}
-        onMouseEnter={() => setHoveringAside(true)}
-        onMouseLeave={() => {
-          setHoveringAside(false);
-          setFlyout(null);
-        }}
-        className={`group/sidebar sticky top-0 z-40 h-screen shrink-0
-                    bg-[radial-gradient(1200px_600px_at_-200px_-200px,rgba(255,255,255,0.06),transparent_60%)]
-                    bg-black text-white border-r border-white/10
-                    ${isExpanded ? "w-72" : "w-16"}
-                    transition-[width] duration-200 ease-out`}
-        aria-label="Primary navigation"
-      >
+      {/* Sidebar body */}
+      <aside ref={asideRef} onMouseEnter={() => setHoveringAside(true)} onMouseLeave={() => { setHoveringAside(false); setFlyout(null); }} className={`group/sidebar sticky top-0 z-40 h-screen shrink-0 bg-[radial-gradient(1200px_600px_at_-200px_-200px,rgba(255,255,255,0.06),transparent_60%)] bg-black text-white border-r border-white/10 ${isExpanded ? "w-72" : "w-16"} transition-[width] duration-200 ease-out`} aria-label="Primary navigation">
         <div className="relative h-full flex flex-col">
           {/* Header */}
           <div className="flex items-center gap-2 h-14 px-3 border-b border-white/10">
-            <button
-              aria-label={pinnedSidebar ? "Collapse sidebar" : "Expand sidebar"}
-              aria-pressed={pinnedSidebar}
-              onClick={() => setPinnedSidebar((s) => !s)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 hover:bg-white/10"
-              title={pinnedSidebar ? "Unpin" : "Pin open"}
-              type="button"
-            >
+            <button aria-label={pinnedSidebar ? "Collapse sidebar" : "Expand sidebar"} aria-pressed={pinnedSidebar} onClick={() => setPinnedSidebar((s) => !s)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 hover:bg-white/10" title={pinnedSidebar ? "Unpin" : "Pin open"} type="button">
               <div className="space-y-1.5">
                 <span className="block h-0.5 w-4 bg-white" />
                 <span className="block h-0.5 w-4 bg-white" />
@@ -669,20 +625,7 @@ export default function Sidebar() {
               </div>
             </button>
             <span className={`text-sm font-semibold tracking-wide ${textVisibility} transition-opacity`}>GeniusGrid</span>
-
-            {/* Command button */}
-            <button
-              type="button"
-              onClick={() => {
-                setPaletteOpen(true);
-                setQuery("");
-                setActiveIdx(0);
-              }}
-              className={`ml-auto inline-flex items-center gap-2 rounded-lg border border-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/10 ${
-                isExpanded ? "" : "hidden"
-              }`}
-              title="Search (Ctrl/⌘ + K)"
-            >
+            <button type="button" onClick={() => { setPaletteOpen(true); setQuery(""); setActiveIdx(0); }} className={`ml-auto inline-flex items-center gap-2 rounded-lg border border-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`} title="Search (Ctrl/⌘ + K)">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.3-4.3" />
@@ -695,7 +638,7 @@ export default function Sidebar() {
             </button>
           </div>
 
-          {/* Pinned sections ribbon */}
+          {/* Pinned sections */}
           {pinnedSections.length > 0 && (
             <div className="px-2 py-2 border-b border-white/10">
               <div className={`text-[10px] uppercase tracking-wider text-white/45 ${isExpanded ? "" : "sr-only"}`}>Pinned</div>
@@ -704,13 +647,7 @@ export default function Sidebar() {
                   const sec = sections.find((s) => s.id === id);
                   if (!sec) return null;
                   return (
-                    <button
-                      key={`pinrib::${id}`}
-                      className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] hover:bg-white/10"
-                      onClick={() => setOpenMap((m) => ({ ...m, [id]: true }))}
-                      title={sec.label}
-                      type="button"
-                    >
+                    <button key={`pinrib::${id}`} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] hover:bg-white/10" onClick={() => setOpenMap((m) => ({ ...m, [id]: true }))} title={sec.label} type="button">
                       <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-white/5 border border-white/10">
                         <span className="h-1 w-1 rounded-sm bg-white/70" />
                       </span>
@@ -722,7 +659,7 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Tree */}
+          {/* Main nav tree */}
           <nav role="tree" aria-label="Main" className="py-2 overflow-y-auto flex-1">
             {sections.map((section) => {
               const isOpen = !!openMap[section.id] || pinnedSections.includes(section.id);
@@ -731,58 +668,20 @@ export default function Sidebar() {
 
               return (
                 <div key={`sec::${section.id}`} className="px-2 relative">
-                  {/* Parent row */}
-                  <button
-                    ref={(el) => (btnRefs.current[section.id] = el)}
-                    role="treeitem"
-                    aria-expanded={isOpen}
-                    aria-controls={`sub-${section.id}`}
-                    onClick={() => (isExpanded ? toggleSection(section.id) : undefined)}
-                    onMouseEnter={() => handleParentHover(section.id)}
-                    onMouseLeave={clearFlyoutSoon}
-                    className="w-full flex items-center gap-3 rounded-xl px-2 py-2 text-sm text-white/90 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-white/20"
-                    title={!isExpanded ? section.label : undefined}
-                    type="button"
-                  >
-                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 border border-white/10">
-                      {section.icon ?? <span className="h-3 w-3 bg-white/70 rounded-sm" />}
-                    </span>
+                  <button ref={(el) => (btnRefs.current[section.id] = el)} role="treeitem" aria-expanded={isOpen} aria-controls={`sub-${section.id}`} onClick={() => (isExpanded ? toggleSection(section.id) : undefined)} onMouseEnter={() => handleParentHover(section.id)} onMouseLeave={clearFlyoutSoon} className="w-full flex items-center gap-3 rounded-xl px-2 py-2 text-sm text-white/90 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-white/20" title={!isExpanded ? section.label : undefined} type="button">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 border border-white/10">{section.icon ?? <span className="h-3 w-3 bg-white/70 rounded-sm" />}</span>
                     <span className={`${textVisibility} transition-opacity`}>{section.label}</span>
-
                     <span className={`ml-auto flex items-center gap-2 ${textVisibility}`} aria-hidden>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        title={pinned ? "Unpin section" : "Pin section"}
-                        className="rounded-md border border-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/10 select-none"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          togglePinSection(section.id);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            togglePinSection(section.id);
-                          }
-                        }}
-                        aria-label={pinned ? `Unpin ${section.label}` : `Pin ${section.label}`}
-                      >
-                        {pinned ? "📌" : "📍"}
-                      </span>
-                      <svg viewBox="0 0 24 24" className={`h-4 w-4 transition-transform ${isOpen ? "rotate-90" : "rotate-0"}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                        <path d="M9 6l6 6-6 6" />
-                      </svg>
+                      <span role="button" tabIndex={0} title={pinned ? "Unpin section" : "Pin section"} className="rounded-md border border-white/10 px-1.5 py-0.5 text-[10px] hover:bg-white/10 select-none" onClick={(e) => { e.stopPropagation(); togglePinSection(section.id); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); togglePinSection(section.id); } }} aria-label={pinned ? `Unpin ${section.label}` : `Pin ${section.label}`}>{pinned ? "📌" : "📍"}</span>
+                      <svg viewBox="0 0 24 24" className={`h-4 w-4 transition-transform ${isOpen ? "rotate-90" : "rotate-0"}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M9 6l6 6-6 6" /></svg>
                     </span>
                   </button>
 
-                  {/* Children */}
                   <div id={`sub-${section.id}`} role="group" className={`grid ${gridState} transition-[grid-template-rows] duration-200 ease-out`}>
                     <ul className="overflow-hidden pl-2">
                       {section.items.map((item, itemIdx) => {
                         const active = item.href ? pathname?.startsWith(item.href) : false;
                         const fav = item.href ? favorites.includes(item.href) : false;
-
                         const hasChildren = !!item.children?.length;
                         const childKey = `${section.id}:${item.label}`;
                         const childOpen = !!openChildMap[childKey];
@@ -791,112 +690,42 @@ export default function Sidebar() {
                           <li key={`secitem::${section.id}::${item.href ?? item.label}::${itemIdx}`}>
                             <div className="flex items-center">
                               {!hasChildren && item.href ? (
-                                <Link
-                                  href={item.href}
-                                  role="treeitem"
-                                  aria-current={active ? "page" : undefined}
-                                  className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${active ? "bg-white/10 text-white" : "text-white/80 hover:bg-white/5"}`}
-                                  title={!isExpanded ? item.label : undefined}
-                                  onClick={() => {
-                                    setRecents((r) => [item.href!, ...r.filter((p) => p !== item.href)].slice(0, 20));
-                                  }}
-                                >
-                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
-                                    <span className="h-1.5 w-1.5 rounded-sm bg-white/70" />
-                                  </span>
+                                <Link href={item.href} role="treeitem" aria-current={active ? "page" : undefined} className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${active ? "bg-white/10 text-white" : "text-white/80 hover:bg-white/5"}`} title={!isExpanded ? item.label : undefined} onClick={() => setRecents((r) => [item.href!, ...r.filter((p) => p !== item.href)].slice(0, 20))}>
+                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10"><span className="h-1.5 w-1.5 rounded-sm bg-white/70" /></span>
                                   <span className={`${textVisibility} transition-opacity ${item.disabled ? "opacity-50" : ""}`}>{item.label}</span>
-                                  {item.badge && (
-                                    <span className={`ml-auto text-[10px] rounded-full px-2 py-0.5 bg-white/10 border border-white/10 ${textVisibility}`}>
-                                      {item.badge}
-                                    </span>
-                                  )}
+                                  {item.badge && <span className={`ml-auto text-[10px] rounded-full px-2 py-0.5 bg-white/10 border border-white/10 ${textVisibility}`}>{item.badge}</span>}
                                 </Link>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => (hasChildren ? toggleChild(section.id, item.label) : undefined)}
-                                  className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${hasChildren ? "text-white/85 hover:bg-white/5" : "text-white/60"}`}
-                                  title={hasChildren ? `${childOpen ? "Collapse" : "Expand"} ${item.label}` : item.label}
-                                >
-                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
-                                    <span className="h-1.5 w-1.5 rounded-sm bg-white/70" />
-                                  </span>
+                                <button type="button" onClick={() => (hasChildren ? toggleChild(section.id, item.label) : undefined)} className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${hasChildren ? "text-white/85 hover:bg-white/5" : "text-white/60"}`} title={hasChildren ? `${childOpen ? "Collapse" : "Expand"} ${item.label}` : item.label}>
+                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10"><span className="h-1.5 w-1.5 rounded-sm bg-white/70" /></span>
                                   <span className={`${textVisibility} transition-opacity`}>{item.label}</span>
-                                  {hasChildren && (
-                                    <svg
-                                      viewBox="0 0 24 24"
-                                      className={`ml-auto h-4 w-4 ${childOpen ? "rotate-90" : "rotate-0"} transition-transform`}
-                                      aria-hidden
-                                    >
-                                      <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" fill="none" />
-                                    </svg>
-                                  )}
+                                  {hasChildren && <svg viewBox="0 0 24 24" className={`ml-auto h-4 w-4 ${childOpen ? "rotate-90" : "rotate-0"} transition-transform`} aria-hidden><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" fill="none" /></svg>}
                                 </button>
                               )}
 
-                              {item.href && (
-                                <button
-                                  type="button"
-                                  className={`ml-1 mr-2 text-[11px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`}
-                                  title={fav ? "Unfavorite" : "Favorite"}
-                                  onClick={() => toggleFavorite(item.href!)}
-                                  aria-label={fav ? `Unfavorite ${item.label}` : `Favorite ${item.label}`}
-                                >
-                                  {fav ? "★" : "☆"}
-                                </button>
-                              )}
+                              {item.href && <button type="button" className={`ml-1 mr-2 text-[11px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`} title={fav ? "Unfavorite" : "Favorite"} onClick={() => toggleFavorite(item.href!)} aria-label={fav ? `Unfavorite ${item.label}` : `Favorite ${item.label}`}>{fav ? "★" : "☆"}</button>}
                             </div>
 
-                            {/* Nested */}
                             {hasChildren && (
                               <div className={`grid ${isExpanded && childOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"} transition-[grid-template-rows] duration-200 ease-out`}>
                                 <ul className="overflow-hidden pl-6">
                                   {item.children!.map((ch, cIdx) => {
                                     const chActive = ch.href ? pathname?.startsWith(ch.href) : false;
                                     const chFav = ch.href ? favorites.includes(ch.href) : false;
-
                                     if (ch.header) {
-                                      return (
-                                        <li key={`hdr::${section.id}::${item.label}::${ch.label}::${cIdx}`}>
-                                          <div className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-white/40">{ch.label}</div>
-                                        </li>
-                                      );
+                                      return <li key={`hdr::${section.id}::${item.label}::${ch.label}::${cIdx}`}><div className="px-2 pt-3 pb-1 text-[10px] uppercase tracking-wider text-white/40">{ch.label}</div></li>;
                                     }
-
                                     return (
                                       <li key={`child::${section.id}::${item.label}::${ch.href ?? ch.label}::${cIdx}`} className="flex items-center">
                                         {ch.href ? (
-                                          <Link
-                                            href={ch.href}
-                                            role="treeitem"
-                                            aria-current={chActive ? "page" : undefined}
-                                            className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${
-                                              chActive ? "bg-white/10 text-white" : "text-white/80 hover:bg-white/5"
-                                            } ${ch.disabled ? "opacity-50 cursor-default" : ""}`}
-                                            title={ch.disabled ? "Template route" : ch.label}
-                                            onClick={() =>
-                                              !ch.disabled && setRecents((r) => [ch.href!, ...r.filter((p) => p !== ch.href)].slice(0, 20))
-                                            }
-                                          >
-                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
-                                              <span className="h-1 w-1 rounded-sm bg-white/70" />
-                                            </span>
+                                          <Link href={ch.href} role="treeitem" aria-current={chActive ? "page" : undefined} className={`flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-sm ${chActive ? "bg-white/10 text-white" : "text-white/80 hover:bg-white/5"} ${ch.disabled ? "opacity-50 cursor-default" : ""}`} title={ch.disabled ? "Template route" : ch.label} onClick={() => !ch.disabled && setRecents((r) => [ch.href!, ...r.filter((p) => p !== ch.href)].slice(0, 20))}>
+                                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10"><span className="h-1 w-1 rounded-sm bg-white/70" /></span>
                                             <span className={`${textVisibility} transition-opacity`}>{ch.label}</span>
                                           </Link>
                                         ) : (
                                           <div className="flex-1 px-2 py-2 text-sm text-white/60">{ch.label}</div>
                                         )}
-                                        {ch.href && (
-                                          <button
-                                            type="button"
-                                            className={`ml-1 mr-2 text-[11px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`}
-                                            title={chFav ? "Unfavorite" : "Favorite"}
-                                            onClick={() => toggleFavorite(ch.href!)}
-                                            aria-label={chFav ? `Unfavorite ${ch.label}` : `Favorite ${ch.label}`}
-                                          >
-                                            {chFav ? "★" : "☆"}
-                                          </button>
-                                        )}
+                                        {ch.href && <button type="button" className={`ml-1 mr-2 text-[11px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`} title={chFav ? "Unfavorite" : "Favorite"} onClick={() => toggleFavorite(ch.href!)} aria-label={chFav ? `Unfavorite ${ch.label}` : `Favorite ${ch.label}`}>{chFav ? "★" : "☆"}</button>}
                                       </li>
                                     );
                                   })}
@@ -911,25 +740,10 @@ export default function Sidebar() {
 
                   {/* Flyout (collapsed) */}
                   {!isExpanded && flyout?.id === section.id && (
-                    <div
-                      onMouseEnter={() => setFlyout(flyout)}
-                      onMouseLeave={() => setFlyout(null)}
-                      className="absolute left-full ml-2 min-w-64 rounded-xl border border-white/10 bg-black/95 shadow-xl backdrop-blur p-2"
-                      style={{ top: flyout.top }}
-                      role="menu"
-                      aria-label={`${section.label} flyout`}
-                    >
+                    <div onMouseEnter={() => setFlyout(flyout)} onMouseLeave={() => setFlyout(null)} className="absolute left-full ml-2 min-w-64 rounded-xl border border-white/10 bg-black/95 shadow-xl backdrop-blur p-2" style={{ top: flyout.top }} role="menu" aria-label={`${section.label} flyout`}>
                       <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-white/50 flex items-center justify-between">
                         <span>{section.label}</span>
-                        <button
-                          type="button"
-                          className="text-[10px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10"
-                          onClick={() => togglePinSection(section.id)}
-                          title={pinnedSections.includes(section.id) ? "Unpin section" : "Pin section"}
-                          aria-label={pinnedSections.includes(section.id) ? `Unpin ${section.label}` : `Pin ${section.label}`}
-                        >
-                          {pinnedSections.includes(section.id) ? "📌" : "📍"}
-                        </button>
+                        <button type="button" className="text-[10px] rounded-md border border-white/10 px-1.5 py-0.5 hover:bg-white/10" onClick={() => togglePinSection(section.id)} title={pinnedSections.includes(section.id) ? "Unpin section" : "Pin section"} aria-label={pinnedSections.includes(section.id) ? `Unpin ${section.label}` : `Pin ${section.label}`}>{pinnedSections.includes(section.id) ? "📌" : "📍"}</button>
                       </div>
                       <ul className="space-y-1">
                         {section.items.map((item, flyIdx) => {
@@ -937,13 +751,8 @@ export default function Sidebar() {
                           return (
                             <li key={`fly::${section.id}::${item.href ?? item.label}::${flyIdx}`} className="rounded-xl">
                               {item.href ? (
-                                <Link
-                                  href={item.href}
-                                  className="flex items-center gap-3 rounded-xl px-2 py-2 text-sm whitespace-nowrap text-white/85 hover:bg-white/5"
-                                >
-                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
-                                    <span className="h-1.5 w-1.5 rounded-sm bg-white/70" />
-                                  </span>
+                                <Link href={item.href} className="flex items-center gap-3 rounded-xl px-2 py-2 text-sm whitespace-nowrap text-white/85 hover:bg-white/5">
+                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10"><span className="h-1.5 w-1.5 rounded-sm bg-white/70" /></span>
                                   <span>{item.label}</span>
                                 </Link>
                               ) : (
@@ -954,31 +763,11 @@ export default function Sidebar() {
                                 <ul className="mt-1 ml-8 space-y-0.5">
                                   {item.children!.map((ch, cIdx) =>
                                     ch.header ? (
-                                      <li
-                                        key={`fly-hdr::${section.id}::${item.label}::${ch.label}::${cIdx}`}
-                                        className="text-[10px] uppercase tracking-wider text-white/40 px-1 pt-2"
-                                      >
-                                        {ch.label}
-                                      </li>
+                                      <li key={`fly-hdr::${section.id}::${item.label}::${ch.label}::${cIdx}`} className="text-[10px] uppercase tracking-wider text-white/40 px-1 pt-2">{ch.label}</li>
                                     ) : ch.href ? (
-                                      <li key={`fly-child::${section.id}::${item.label}::${ch.href}::${cIdx}`}>
-                                        <Link
-                                          href={ch.href}
-                                          className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-white/85 hover:bg-white/5"
-                                        >
-                                          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-white/5 border border-white/10">
-                                            <span className="h-0.5 w-0.5 rounded-sm bg-white/70" />
-                                          </span>
-                                          <span className="whitespace-nowrap">{ch.label}</span>
-                                        </Link>
-                                      </li>
+                                      <li key={`fly-child::${section.id}::${item.label}::${ch.href}::${cIdx}`}><Link href={ch.href} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-white/85 hover:bg-white/5"><span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded bg-white/5 border border-white/10"><span className="h-0.5 w-0.5 rounded-sm bg-white/70" /></span><span className="whitespace-nowrap">{ch.label}</span></Link></li>
                                     ) : (
-                                      <li
-                                        key={`fly-sp::${section.id}::${item.label}::${ch.label}::${cIdx}`}
-                                        className="px-2 py-1.5 text-[13px] text-white/60"
-                                      >
-                                        {ch.label}
-                                      </li>
+                                      <li key={`fly-sp::${section.id}::${item.label}::${ch.label}::${cIdx}`} className="px-2 py-1.5 text-[13px] text-white/60">{ch.label}</li>
                                     )
                                   )}
                                 </ul>

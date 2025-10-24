@@ -1,4 +1,3 @@
-// app/login/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -30,12 +29,14 @@ export default function LoginPage() {
       });
 
       if (res.ok) {
-        // Successful login
-        router.push("/dashboard");
+        // Successful login — use replace to prevent back nav to login
+        router.replace("/dashboard");
       } else {
         // Try to parse backend reason if provided
         const data = await res.json().catch(() => ({}));
-        setError(data?.error || "Invalid credentials. Please check your email or password.");
+        setError(
+          data?.error || "Invalid credentials. Please check your email or password."
+        );
       }
     } catch {
       setError("Unexpected error. Try again.");
@@ -51,7 +52,13 @@ export default function LoginPage() {
 
       {/* CENTERED NEURAL GLOW */}
       <div className="absolute -top-40 left-1/2 -translate-x-1/2 pointer-events-none z-0">
-        <NeuralGlow size={720} intensity={0.9} colorA="#60a5fa" colorB="#6366f1" colorC="#a78bfa" />
+        <NeuralGlow
+          size={720}
+          intensity={0.9}
+          colorA="#60a5fa"
+          colorB="#6366f1"
+          colorC="#a78bfa"
+        />
       </div>
 
       {/* Content */}
@@ -65,7 +72,11 @@ export default function LoginPage() {
 
         {/* Auth card */}
         <AuthCard className="w-full max-w-md">
-          <motion.div initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 28 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+          >
             <div className="text-center mb-6">
               <div className="flex items-center justify-center gap-2">
                 <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300">
@@ -73,13 +84,22 @@ export default function LoginPage() {
                 </h1>
                 <AIBadge />
               </div>
-              <p className="mt-2 text-sm text-white/70">Sign in to your GeniusGrid workspace</p>
+              <p className="mt-2 text-sm text-white/70">
+                Sign in to your GeniusGrid workspace
+              </p>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-4" aria-label="Login form">
+            <form
+              onSubmit={handleLogin}
+              className="space-y-4"
+              aria-label="Login form"
+            >
               {/* Email */}
               <div>
-                <label htmlFor="email" className="text-xs font-medium text-white/70">
+                <label
+                  htmlFor="email"
+                  className="text-xs font-medium text-white/70"
+                >
                   Email
                 </label>
                 <input
@@ -88,17 +108,21 @@ export default function LoginPage() {
                   type="email"
                   required
                   aria-invalid={!!error}
-                  aria-describedby={error ? "email-error" : undefined}
+                  aria-describedby={error ? "form-error" : undefined}
                   className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
                   placeholder="you@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoFocus
                 />
               </div>
 
               {/* Password */}
               <div>
-                <label htmlFor="password" className="text-xs font-medium text-white/70">
+                <label
+                  htmlFor="password"
+                  className="text-xs font-medium text-white/70"
+                >
                   Password
                 </label>
                 <input
@@ -107,7 +131,7 @@ export default function LoginPage() {
                   type="password"
                   required
                   aria-invalid={!!error}
-                  aria-describedby={error ? "email-error" : undefined}
+                  aria-describedby={error ? "form-error" : undefined}
                   className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
                   placeholder="••••••••"
                   value={password}
@@ -117,18 +141,24 @@ export default function LoginPage() {
 
               {/* Error message */}
               {error && (
-                <p id="email-error" role="alert" className="text-sm text-red-400 mt-1">
+                <p id="form-error" role="alert" className="text-sm text-red-400 mt-1">
                   {error}
                 </p>
               )}
 
-              <PrimaryButton type="submit" disabled={loading} aria-busy={loading}>
+              <PrimaryButton
+                type="submit"
+                disabled={loading}
+                aria-busy={loading}
+              >
                 {loading ? "Signing in…" : "Sign in"}
               </PrimaryButton>
             </form>
 
             <div className="mt-6 border-t border-white/10 pt-5 text-center">
-              <p className="text-xs text-white/60 mb-2">Don’t have an account?</p>
+              <p className="text-xs text-white/60 mb-2">
+                Don’t have an account?
+              </p>
               <a
                 href="/signup"
                 className="inline-block w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 transition"

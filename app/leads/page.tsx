@@ -3,7 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { cookies } from "next/headers";
 // import { redirect } from "next/navigation";
-import TopNav from "@/app/components/TopNav";
+//import TopNav from "@/app/components/TopNav";
 import LeadsTableClient from "./LeadsTableClient";
 import { Suspense } from "react";
 
@@ -160,7 +160,7 @@ export default async function LeadsPage({
       className="min-h-dvh bg-[radial-gradient(600px_200px_at_10%_10%,rgba(90,80,200,0.06),transparent),radial-gradient(500px_180px_at_90%_90%,rgba(20,140,220,0.04),transparent),linear-gradient(180deg,#030316 0%,#03030b 70%)] text-zinc-100"
       // neural glass base
     >
-      <TopNav />
+     
 
       <main className="mx-auto w-full max-w-screen-2xl px-4 lg:px-6 py-6 sm:py-8">
         {/* Header row */}
