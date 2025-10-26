@@ -1,4 +1,4 @@
-// components/Sidebar.tsx — production-ready RBAC-aware sidebar (with auth-update refetch)
+// components/Sidebar.tsx — production-ready RBAC-aware sidebar (tenant-admin sees everything)
 "use client";
 
 import Link from "next/link";
@@ -29,7 +29,8 @@ type SessionMe = {
     email?: string;
   };
   roles?: string[];
-  tenant?: { id?: string; name?: string; slug?: string };
+  tenant?: { id?: string; name?: string; slug?: string; modules?: string[] };
+  permissions?: string[];
 };
 
 /* ---------------------------- Static Menu Tree ---------------------------- */
@@ -104,6 +105,69 @@ const SECTIONS: Section[] = [
   },
 ];
 
+/* ---------------------- HMS Section (insert near SECTIONS) ---------------------- */
+const HMS_SECTION: Section = {
+  id: "hms",
+  label: "HMS",
+  icon: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 7h18M3 12h18M3 17h18" />
+    </svg>
+  ),
+  items: [
+    {
+      label: "Clinical",
+      children: [
+        { label: "Patients", href: "/hms/patients", keywords: ["patient", "demographics", "medical record"] },
+        { label: "Appointments", href: "/hms/appointments", keywords: ["scheduling", "slots"] },
+        { label: "Encounters", href: "/hms/encounters", keywords: ["consultation", "visit", "notes"] },
+        { label: "Admissions", href: "/hms/admissions", keywords: ["ward", "bed", "inpatient"] },
+      ],
+    },
+    {
+      label: "Clinicians",
+      children: [
+        { label: "All Clinicians", href: "/hms/clinicians" },
+        { label: "On-call Roster", href: "/hms/clinicians/roster" },
+      ],
+    },
+    {
+      label: "Pharmacy & Inventory",
+      children: [
+        { label: "Products", href: "/hms/products" },
+        { label: "Stock Ledger", href: "/hms/stock" },
+        { label: "Purchase Orders", href: "/hms/purchases" },
+      ],
+    },
+    {
+      label: "Billing",
+      children: [
+        { label: "Invoices", href: "/hms/invoices" },
+        { label: "Payments", href: "/hms/payments" },
+        { label: "Insurance Claims", href: "/hms/claims" },
+      ],
+    },
+    {
+      label: "Reports",
+      children: [
+        { label: "Clinical Reports", href: "/hms/reports/clinical" },
+        { label: "Finance Reports", href: "/hms/reports/finance" },
+      ],
+    },
+    {
+      label: "Admin",
+      children: [
+        { label: "Services & Departments", href: "/hms/departments" },
+        { label: "Settings", href: "/hms/settings" },
+      ],
+    },
+  ],
+};
+// Ensure HMS is part of canonical sections so it behaves like CRM/Admin everywhere
+if (!SECTIONS.some((s) => s.id === "hms")) {
+  (SECTIONS as Section[]).push(HMS_SECTION);
+}
+
 /* ---------------------------- Utils ---------------------------- */
 const STORAGE_KEYS = {
   pinnedSidebar: "gg.sidebar.pinned",
@@ -157,6 +221,8 @@ const notNil = <T,>(x: T | null | undefined): x is T => x != null;
  * - Safe fetch handling
  * - Flexible role extraction and normalization
  * - Reacts to auth updates (auth:update event / storage)
+ *
+ * Returns normalized helper sets so UI and other components can rely on consistent role/perm strings.
  */
 function useSessionMe() {
   const [me, setMe] = React.useState<SessionMe | null>(null);
@@ -170,13 +236,8 @@ function useSessionMe() {
       try {
         setLoading(true);
         const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
-        if (!r.ok) {
-          try {
-            const parsed = await r.json();
-            if (mounted) setMe(parsed);
-          } catch {
-            if (mounted) setMe({});
-          }
+        if (r.status === 401) {
+          if (mounted) setMe(null);
         } else {
           try {
             const body = await r.json();
@@ -202,7 +263,7 @@ function useSessionMe() {
       timer = setTimeout(() => {
         doFetch();
         timer = null;
-      }, 50);
+      }, 100);
     };
 
     // listen for custom event dispatched after login/logout
@@ -234,7 +295,7 @@ function useSessionMe() {
     const add = (s: any) => {
       if (s === null || s === undefined) return;
       if (typeof s === "object") {
-        const candidate = s.name ?? s.code ?? s.id ?? s.role ?? "";
+        const candidate = (s as any).name ?? (s as any).code ?? (s as any).id ?? (s as any).role ?? "";
         const n = normalizeRoleString(candidate);
         if (n) out.add(n);
         return;
@@ -264,87 +325,135 @@ function useSessionMe() {
     return out;
   };
 
-  const roles = new Set<string>([
-    ...toSetAny(me?.user?.roles),
-    ...toSetAny(me?.roles),
-    ...toSetAny(me?.user?.role),
-    ...toSetAny(me?.user?.scopes),
-    ...toSetAny(me?.user?.permissions),
-  ]);
+  // compute normalized sets (memoized to avoid re-creation on every render)
+  const rolesSet = React.useMemo(() => {
+    const s = new Set<string>();
+    sForEach(toSetAny(me?.user?.roles), (x) => s.add(x));
+    sForEach(toSetAny(me?.roles), (x) => s.add(x));
+    sForEach(toSetAny(me?.user?.role), (x) => s.add(x));
+    sForEach(toSetAny(me?.user?.scopes), (x) => s.add(x));
+    sForEach(toSetAny(me?.user?.permissions), (x) => s.add(x));
+    // map some owner-like aliases defensively
+    const ownerLikeAliases = [
+      "owner",
+      "tenant_owner",
+      "tenant_super_admin",
+      "super_admin",
+      "superadmin",
+      "platform_owner",
+    ];
+    for (const a of ownerLikeAliases) if (s.has(a)) s.add("tenant_admin");
+    // explicit backend flags if present (defensive)
+    if ((me?.user as any)?.is_admin) s.add("admin");
+    if ((me?.user as any)?.is_tenant_admin) s.add("tenant_admin");
+    if ((me?.user as any)?.is_platform_admin) s.add("platform_admin");
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.user?.roles, me?.roles, me?.user?.role, me?.user?.scopes, me?.user?.permissions, me?.user?.is_admin, me?.user?.is_tenant_admin, me?.user?.is_platform_admin]);
 
-  // Map well-known owner-like aliases to tenant_admin
-  const ownerLikeAliases = [
-    "owner",
-    "tenant_owner",
-    "tenant_super_admin",
-    "super_admin",
-    "superadmin",
-    "platform_owner",
-  ];
-  const isOwnerLike = ownerLikeAliases.some((a) => roles.has(a));
-  if (isOwnerLike) roles.add("tenant_admin");
+  const permsSet = React.useMemo(() => {
+    const s = new Set<string>();
+    const pCandidates = (me?.user?.permissions as any) ?? (me?.permissions as any) ?? (me?.user?.scopes as any) ?? [];
+    const parsed = toSetAny(pCandidates);
+    parsed.forEach((x) => s.add(String(x).toLowerCase()));
+    return s;
+  }, [me?.user?.permissions, me?.permissions, me?.user?.scopes]);
 
-  // also map explicit backend flags if present (defensive)
-  if ((me?.user as any)?.is_admin) roles.add("admin");
-  if ((me?.user as any)?.is_tenant_admin) roles.add("tenant_admin");
-  if ((me?.user as any)?.is_platform_admin) roles.add("platform_admin");
+  const tenantModulesSet = React.useMemo(() => {
+    const mods = ((me?.tenant as any)?.modules as any[]) ?? [];
+    const s = new Set<string>();
+    for (const m of mods) {
+      if (!m && m !== 0) continue;
+      s.add(String(m).toLowerCase().trim());
+    }
+    return s;
+  }, [me?.tenant?.modules]);
 
+  // Map flags
   const u = me?.user || ({} as any);
   const isAdminFlag = (u as any).is_admin ?? (u as any).isAdmin ?? (u as any).admin ?? false;
   const isTenantAdminFlag = (u as any).is_tenant_admin ?? (u as any).isTenantAdmin ?? (u as any).tenant_admin ?? false;
-  const isPlatformAdminFlag =
-    (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? (u as any).platform_admin ?? false;
+  const isPlatformAdminFlag = (u as any).is_platform_admin ?? (u as any).isPlatformAdmin ?? (u as any).platform_admin ?? false;
 
   const isPlatformAdmin =
     !!isPlatformAdminFlag ||
-    roles.has("platform_admin") ||
-    roles.has("platformowner") ||
-    roles.has("platform_owner") ||
-    roles.has("global_super_admin");
+    rolesSet.has("platform_admin") ||
+    rolesSet.has("platformowner") ||
+    rolesSet.has("platform_owner") ||
+    rolesSet.has("global_super_admin");
 
-  const isTenantAdmin = !!isTenantAdminFlag || roles.has("tenant_admin") || isOwnerLike;
+  const isTenantAdmin = !!isTenantAdminFlag || rolesSet.has("tenant_admin");
 
-  const isAdmin = !!isAdminFlag || roles.has("admin") || roles.has("company_admin") || roles.has("system_admin");
+  const isAdmin = !!isAdminFlag || rolesSet.has("admin") || rolesSet.has("company_admin") || rolesSet.has("system_admin");
 
-  return { me, isAdmin, isPlatformAdmin, isTenantAdmin, loading };
+  return { me, isAdmin, isPlatformAdmin, isTenantAdmin, loading, rolesSet, permsSet, tenantModulesSet };
 }
 
-function filterSectionsForRBAC(src: Section[], isPlatformAdmin: boolean, isTenantAdmin: boolean, isAdmin: boolean): Section[] {
-  const canSeeAdmin = isTenantAdmin || isPlatformAdmin || isAdmin;
-  return src
-    .filter((s) => (s.id !== "admin" ? true : canSeeAdmin))
-    .map((s) =>
-      s.id !== "admin"
-        ? s
-        : {
-            ...s,
-            items: s.items.filter((it) => (it.label === "Tenants" ? isPlatformAdmin : true)),
-          }
-    );
+/* small helper to iterate sets (keeps code compact) */
+function sForEach(s: Set<string>, fn: (v: string) => void) {
+  if (!s) return;
+  for (const v of s) fn(v);
 }
 
 /* ---------------------------- Sidebar ---------------------------- */
 export default function Sidebar() {
   const pathname = usePathname();
-  const { isPlatformAdmin, isTenantAdmin, isAdmin, loading } = useSessionMe();
+  const { me, isPlatformAdmin, isTenantAdmin, isAdmin, loading, rolesSet, permsSet, tenantModulesSet } = useSessionMe();
 
+  /**
+   * Important: This logic intentionally grants full menu visibility to tenant admins.
+   * - If isTenantAdmin true, we simply return the full canonical set of sections.
+   * - This does NOT bypass backend RBAC; server must still check permissions.
+   */
   const sections = React.useMemo(() => {
-    const filtered = loading ? [] : filterSectionsForRBAC(SECTIONS, isPlatformAdmin, isTenantAdmin, isAdmin);
+    // If still loading, don't show anything yet (prevents flicker)
+    if (loading) return [];
 
-    // Safety net: if RBAC says user can see Admin but the filtered set unexpectedly lacks it,
-    // append the canonical Admin section from SECTIONS so UI shows what user should see.
-    if (!loading) {
-      const hasAdminInFiltered = filtered.some((s) => s.id === "admin");
-      const canSeeAdmin = isTenantAdmin || isPlatformAdmin || isAdmin;
-      if (canSeeAdmin && !hasAdminInFiltered) {
-        const adminSec = SECTIONS.find((s) => s.id === "admin");
-        if (adminSec) {
-          return [...filtered, adminSec];
-        }
+    // If tenant admin OR platform admin OR system admin -> show everything
+    if (isTenantAdmin || isPlatformAdmin || isAdmin) {
+      // Return canonical SECTIONS plus HMS_SECTION (ensure no duplicate)
+      const base = SECTIONS.slice();
+      if (!base.some((s) => s.id === "hms")) {
+        base.push(HMS_SECTION);
       }
+      // Guarantee Admin present for tenant admin (sometimes filtered above)
+      if (!base.some((s) => s.id === "admin")) {
+        const adminSec = SECTIONS.find((s) => s.id === "admin");
+        if (adminSec) base.push(adminSec);
+      }
+      return base;
     }
+
+    // Non-admin users: default filtered view by admin visibility and by HMS gating rules
+    const filterSectionsForRBAC = (src: Section[]) => {
+      const canSeeAdmin = isTenantAdmin || isPlatformAdmin || isAdmin;
+      return src
+        .filter((s) => (s.id !== "admin" ? true : canSeeAdmin))
+        .map((s) =>
+          s.id !== "admin"
+            ? s
+            : {
+                ...s,
+                items: s.items.filter((it) => (it.label === "Tenants" ? isPlatformAdmin : true)),
+              }
+        );
+    };
+
+    const filtered = filterSectionsForRBAC(SECTIONS);
+
+    // Decide whether the current user should see HMS menus:
+    // - explicit permissions like 'hms.access' or 'hms.*'
+    // - tenant-level module flag: tenantModulesSet includes 'hms'
+    // - role-based tokens 'hms_user' or 'hms_admin'
+       // Always show HMS section in the sidebar (no DB migration / tenant module required)
+    // NOTE: this only changes UI visibility — backend must still enforce RBAC for API access.
+    if (!filtered.some((s) => s.id === "hms")) {
+      filtered.push(HMS_SECTION);
+    }
+
+
     return filtered;
-  }, [loading, isPlatformAdmin, isTenantAdmin, isAdmin]);
+  }, [loading, isPlatformAdmin, isTenantAdmin, isAdmin, rolesSet, permsSet, tenantModulesSet]);
 
   // Sidebar state
   const [pinnedSidebar, setPinnedSidebar] = useState(false);
