@@ -8,15 +8,15 @@ import { motion } from "framer-motion";
  * app/hms/admin/SettingsForm.tsx
  * -------------------------------------
  * Multi-company / multi-tenant aware HMS Settings Form
- * - Neural Glass Design Language (frosted, soft shadows, rounded-2xl)
+ * - Neural Glass Design Language
  * - Uses react-hook-form
  * - Props allow tenant + company wiring
  * - Expects:
+ *    GET  /api/hms/companies
  *    GET  /api/hms/settings?company_id=<id>
  *    POST /api/hms/settings?company_id=<id>
- *    GET  /api/hms/companies
  *
- * Adjust endpoints and auth headers to match your backend.
+ * Drop-in ready: adjust endpoints/auth headers to match your backend.
  */
 
 /* ---------------------------- Types ---------------------------- */
@@ -28,21 +28,22 @@ type SettingsFormValues = {
   billing_enabled: boolean;
   default_room_rate: number | null;
   logo_base64?: string | null;
+  company_id?: string | null;
 };
 
 type Company = {
   id: string;
   name: string;
-  // any other metadata
+  // other metadata optional
 };
 
 type Props = {
-  tenantId?: string | null; // optional, can be inserted from auth context
-  initialCompanyId?: string | null; // optional company to load initially
-  isTenantAdmin?: boolean; // if false, hide/disable company selector
-  companiesEndpoint?: string; // override companies endpoint
-  settingsEndpoint?: string; // override settings endpoint
-  authToken?: string | null; // optional bearer token
+  tenantId?: string | null;
+  initialCompanyId?: string | null;
+  isTenantAdmin?: boolean;
+  companiesEndpoint?: string;
+  settingsEndpoint?: string;
+  authToken?: string | null;
 };
 
 /* ------------------------- Constants --------------------------- */
@@ -124,21 +125,30 @@ export default function HmsSettingsForm({
       billing_enabled: true,
       default_room_rate: 0,
       logo_base64: null,
+      company_id: initialCompanyId ?? null,
     },
   });
+
+  // form watches
+  const logoBase64 = watch("logo_base64");
+  const hospitalName = watch("hospital_name");
 
   const [loaded, setLoaded] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Record<string, string | null>>({}); // per-company timestamp
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(initialCompanyId);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(initialCompanyId ?? null);
   const [companiesLoading, setCompaniesLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const logoBase64 = watch("logo_base64");
-  const hospitalName = watch("hospital_name");
+  // abort controllers
+  const companiesAbort = useRef<AbortController | null>(null);
+  const settingsAbort = useRef<AbortController | null>(null);
 
+  /* -------------------- Sync logo preview -------------------- */
   useEffect(() => {
     if (logoBase64) setLogoPreview(logoBase64);
   }, [logoBase64]);
@@ -146,6 +156,9 @@ export default function HmsSettingsForm({
   /* -------------------- Load companies list -------------------- */
   useEffect(() => {
     let mounted = true;
+    const controller = new AbortController();
+    companiesAbort.current = controller;
+
     const loadCompanies = async () => {
       setCompaniesLoading(true);
       setErrorMsg(null);
@@ -154,27 +167,34 @@ export default function HmsSettingsForm({
         const res = await fetch(companiesEndpoint, {
           method: "GET",
           headers,
+          signal: controller.signal,
         });
+
+        if (!mounted) return;
         if (!res.ok) {
-          // some backends might return 404 when multi-company is not set up — that's acceptable
+          // 404 is acceptable (no multi-company)
           if (res.status === 404) {
-            if (mounted) setCompanies([]);
+            setCompanies([]);
             return;
           }
           throw new Error(`Failed to load companies (${res.status})`);
         }
+
         const json = await res.json();
-        // Expecting array of { id, name }
-        if (!mounted) return;
         const list: Company[] = Array.isArray(json) ? json : json?.companies ?? [];
         setCompanies(list);
-        // choose initial selected company intelligently
-        if (!selectedCompanyId) {
-          // priority: initialCompanyId prop -> first company -> null
-          const pick = initialCompanyId ?? (list.length ? list[0].id : null);
-          setSelectedCompanyId(pick);
+
+        // pick initial company: props initialCompanyId -> first company -> null
+        const pick = initialCompanyId ?? (list.length ? list[0].id : null);
+        if (pick) {
+          setSelectedCompanyId((prev) => prev ?? pick);
+        } else {
+          // if no companies, ensure form company_id cleared
+          setSelectedCompanyId(null);
+          setValue("company_id", null);
         }
       } catch (err: any) {
+        if (err?.name === "AbortError") return;
         console.error("Load companies error:", err);
         if (mounted) setErrorMsg("Failed to load companies");
       } finally {
@@ -183,27 +203,44 @@ export default function HmsSettingsForm({
     };
 
     loadCompanies();
+
     return () => {
       mounted = false;
+      controller.abort();
+      companiesAbort.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companiesEndpoint, tenantId, authToken]);
 
+  /* ------------------- Keep form company_id in sync ------------------- */
+  useEffect(() => {
+    // whenever selectedCompanyId changes, ensure form value is in sync
+    setValue("company_id", selectedCompanyId ?? null, { shouldDirty: true });
+    // also reset any server messages when switching companies
+    setErrorMsg(null);
+    setLogoPreview(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompanyId]);
+
   /* ------------------- Load settings (per-company) ------------------- */
   useEffect(() => {
-    // Whenever selectedCompanyId changes load its settings
     let mounted = true;
-    if (!selectedCompanyId && companies.length) {
-      // pick first company if available
+
+    // if companies list exists and no selectedCompanyId, pick first
+    if (companies.length && !selectedCompanyId) {
       setSelectedCompanyId((prev) => prev ?? companies[0].id);
       return;
     }
+
+    const controller = new AbortController();
+    settingsAbort.current = controller;
 
     const load = async () => {
       setLoaded(false);
       setErrorMsg(null);
       try {
-        const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
+        const q = selectedCompanyId ? `?company_id=${encodeURIComponent(String(selectedCompanyId))}` : "";
+        const url = `${settingsEndpoint}${q}`;
         const headers: Record<string, string> = {
           ...buildHeaders({ tenantId, authToken }),
         };
@@ -212,11 +249,13 @@ export default function HmsSettingsForm({
         const res = await fetch(url, {
           method: "GET",
           headers,
+          signal: controller.signal,
         });
 
+        if (!mounted) return;
         if (!res.ok) {
-          // 404 means not configured yet for this company — reset to defaults
           if (res.status === 404) {
+            // not configured for this company yet — reset to defaults
             reset(
               {
                 hospital_name: "",
@@ -226,11 +265,12 @@ export default function HmsSettingsForm({
                 billing_enabled: true,
                 default_room_rate: 0,
                 logo_base64: null,
+                company_id: selectedCompanyId ?? null,
               },
               { keepDefaultValues: false }
             );
             setLogoPreview(null);
-            if (mounted) setLoaded(true);
+            setLoaded(true);
             return;
           }
           throw new Error(`Failed to load settings (${res.status})`);
@@ -247,11 +287,13 @@ export default function HmsSettingsForm({
           billing_enabled: typeof json.billing_enabled === "boolean" ? json.billing_enabled : true,
           default_room_rate: json.default_room_rate != null ? Number(json.default_room_rate) : 0,
           logo_base64: json.logo_base64 ?? json.logo ?? null,
+          company_id: selectedCompanyId ?? null,
         };
 
         reset(payload as SettingsFormValues, { keepDefaultValues: false });
         if (payload.logo_base64) setLogoPreview(payload.logo_base64);
       } catch (err: any) {
+        if (err?.name === "AbortError") return;
         console.error("Load settings error:", err);
         if (mounted) setErrorMsg("Failed to load settings. Check console.");
       } finally {
@@ -259,11 +301,13 @@ export default function HmsSettingsForm({
       }
     };
 
-    // only call if selectedCompanyId is set (or allow blank/companyless mode)
+    // Only call load if we can — allow no-company (global) mode as well
     load();
 
     return () => {
       mounted = false;
+      controller.abort();
+      settingsAbort.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompanyId, settingsEndpoint, tenantId, authToken]);
@@ -278,10 +322,12 @@ export default function HmsSettingsForm({
         contact_email: values.contact_email?.trim() || null,
         default_currency: values.default_currency?.trim() || "USD",
         default_room_rate: values.default_room_rate ?? 0,
+        company_id: selectedCompanyId ?? null,
       };
 
       // Build URL with company query param (if present)
-      const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
+      const q = selectedCompanyId ? `?company_id=${encodeURIComponent(String(selectedCompanyId))}` : "";
+      const url = `${settingsEndpoint}${q}`;
 
       const headers: Record<string, string> = {
         ...buildHeaders({ tenantId, authToken }),
@@ -299,14 +345,13 @@ export default function HmsSettingsForm({
         throw new Error(txt || `Save failed (${res.status})`);
       }
 
-      // server response might include timestamp; otherwise set now
       const json = await res.json().catch(() => ({}));
       const ts = json?.updated_at ?? new Date().toISOString();
 
       setLastSavedAt((prev) => ({ ...prev, [selectedCompanyId ?? "global"]: ts }));
 
-      // reset form pristine state while keeping values
-      reset({ ...values }, { keepDefaultValues: true });
+      // reset pristine while keeping values
+      reset({ ...payload }, { keepDefaultValues: true });
     } catch (err: any) {
       console.error("Save settings error:", err);
       setErrorMsg(err?.message ?? "Unable to save settings");
@@ -339,7 +384,7 @@ export default function HmsSettingsForm({
 
   /* --------------------------- UI render --------------------------- */
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
       <GlassPanel title="HMS Global Settings" subtitle="Core configuration used across HMS modules and billing.">
         {/* Company selector */}
         <div className="mb-4">
@@ -362,12 +407,13 @@ export default function HmsSettingsForm({
             <button
               type="button"
               onClick={async () => {
-                // reload companies and settings for the selected company
                 setErrorMsg(null);
                 try {
                   setCompaniesLoading(true);
+                  const controller = new AbortController();
+                  companiesAbort.current = controller;
                   const headers = { ...buildHeaders({ tenantId, authToken }) };
-                  const res = await fetch(companiesEndpoint, { method: "GET", headers });
+                  const res = await fetch(companiesEndpoint, { method: "GET", headers, signal: controller.signal });
                   if (!res.ok) throw new Error(`Failed to fetch companies (${res.status})`);
                   const json = await res.json();
                   const list: Company[] = Array.isArray(json) ? json : json?.companies ?? [];
@@ -391,6 +437,9 @@ export default function HmsSettingsForm({
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* Hidden field to keep payload consistent */}
+          <input type="hidden" {...register("company_id" as const)} />
+
           {/* Hospital / Facility Name */}
           <div>
             <label className="block text-sm font-medium text-white/90">Hospital / Facility Name</label>
@@ -492,6 +541,7 @@ export default function HmsSettingsForm({
             <div className="mt-3 flex items-center gap-4">
               <div className="w-28 h-28 rounded-xl overflow-hidden bg-white/3 border border-white/8 flex items-center justify-center">
                 {logoPreview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={logoPreview} alt="Logo preview" className="object-contain w-full h-full" />
                 ) : (
                   <div className="text-xs text-white/40 px-2 text-center">No logo uploaded</div>
@@ -506,7 +556,6 @@ export default function HmsSettingsForm({
                   onChange={async (e) => {
                     const file = e.target.files && e.target.files[0];
                     if (!file) return;
-                    // client-side simple validation
                     if (file.size > 2_097_152) {
                       setErrorMsg("Logo must be smaller than 2MB");
                       return;
@@ -550,47 +599,56 @@ export default function HmsSettingsForm({
 
             <button
               type="button"
-              onClick={() => {
-                // reload server state for currently selected company
+              onClick={async () => {
                 setErrorMsg(null);
                 setLogoPreview(null);
-                (async () => {
-                  try {
-                    setLoaded(false);
-                    const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
-                    const headers: Record<string, string> = {
-                      ...buildHeaders({ tenantId, authToken }),
-                    };
-                    if (selectedCompanyId) headers["X-Company-ID"] = selectedCompanyId;
-                    const res = await fetch(url, { method: "GET", headers });
-                    if (!res.ok) {
-                      if (res.status === 404) {
-                        reset({}, { keepDefaultValues: true });
-                        setLogoPreview(null);
-                        setLoaded(true);
-                        return;
-                      }
-                      throw new Error(`Failed to fetch (${res.status})`);
+                try {
+                  setLoaded(false);
+                  const q = selectedCompanyId ? `?company_id=${encodeURIComponent(String(selectedCompanyId))}` : "";
+                  const url = `${settingsEndpoint}${q}`;
+                  const headers: Record<string, string> = { ...buildHeaders({ tenantId, authToken }) };
+                  if (selectedCompanyId) headers["X-Company-ID"] = selectedCompanyId;
+                  const res = await fetch(url, { method: "GET", headers });
+                  if (!res.ok) {
+                    if (res.status === 404) {
+                      reset(
+                        {
+                          hospital_name: "",
+                          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+                          contact_email: "",
+                          default_currency: "USD",
+                          billing_enabled: true,
+                          default_room_rate: 0,
+                          logo_base64: null,
+                          company_id: selectedCompanyId ?? null,
+                        },
+                        { keepDefaultValues: false }
+                      );
+                      setLogoPreview(null);
+                      setLoaded(true);
+                      return;
                     }
-                    const json = await res.json();
-                    const payload: Partial<SettingsFormValues> = {
-                      hospital_name: json.hospital_name ?? "",
-                      timezone: json.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-                      contact_email: json.contact_email ?? "",
-                      default_currency: json.default_currency ?? "USD",
-                      billing_enabled: typeof json.billing_enabled === "boolean" ? json.billing_enabled : true,
-                      default_room_rate: json.default_room_rate != null ? Number(json.default_room_rate) : 0,
-                      logo_base64: json.logo_base64 ?? null,
-                    };
-                    reset(payload as SettingsFormValues, { keepDefaultValues: false });
-                    if (payload.logo_base64) setLogoPreview(payload.logo_base64);
-                  } catch (err) {
-                    console.error(err);
-                    setErrorMsg("Failed to reload settings");
-                  } finally {
-                    setLoaded(true);
+                    throw new Error(`Failed to fetch (${res.status})`);
                   }
-                })();
+                  const json = await res.json();
+                  const payload: Partial<SettingsFormValues> = {
+                    hospital_name: json.hospital_name ?? "",
+                    timezone: json.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    contact_email: json.contact_email ?? "",
+                    default_currency: json.default_currency ?? "USD",
+                    billing_enabled: typeof json.billing_enabled === "boolean" ? json.billing_enabled : true,
+                    default_room_rate: json.default_room_rate != null ? Number(json.default_room_rate) : 0,
+                    logo_base64: json.logo_base64 ?? null,
+                    company_id: selectedCompanyId ?? null,
+                  };
+                  reset(payload as SettingsFormValues, { keepDefaultValues: false });
+                  if (payload.logo_base64) setLogoPreview(payload.logo_base64);
+                } catch (err) {
+                  console.error(err);
+                  setErrorMsg("Failed to reload settings");
+                } finally {
+                  setLoaded(true);
+                }
               }}
               className="rounded-2xl px-4 py-2 text-sm ring-1 ring-white/8"
             >

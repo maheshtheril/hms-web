@@ -3,14 +3,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 
-/* ========================================================================
-   HMS Departments Form — Neural Glass Design (Production-ready)
-   - Routes: /api/hms/departments  (GET, POST) and /api/hms/departments/:id (PUT)
-   - Client component (App Router) — no server-only imports.
-   - Style: Neural Glass (frosted glass, soft shadows, subtle gradients)
-   - Multi-company ready: accepts `companyId` prop and includes company_id
-     in fetches and payloads. Server must still enforce tenant/company RBAC.
-   ======================================================================== */
+/* =========================================================================
+   DepartmentsForm.tsx — Production-ready (drop-in)
+   - Visible Company selector (tenant-scoped)
+   - Refetch parent departments when company changes
+   - Keeps hidden company_id in sync with the selector
+   - Accessible (aria-live, focus on first error), abort-safe fetches
+   - Neural Glass visual language (Tailwind classes)
+   - Expects backend endpoints:
+       GET  /api/companies
+       GET  /api/hms/departments?company_id=...
+       POST /api/hms/departments
+       PUT  /api/hms/departments/:id
+   ========================================================================= */
 
 type UUID = string;
 
@@ -26,6 +31,11 @@ export type DepartmentFormValues = {
 
 type ParentOption = {
   id?: UUID;
+  name: string;
+};
+
+type CompanyOption = {
+  id: UUID;
   name: string;
 };
 
@@ -78,7 +88,9 @@ export default function DepartmentsForm({
     reset,
     setError,
     clearErrors,
-    formState: { errors, isSubmitting, isDirty, dirtyFields },
+    setValue,
+    watch,
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<DepartmentFormValues>({
     defaultValues: {
       name: "",
@@ -92,6 +104,13 @@ export default function DepartmentsForm({
     mode: "onBlur",
   });
 
+  // watch the company_id so UI and effects react when it changes
+  const watchedCompany = watch("company_id") ?? null;
+
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [companiesLoading, setCompaniesLoading] = useState(true);
+  const [companiesError, setCompaniesError] = useState<string | null>(null);
+
   const [parents, setParents] = useState<ParentOption[]>([]);
   const [parentsLoading, setParentsLoading] = useState<boolean>(true);
   const [parentsError, setParentsError] = useState<string | null>(null);
@@ -100,34 +119,86 @@ export default function DepartmentsForm({
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
   const statusRef = useRef<HTMLDivElement | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const companiesAbort = useRef<AbortController | null>(null);
+  const parentsAbort = useRef<AbortController | null>(null);
 
-  /* --------------------------- Fetch parents ---------------------------- */
+  /* --------------------------- Fetch companies -------------------------- */
   useEffect(() => {
     const controller = new AbortController();
-    abortRef.current = controller;
+    companiesAbort.current = controller;
+    setCompaniesLoading(true);
+    setCompaniesError(null);
+
+    fetch("/api/companies", { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) {
+          const text = await r.text().catch(() => "Failed to fetch companies");
+          throw new Error(text || "Failed to fetch companies");
+        }
+        return r.json();
+      })
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Unexpected response");
+        const mapped: CompanyOption[] = data.map((c: any) => ({
+          id: String(c.id),
+          name: String(c.name ?? c.title ?? "Unnamed Company"),
+        }));
+
+        setCompanies(mapped);
+
+        // Initialize company selection:
+        // Priority: prop companyId -> initialData.company_id -> first returned company -> null
+        const initialCompany =
+          companyId ??
+          (initialData?.company_id as UUID | null) ??
+          (mapped[0]?.id ?? null);
+
+        if (initialCompany) {
+          setValue("company_id", initialCompany);
+        }
+      })
+      .catch((err: any) => {
+        if (err?.name === "AbortError") return;
+        console.error("Companies fetch failed", err);
+        setCompaniesError("Failed to load companies");
+        setCompanies([]);
+      })
+      .finally(() => setCompaniesLoading(false));
+
+    return () => {
+      controller.abort();
+      companiesAbort.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
+
+  /* --------------------------- Fetch parents --------------------------- */
+  useEffect(() => {
+    // Whenever watchedCompany changes we reload parents.
+    // If there is no company selected, optionally fetch all parents (or empty).
+    const controller = new AbortController();
+    parentsAbort.current = controller;
     setParentsLoading(true);
     setParentsError(null);
 
-    const url = companyId
-      ? `/api/hms/departments?company_id=${encodeURIComponent(companyId)}`
+    const url = watchedCompany
+      ? `/api/hms/departments?company_id=${encodeURIComponent(watchedCompany)}`
       : "/api/hms/departments";
 
     fetch(url, { signal: controller.signal })
       .then(async (r) => {
         if (!r.ok) {
-          const text = await r.text().catch(() => "Failed to fetch");
+          const text = await r.text().catch(() => "Failed to fetch parents");
           throw new Error(text || "Failed to fetch parents");
         }
         return r.json();
       })
       .then((data) => {
-        // Expecting array of { id, name } (coerce safely)
         if (!Array.isArray(data)) throw new Error("Unexpected response");
         setParents(
           data.map((p: any) => ({
             id: String(p.id ?? ""),
-            name: String(p.name ?? "Unnamed"),
+            name: String(p.name ?? p.title ?? "Unnamed"),
           }))
         );
       })
@@ -141,20 +212,20 @@ export default function DepartmentsForm({
 
     return () => {
       controller.abort();
-      abortRef.current = null;
+      parentsAbort.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
+    // watchedCompany intentionally included
+  }, [watchedCompany]);
 
   /* -------------------------- Submit handler --------------------------- */
   async function onSubmit(values: DepartmentFormValues) {
     clearErrors();
     setServerMessage(null);
 
-    // ensure payload contains the correct company id (prefer prop over form value)
+    // Prefer the selected company (form) over the component prop for payload consistency.
     const payload: DepartmentFormValues = {
       ...values,
-      company_id: (companyId ?? values.company_id ?? null) as UUID | null,
+      company_id: (values.company_id ?? companyId ?? null) as UUID | null,
     };
 
     const url = isEdit
@@ -178,7 +249,7 @@ export default function DepartmentsForm({
       }
 
       if (!res.ok) {
-        // try to map server validation errors
+        // map server validation errors if present
         if (parsed && parsed.errors && typeof parsed.errors === "object") {
           Object.entries(parsed.errors).forEach(([k, v]) => {
             // @ts-ignore
@@ -187,7 +258,8 @@ export default function DepartmentsForm({
               message: Array.isArray(v) ? v.join(", ") : String(v),
             });
           });
-          // Focus first error
+
+          // Focus first field with error (accessibility)
           const firstKey = Object.keys(parsed.errors)[0];
           const el = document.querySelector(
             `input[name="${firstKey}"], textarea[name="${firstKey}"], select[name="${firstKey}"]`
@@ -203,11 +275,10 @@ export default function DepartmentsForm({
         throw new Error(errMsg);
       }
 
-      // Success
+      // Success: update savedAt, server message and reset dirty state while keeping values & returned id
       const id = parsed?.id ?? initialData?.id ?? values.id;
       setSavedAt(new Date().toISOString());
       setServerMessage("Saved successfully");
-      // reset form state but keep values (and keep updated id if server returned)
       reset({ ...payload, id });
     } catch (err: any) {
       console.error("Save error:", err);
@@ -246,8 +317,53 @@ export default function DepartmentsForm({
         className="space-y-4 text-white/92"
         noValidate
       >
-        {/* Ensure company_id is present in submitted values */}
-        <input type="hidden" {...register("company_id" as const)} />
+        {/* Visible Company select (tenant-scoped list) */}
+        <div>
+          <label className="block text-sm font-medium mb-1">Company</label>
+          <div className="relative">
+            <select
+              {...register("company_id", {
+                required: "Company is required",
+                onChange: (e) => {
+                  // Clear parent when company changes to avoid cross-company parent link
+                  setValue("parent_id", null);
+                  // setValue("company_id", e.target.value || null) is handled by register/onChange,
+                  // but we keep setValue available for programmatic changes if needed.
+                },
+              })}
+              name="company_id"
+              className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2"
+              disabled={companiesLoading}
+              aria-invalid={errors.company_id ? "true" : "false"}
+            >
+              <option value="">— Select company —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+
+            {companiesLoading && (
+              <div className="absolute right-3 top-2 text-xs text-zinc-400">
+                Loading…
+              </div>
+            )}
+          </div>
+
+          {companiesError && (
+            <p className="text-amber-300 text-sm mt-1">{companiesError}</p>
+          )}
+          {errors.company_id && (
+            <p className="text-rose-400 text-sm mt-1" role="alert">
+              {errors.company_id.message}
+            </p>
+          )}
+        </div>
+
+        {/* Hidden company_id (keeps form payload consistent) */}
+        {/* note: already registered via the visible select, but keeping hidden input isn't strictly needed */}
+        {/* <input type="hidden" {...register("company_id" as const)} /> */}
 
         {/* Name */}
         <div>
@@ -278,6 +394,7 @@ export default function DepartmentsForm({
             <input
               {...register("code", {
                 maxLength: { value: 12, message: "Code too long (max 12)" },
+                setValueAs: (v) => (typeof v === "string" ? v.trim().toUpperCase() : v),
               })}
               name="code"
               className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 placeholder:text-white/50"
