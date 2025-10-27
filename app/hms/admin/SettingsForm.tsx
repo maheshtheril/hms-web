@@ -7,11 +7,16 @@ import { motion } from "framer-motion";
 /**
  * app/hms/admin/SettingsForm.tsx
  * -------------------------------------
- * - Neural Glass Design Language (frosted background, soft shadows, rounded 2xl)
- * - Uses react-hook-form for validation & state
- * - Expects GET /api/hms/settings and POST /api/hms/settings (or adjust URLs)
- * - Includes logo upload (client preview) — sends as base64 in JSON by default
- * - Designed for multi-tenant integration (insert auth headers where needed)
+ * Multi-company / multi-tenant aware HMS Settings Form
+ * - Neural Glass Design Language (frosted, soft shadows, rounded-2xl)
+ * - Uses react-hook-form
+ * - Props allow tenant + company wiring
+ * - Expects:
+ *    GET  /api/hms/settings?company_id=<id>
+ *    POST /api/hms/settings?company_id=<id>
+ *    GET  /api/hms/companies
+ *
+ * Adjust endpoints and auth headers to match your backend.
  */
 
 /* ---------------------------- Types ---------------------------- */
@@ -25,9 +30,24 @@ type SettingsFormValues = {
   logo_base64?: string | null;
 };
 
+type Company = {
+  id: string;
+  name: string;
+  // any other metadata
+};
+
+type Props = {
+  tenantId?: string | null; // optional, can be inserted from auth context
+  initialCompanyId?: string | null; // optional company to load initially
+  isTenantAdmin?: boolean; // if false, hide/disable company selector
+  companiesEndpoint?: string; // override companies endpoint
+  settingsEndpoint?: string; // override settings endpoint
+  authToken?: string | null; // optional bearer token
+};
+
+/* ------------------------- Constants --------------------------- */
 const COMMON_TIMEZONES = [
   "UTC",
-  "Asia/Kolkata",
   "Asia/Kolkata",
   "America/New_York",
   "Europe/London",
@@ -39,8 +59,16 @@ const COMMON_TIMEZONES = [
 
 const COMMON_CURRENCIES = ["USD", "EUR", "INR", "GBP", "SGD", "AUD", "JPY"];
 
-/* ------------------------- Glass container ----------------------- */
-function GlassPanel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+/* ------------------------- Glass container --------------------- */
+function GlassPanel({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl shadow-[0_12px_50px_-12px_rgba(0,0,0,0.65)]">
       <div className="p-6 border-b border-white/6">
@@ -62,8 +90,24 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/* -------------------------- Component --------------------------- */
-export default function HmsSettingsForm() {
+function buildHeaders(props: Props) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (props.tenantId) headers["X-Tenant-ID"] = props.tenantId;
+  if (props.authToken) headers["Authorization"] = `Bearer ${props.authToken}`;
+  return headers;
+}
+
+/* ---------------------- Main component ------------------------- */
+export default function HmsSettingsForm({
+  tenantId = null,
+  initialCompanyId = null,
+  isTenantAdmin = true,
+  companiesEndpoint = "/api/hms/companies",
+  settingsEndpoint = "/api/hms/settings",
+  authToken = null,
+}: Props) {
   const {
     register,
     handleSubmit,
@@ -84,9 +128,12 @@ export default function HmsSettingsForm() {
   });
 
   const [loaded, setLoaded] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<Record<string, string | null>>({}); // per-company timestamp
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(initialCompanyId);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const logoBase64 = watch("logo_base64");
@@ -96,25 +143,94 @@ export default function HmsSettingsForm() {
     if (logoBase64) setLogoPreview(logoBase64);
   }, [logoBase64]);
 
-  /* ------------------- Load settings from API ------------------- */
+  /* -------------------- Load companies list -------------------- */
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
+    const loadCompanies = async () => {
+      setCompaniesLoading(true);
+      setErrorMsg(null);
       try {
-        const res = await fetch("/api/hms/settings", {
+        const headers = { ...buildHeaders({ tenantId, authToken }) };
+        const res = await fetch(companiesEndpoint, {
           method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            // Add tenant/auth headers here if required:
-            // "Authorization": `Bearer ${token}`,
-            // "X-Tenant-ID": tenantId,
-          },
+          headers,
+        });
+        if (!res.ok) {
+          // some backends might return 404 when multi-company is not set up — that's acceptable
+          if (res.status === 404) {
+            if (mounted) setCompanies([]);
+            return;
+          }
+          throw new Error(`Failed to load companies (${res.status})`);
+        }
+        const json = await res.json();
+        // Expecting array of { id, name }
+        if (!mounted) return;
+        const list: Company[] = Array.isArray(json) ? json : json?.companies ?? [];
+        setCompanies(list);
+        // choose initial selected company intelligently
+        if (!selectedCompanyId) {
+          // priority: initialCompanyId prop -> first company -> null
+          const pick = initialCompanyId ?? (list.length ? list[0].id : null);
+          setSelectedCompanyId(pick);
+        }
+      } catch (err: any) {
+        console.error("Load companies error:", err);
+        if (mounted) setErrorMsg("Failed to load companies");
+      } finally {
+        if (mounted) setCompaniesLoading(false);
+      }
+    };
+
+    loadCompanies();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companiesEndpoint, tenantId, authToken]);
+
+  /* ------------------- Load settings (per-company) ------------------- */
+  useEffect(() => {
+    // Whenever selectedCompanyId changes load its settings
+    let mounted = true;
+    if (!selectedCompanyId && companies.length) {
+      // pick first company if available
+      setSelectedCompanyId((prev) => prev ?? companies[0].id);
+      return;
+    }
+
+    const load = async () => {
+      setLoaded(false);
+      setErrorMsg(null);
+      try {
+        const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
+        const headers: Record<string, string> = {
+          ...buildHeaders({ tenantId, authToken }),
+        };
+        if (selectedCompanyId) headers["X-Company-ID"] = selectedCompanyId;
+
+        const res = await fetch(url, {
+          method: "GET",
+          headers,
         });
 
         if (!res.ok) {
-          // 404 may be expected for first-time setups
+          // 404 means not configured yet for this company — reset to defaults
           if (res.status === 404) {
-            setLoaded(true);
+            reset(
+              {
+                hospital_name: "",
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+                contact_email: "",
+                default_currency: "USD",
+                billing_enabled: true,
+                default_room_rate: 0,
+                logo_base64: null,
+              },
+              { keepDefaultValues: false }
+            );
+            setLogoPreview(null);
+            if (mounted) setLoaded(true);
             return;
           }
           throw new Error(`Failed to load settings (${res.status})`);
@@ -123,7 +239,6 @@ export default function HmsSettingsForm() {
         const json = await res.json();
         if (!mounted) return;
 
-        // Normalize server response keys to our form keys if needed
         const payload: Partial<SettingsFormValues> = {
           hospital_name: json.hospital_name ?? json.hms_name ?? "",
           timezone: json.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -144,18 +259,19 @@ export default function HmsSettingsForm() {
       }
     };
 
+    // only call if selectedCompanyId is set (or allow blank/companyless mode)
     load();
+
     return () => {
       mounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reset]);
+  }, [selectedCompanyId, settingsEndpoint, tenantId, authToken]);
 
   /* --------------------------- Submit --------------------------- */
   async function onSubmit(values: SettingsFormValues) {
     setErrorMsg(null);
     try {
-      // Trim some fields for cleanliness
       const payload = {
         ...values,
         hospital_name: values.hospital_name?.trim(),
@@ -164,13 +280,17 @@ export default function HmsSettingsForm() {
         default_room_rate: values.default_room_rate ?? 0,
       };
 
-      // Some backends prefer multipart/form-data for files; here we send JSON with base64 logo
-      const res = await fetch("/api/hms/settings", {
+      // Build URL with company query param (if present)
+      const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
+
+      const headers: Record<string, string> = {
+        ...buildHeaders({ tenantId, authToken }),
+      };
+      if (selectedCompanyId) headers["X-Company-ID"] = selectedCompanyId;
+
+      const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Add auth/tenant headers here
-        },
+        headers,
         body: JSON.stringify(payload),
       });
 
@@ -179,12 +299,14 @@ export default function HmsSettingsForm() {
         throw new Error(txt || `Save failed (${res.status})`);
       }
 
-      const json = await res.json();
-      setLastSavedAt(new Date().toISOString());
+      // server response might include timestamp; otherwise set now
+      const json = await res.json().catch(() => ({}));
+      const ts = json?.updated_at ?? new Date().toISOString();
+
+      setLastSavedAt((prev) => ({ ...prev, [selectedCompanyId ?? "global"]: ts }));
 
       // reset form pristine state while keeping values
       reset({ ...values }, { keepDefaultValues: true });
-      // optionally show toast (integrate sonner/toast lib)
     } catch (err: any) {
       console.error("Save settings error:", err);
       setErrorMsg(err?.message ?? "Unable to save settings");
@@ -218,7 +340,56 @@ export default function HmsSettingsForm() {
   /* --------------------------- UI render --------------------------- */
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-      <GlassPanel title="HMS Global Settings" subtitle="Core configuration used across the HMS modules and billing.">
+      <GlassPanel title="HMS Global Settings" subtitle="Core configuration used across HMS modules and billing.">
+        {/* Company selector */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-white/90">Company / Facility</label>
+          <div className="mt-2 flex gap-3 items-center">
+            <select
+              value={selectedCompanyId ?? ""}
+              onChange={(e) => setSelectedCompanyId(e.target.value || null)}
+              disabled={!isTenantAdmin || companiesLoading}
+              className="rounded-2xl bg-white/[0.02] border border-white/8 px-3 py-2"
+            >
+              <option value="">{companies.length ? "Select company..." : "No companies available"}</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={async () => {
+                // reload companies and settings for the selected company
+                setErrorMsg(null);
+                try {
+                  setCompaniesLoading(true);
+                  const headers = { ...buildHeaders({ tenantId, authToken }) };
+                  const res = await fetch(companiesEndpoint, { method: "GET", headers });
+                  if (!res.ok) throw new Error(`Failed to fetch companies (${res.status})`);
+                  const json = await res.json();
+                  const list: Company[] = Array.isArray(json) ? json : json?.companies ?? [];
+                  setCompanies(list);
+                } catch (err) {
+                  console.error(err);
+                  setErrorMsg("Failed to reload companies");
+                } finally {
+                  setCompaniesLoading(false);
+                }
+              }}
+              className="rounded-2xl px-3 py-2 text-sm ring-1 ring-white/8"
+            >
+              Reload companies
+            </button>
+
+            <div className="ml-auto text-xs text-white/40">
+              {companiesLoading ? "Loading companies..." : selectedCompanyId ? `Company: ${selectedCompanyId}` : "No company"}
+            </div>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Hospital / Facility Name */}
           <div>
@@ -228,6 +399,7 @@ export default function HmsSettingsForm() {
               placeholder="e.g., St. Mary General Hospital"
               className="mt-2 w-full rounded-2xl bg-white/[0.02] border border-white/8 px-3 py-2 placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-400"
               aria-invalid={!!errors.hospital_name}
+              disabled={!selectedCompanyId && companies.length > 0}
             />
             {errors.hospital_name && <p className="text-rose-400 text-sm mt-1">{errors.hospital_name.message}</p>}
           </div>
@@ -240,7 +412,6 @@ export default function HmsSettingsForm() {
                 {...register("timezone", { required: true })}
                 className="mt-2 w-full rounded-2xl bg-white/[0.02] border border-white/8 px-3 py-2"
               >
-                {/* try to position current timezone first */}
                 <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
                   {Intl.DateTimeFormat().resolvedOptions().timeZone} (Local)
                 </option>
@@ -303,7 +474,15 @@ export default function HmsSettingsForm() {
             </label>
 
             <div className="ml-auto text-xs text-white/50">
-              {lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleString()}` : isDirty ? "Unsaved changes" : "All changes saved"}
+              {selectedCompanyId
+                ? lastSavedAt[selectedCompanyId]
+                  ? `Last saved ${new Date(lastSavedAt[selectedCompanyId] as string).toLocaleString()}`
+                  : isDirty
+                  ? "Unsaved changes"
+                  : "All changes saved"
+                : isDirty
+                ? "Unsaved changes"
+                : "All changes saved"}
             </div>
           </div>
 
@@ -345,11 +524,7 @@ export default function HmsSettingsForm() {
                   >
                     Choose file
                   </button>
-                  <button
-                    type="button"
-                    onClick={clearLogo}
-                    className="rounded-xl px-3 py-2 text-sm ring-1 ring-white/8"
-                  >
+                  <button type="button" onClick={clearLogo} className="rounded-xl px-3 py-2 text-sm ring-1 ring-white/8">
                     Clear
                   </button>
                 </div>
@@ -366,7 +541,7 @@ export default function HmsSettingsForm() {
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={isSubmitting || !loaded}
+              disabled={isSubmitting || !loaded || (companies.length > 0 && !selectedCompanyId)}
               className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium shadow-sm ring-1 ring-white/10 focus:outline-none disabled:opacity-60"
               style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))" }}
             >
@@ -376,16 +551,23 @@ export default function HmsSettingsForm() {
             <button
               type="button"
               onClick={() => {
-                // reload server state
+                // reload server state for currently selected company
                 setErrorMsg(null);
                 setLogoPreview(null);
-                // simply re-run the initial loader by resetting loaded and calling useEffect? We'll call GET again directly for simplicity:
                 (async () => {
                   try {
-                    const res = await fetch("/api/hms/settings", { method: "GET", headers: { "Content-Type": "application/json" } });
+                    setLoaded(false);
+                    const url = `${settingsEndpoint}?company_id=${encodeURIComponent(String(selectedCompanyId ?? ""))}`;
+                    const headers: Record<string, string> = {
+                      ...buildHeaders({ tenantId, authToken }),
+                    };
+                    if (selectedCompanyId) headers["X-Company-ID"] = selectedCompanyId;
+                    const res = await fetch(url, { method: "GET", headers });
                     if (!res.ok) {
                       if (res.status === 404) {
                         reset({}, { keepDefaultValues: true });
+                        setLogoPreview(null);
+                        setLoaded(true);
                         return;
                       }
                       throw new Error(`Failed to fetch (${res.status})`);
@@ -405,6 +587,8 @@ export default function HmsSettingsForm() {
                   } catch (err) {
                     console.error(err);
                     setErrorMsg("Failed to reload settings");
+                  } finally {
+                    setLoaded(true);
                   }
                 })();
               }}
