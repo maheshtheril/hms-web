@@ -129,7 +129,7 @@ export default function DepartmentsForm({
     setCompaniesLoading(true);
     setCompaniesError(null);
 
-    fetch("/api/companies", { signal: controller.signal })
+    fetch("/api/admin/companies", { signal: controller.signal })
       .then(async (r) => {
         if (!r.ok) {
           const text = await r.text().catch(() => "Failed to fetch companies");
