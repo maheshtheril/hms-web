@@ -376,11 +376,30 @@ export default function DepartmentsForm({
     clearErrors();
     setServerMessage(null);
 
-    // ensure booleans and company fallback
+    // Normalize values: convert empty strings to null, ensure booleans
+    const normalizedParent =
+      values.parent_id === "" || values.parent_id === undefined ? null : values.parent_id;
+    const normalizedCompany =
+      values.company_id === "" || values.company_id === undefined ? companyId ?? null : values.company_id;
+
+    // client-side guard: don't allow self-parenting
+    if (isEdit && normalizedParent && initialData?.id && normalizedParent === initialData.id) {
+      setError("parent_id", { type: "validate", message: "Department cannot be its own parent." });
+      return;
+    }
+
+    // quick UUID sanity check (cheap client-side validation)
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (normalizedParent && !UUID_RE.test(String(normalizedParent))) {
+      setError("parent_id", { type: "validate", message: "Parent id has invalid format." });
+      return;
+    }
+
     const payload: DepartmentFormValues = {
       ...values,
       is_active: !!values.is_active,
-      company_id: (values.company_id ?? companyId ?? null) as UUID | null,
+      parent_id: normalizedParent as UUID | null,
+      company_id: normalizedCompany as UUID | null,
     };
 
     const urlCandidates = isEdit
@@ -428,20 +447,42 @@ export default function DepartmentsForm({
     } catch (err: any) {
       if (axios.isCancel(err)) return;
       console.error("Save error:", err);
+
+      // Map server-side validation errors to fields when possible
+      const srv = err?.response?.data;
+      if (srv && typeof srv === "object") {
+        // backend returns e.g. { error: 'invalid_parent_uuid' } or { error: 'invalid_parent' } or { errors: { parent_id: [...] } }
+        if (srv.error === "invalid_parent_uuid" || srv.error === "invalid_parent" || (srv.errors && srv.errors.parent_id)) {
+          const msg = srv?.errors?.parent_id?.join?.(", ") || (srv.error === "invalid_parent_uuid" ? "Parent id is not a valid UUID." : "Parent department is invalid or not found.");
+          setError("parent_id", { type: "server", message: String(msg) });
+          setServerMessage(String(msg));
+          if (statusRef.current) statusRef.current.focus();
+          return;
+        }
+        // generic mapped errors
+        if (srv.errors && typeof srv.errors === "object") {
+          Object.entries(srv.errors).forEach(([k, v]) => {
+            setError(k as keyof DepartmentFormValues, {
+              type: "server",
+              message: Array.isArray(v) ? v.join(", ") : String(v),
+            });
+          });
+          setServerMessage(srv.message || "Validation failed");
+          if (statusRef.current) statusRef.current.focus();
+          return;
+        }
+        // fallback message from server
+        const message = srv?.message || JSON.stringify(srv);
+        setServerMessage(message);
+        if (statusRef.current) statusRef.current.focus();
+        return;
+      }
+
       const message =
         err?.response?.data?.message ||
         err?.message ||
         (err?.response ? JSON.stringify(err.response.data) : "Save failed");
       setServerMessage(message);
-      const ve = err?.response?.data?.errors;
-      if (ve && typeof ve === "object") {
-        Object.entries(ve).forEach(([k, v]) => {
-          setError(k as keyof DepartmentFormValues, {
-            type: "server",
-            message: Array.isArray(v) ? v.join(", ") : String(v),
-          });
-        });
-      }
       if (statusRef.current) statusRef.current.focus();
     }
   }
@@ -577,6 +618,8 @@ export default function DepartmentsForm({
                     value={p.id}
                     className="text-black"
                     style={{ color: "#0b0b0b", backgroundColor: "#ffffff" }}
+                    // disable the option matching the department being edited to prevent self-parenting
+                    disabled={isEdit && initialData?.id ? String(p.id) === String(initialData.id) : false}
                   >
                     {p.name}
                   </option>
@@ -585,6 +628,7 @@ export default function DepartmentsForm({
               {parentsLoading && <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>}
             </div>
             {parentsError && <p className="text-amber-300 text-sm mt-1">{parentsError}</p>}
+            {errors.parent_id && <p className="text-rose-400 text-sm mt-1">{errors.parent_id?.message}</p>}
           </div>
         </div>
 
