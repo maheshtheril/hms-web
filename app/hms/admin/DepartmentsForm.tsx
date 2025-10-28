@@ -2,20 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-
-/* =========================================================================
-   DepartmentsForm.tsx — Production-ready (drop-in)
-   - Visible Company selector (tenant-scoped)
-   - Refetch parent departments when company changes
-   - Keeps hidden company_id in sync with the selector
-   - Accessible (aria-live, focus on first error), abort-safe fetches
-   - Neural Glass visual language (Tailwind classes)
-   - Expects backend endpoints:
-       GET  /api/companies
-       GET  /api/hms/departments?company_id=...
-       POST /api/hms/departments
-       PUT  /api/hms/departments/:id
-   ========================================================================= */
+import axios, { AxiosRequestConfig, CancelTokenSource } from "axios";
+import apiClient from "@/lib/api-client"; // adjust if your apiClient path differs
 
 type UUID = string;
 
@@ -39,14 +27,102 @@ type CompanyOption = {
   name: string;
 };
 
-/* -------------------------- Helpers ------------------------------------- */
-function formatSavedAt(ts: string | null) {
-  if (!ts) return null;
+/* ------------------------ Axios helper --------------------------------- */
+/** Normalize URL to avoid duplicate base parts (e.g. apiClient.baseURL === '/api' + url startsWith('/api/...') => strip one) */
+function _normalizeUrlForApiClient(u: string) {
   try {
-    return new Date(ts).toLocaleString();
+    const base = String(
+      (apiClient && (apiClient as any).defaults && (apiClient as any).defaults.baseURL) || ""
+    );
+    // if base is '/api' (or endsWith '/api') and u starts with '/api', strip the leading '/api'
+    if (base && base.includes("/api") && u.startsWith("/api")) {
+      return u.replace(/^\/api/, "") || "/";
+    }
+    // if u equals base exactly, change to '/'
+    if (base && u === base) return "/";
+    return u;
   } catch {
-    return ts;
+    return u;
   }
+}
+
+/** Try multiple axios GET endpoints; return {url, data} of first success or null */
+async function tryAxiosVariantsGet(
+  urls: string[],
+  config?: AxiosRequestConfig
+): Promise<{ url: string; data: any; resp: any } | null> {
+  let lastErr: any = null;
+  for (const u of urls) {
+    const candidates = [u];
+    // also try normalized version if applicable
+    try {
+      const norm = _normalizeUrlForApiClient(u);
+      if (norm !== u) candidates.push(norm);
+    } catch {}
+    for (const attemptUrl of candidates) {
+      try {
+        console.debug("[tryAxiosVariantsGet] requesting:", attemptUrl);
+        const resp = await apiClient.get(attemptUrl, config);
+        console.debug("[tryAxiosVariantsGet] response:", attemptUrl, resp?.status, resp?.data);
+        if (resp?.status >= 200 && resp.status < 300) {
+          return { url: attemptUrl, data: resp.data, resp };
+        }
+      } catch (e: any) {
+        lastErr = e;
+        console.warn(
+          "[tryAxiosVariantsGet] failed:",
+          attemptUrl,
+          e?.response?.status,
+          e?.response?.data ?? e.message
+        );
+        // continue trying other variants
+        continue;
+      }
+    }
+  }
+  console.warn("tryAxiosVariantsGet: all variants failed", { urls, lastErr });
+  return null;
+}
+
+/** Try multiple axios write endpoints (POST/PUT) */
+async function tryAxiosVariantsWrite(
+  urls: string[],
+  method: "post" | "put",
+  payload: any,
+  config?: AxiosRequestConfig
+): Promise<{ url: string; data: any; resp: any } | null> {
+  let lastErr: any = null;
+  for (const u of urls) {
+    const candidates = [u];
+    try {
+      const norm = _normalizeUrlForApiClient(u);
+      if (norm !== u) candidates.push(norm);
+    } catch {}
+    for (const attemptUrl of candidates) {
+      try {
+        console.debug(`[tryAxiosVariantsWrite] ${method.toUpperCase()} ->`, attemptUrl, payload);
+        const resp =
+          method === "post"
+            ? await apiClient.post(attemptUrl, payload, config)
+            : await apiClient.put(attemptUrl, payload, config);
+        console.debug("[tryAxiosVariantsWrite] response:", attemptUrl, resp?.status, resp?.data);
+        if (resp?.status >= 200 && resp.status < 300) {
+          return { url: attemptUrl, data: resp.data, resp };
+        }
+      } catch (e: any) {
+        lastErr = e;
+        console.warn(
+          `[tryAxiosVariantsWrite] failed ${method.toUpperCase()}:`,
+          attemptUrl,
+          e?.response?.status,
+          e?.response?.data ?? e.message
+        );
+        continue;
+      }
+    }
+  }
+  console.warn("tryAxiosVariantsWrite: all variants failed", { urls, lastErr });
+  return null;
 }
 
 /* ---------------------- Reusable Glass Card ----------------------------- */
@@ -62,9 +138,7 @@ function GlassCard({
   return (
     <div className="backdrop-blur-md bg-white/4 border border-white/8 rounded-2xl p-6 shadow-xl shadow-black/12 max-w-2xl w-full">
       {title && (
-        <h2 className="text-lg md:text-xl font-semibold mb-4 text-white/95">
-          {title}
-        </h2>
+        <h2 className="text-lg md:text-xl font-semibold mb-4 text-white/95">{title}</h2>
       )}
       <div className="space-y-4">{children}</div>
       {footer && <div className="mt-5">{footer}</div>}
@@ -104,7 +178,6 @@ export default function DepartmentsForm({
     mode: "onBlur",
   });
 
-  // watch the company_id so UI and effects react when it changes
   const watchedCompany = watch("company_id") ?? null;
 
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
@@ -117,104 +190,147 @@ export default function DepartmentsForm({
 
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [serverMessage, setServerMessage] = useState<string | null>(null);
-
   const statusRef = useRef<HTMLDivElement | null>(null);
-  const companiesAbort = useRef<AbortController | null>(null);
-  const parentsAbort = useRef<AbortController | null>(null);
+
+  // cancel token sources
+  const cancelSources = useRef<Set<CancelTokenSource>>(new Set());
+
+  useEffect(() => {
+    // cleanup cancels on unmount
+    return () => {
+      cancelSources.current.forEach((s) => {
+        try {
+          s.cancel("component_unmount");
+        } catch {}
+      });
+      cancelSources.current.clear();
+    };
+  }, []);
 
   /* --------------------------- Fetch companies -------------------------- */
   useEffect(() => {
-    const controller = new AbortController();
-    companiesAbort.current = controller;
+    let cancelled = false;
     setCompaniesLoading(true);
     setCompaniesError(null);
 
-    fetch("/api/admin/companies", { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) {
-          const text = await r.text().catch(() => "Failed to fetch companies");
-          throw new Error(text || "Failed to fetch companies");
+    const variants = ["/admin/companies", "/api/admin/companies", "/companies", "/api/companies"];
+
+    const source = axios.CancelToken.source();
+    cancelSources.current.add(source);
+
+    (async () => {
+      try {
+        const found = await tryAxiosVariantsGet(variants, {
+          cancelToken: source.token,
+          withCredentials: true,
+        });
+        if (!found) {
+          setCompaniesError("Failed to load companies (no matching endpoint)");
+          setCompanies([]);
+          return;
         }
-        return r.json();
-      })
-      .then((data) => {
-        if (!Array.isArray(data)) throw new Error("Unexpected response");
-        const mapped: CompanyOption[] = data.map((c: any) => ({
-          id: String(c.id),
-          name: String(c.name ?? c.title ?? "Unnamed Company"),
+        const data = found.data;
+        const raw =
+          (Array.isArray(data?.items) && data.items) ||
+          (Array.isArray(data?.companies) && data.companies) ||
+          (Array.isArray(data?.data) && data.data) ||
+          (Array.isArray(data) && data) ||
+          [];
+
+        const mapped: CompanyOption[] = (Array.isArray(raw) ? raw : []).map((c: any) => ({
+          id: String(c.id ?? c.company_id ?? c.uuid ?? c),
+          name: String(c.name ?? c.company_name ?? c.title ?? "Unnamed Company"),
         }));
 
+        if (cancelled) return;
         setCompanies(mapped);
-
-        // Initialize company selection:
-        // Priority: prop companyId -> initialData.company_id -> first returned company -> null
         const initialCompany =
           companyId ??
           (initialData?.company_id as UUID | null) ??
-          (mapped[0]?.id ?? null);
-
-        if (initialCompany) {
-          setValue("company_id", initialCompany);
-        }
-      })
-      .catch((err: any) => {
-        if (err?.name === "AbortError") return;
+          (mapped.length === 1 ? mapped[0].id : mapped[0]?.id ?? null);
+        if (initialCompany) setValue("company_id", initialCompany);
+        console.info("Companies fetched via:", found.url);
+      } catch (err: any) {
+        if (axios.isCancel(err)) return;
         console.error("Companies fetch failed", err);
         setCompaniesError("Failed to load companies");
         setCompanies([]);
-      })
-      .finally(() => setCompaniesLoading(false));
+      } finally {
+        if (!cancelled) setCompaniesLoading(false);
+      }
+    })();
 
     return () => {
-      controller.abort();
-      companiesAbort.current = null;
+      cancelled = true;
+      try {
+        source.cancel("companies_effect_unmount");
+      } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+  }, []);
 
   /* --------------------------- Fetch parents --------------------------- */
   useEffect(() => {
-    // Whenever watchedCompany changes we reload parents.
-    // If there is no company selected, optionally fetch all parents (or empty).
-    const controller = new AbortController();
-    parentsAbort.current = controller;
+    let cancelled = false;
     setParentsLoading(true);
     setParentsError(null);
 
-    const url = watchedCompany
-      ? `/api/hms/departments?company_id=${encodeURIComponent(watchedCompany)}`
-      : "/api/hms/departments";
+    const baseCandidates = watchedCompany
+      ? [
+          `/hms/departments?company_id=${encodeURIComponent(watchedCompany)}`,
+          `/api/hms/departments?company_id=${encodeURIComponent(watchedCompany)}`,
+          `/departments?company_id=${encodeURIComponent(watchedCompany)}`,
+          `/api/departments?company_id=${encodeURIComponent(watchedCompany)}`,
+        ]
+      : ["/hms/departments", "/api/hms/departments", "/departments", "/api/departments"];
 
-    fetch(url, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) {
-          const text = await r.text().catch(() => "Failed to fetch parents");
-          throw new Error(text || "Failed to fetch parents");
+    const source = axios.CancelToken.source();
+    cancelSources.current.add(source);
+
+    (async () => {
+      try {
+        const found = await tryAxiosVariantsGet(baseCandidates, {
+          cancelToken: source.token,
+          withCredentials: true,
+        });
+
+        if (!found) {
+          setParentsError("Could not load parent departments (no endpoint)");
+          setParents([]);
+          return;
         }
-        return r.json();
-      })
-      .then((data) => {
-        if (!Array.isArray(data)) throw new Error("Unexpected response");
-        setParents(
-          data.map((p: any) => ({
-            id: String(p.id ?? ""),
-            name: String(p.name ?? p.title ?? "Unnamed"),
-          }))
-        );
-      })
-      .catch((err: any) => {
-        if (err?.name === "AbortError") return;
+
+        const data = found.data;
+        const raw =
+          (Array.isArray(data?.items) && data.items) ||
+          (Array.isArray(data?.departments) && data.departments) ||
+          (Array.isArray(data?.data) && data.data) ||
+          (Array.isArray(data) && data) ||
+          [];
+
+        const mapped = (Array.isArray(raw) ? raw : []).map((p: any) => ({
+          id: String(p.id ?? p.department_id ?? p.uuid ?? ""),
+          name: String(p.name ?? p.title ?? "Unnamed"),
+        }));
+        if (cancelled) return;
+        setParents(mapped);
+        console.info("Parents fetched via:", found.url);
+      } catch (err: any) {
+        if (axios.isCancel(err)) return;
         console.error("Error fetching parents:", err);
         setParentsError("Could not load parent departments");
         setParents([]);
-      })
-      .finally(() => setParentsLoading(false));
+      } finally {
+        if (!cancelled) setParentsLoading(false);
+      }
+    })();
 
     return () => {
-      controller.abort();
-      parentsAbort.current = null;
+      cancelled = true;
+      try {
+        source.cancel("parents_effect_unmount");
+      } catch {}
     };
-    // watchedCompany intentionally included
   }, [watchedCompany]);
 
   /* -------------------------- Submit handler --------------------------- */
@@ -222,78 +338,76 @@ export default function DepartmentsForm({
     clearErrors();
     setServerMessage(null);
 
-    // Prefer the selected company (form) over the component prop for payload consistency.
     const payload: DepartmentFormValues = {
       ...values,
       company_id: (values.company_id ?? companyId ?? null) as UUID | null,
     };
 
-    const url = isEdit
-      ? `/api/hms/departments/${initialData?.id}`
-      : "/api/hms/departments";
-    const method = isEdit ? "PUT" : "POST";
+    const urlCandidates = isEdit
+      ? [
+          `/hms/departments/${initialData?.id}`,
+          `/api/hms/departments/${initialData?.id}`,
+          `/departments/${initialData?.id}`,
+        ]
+      : ["/hms/departments", "/api/hms/departments", "/departments", "/api/departments"];
 
     try {
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const found = await tryAxiosVariantsWrite(urlCandidates, isEdit ? "put" : "post", payload, {
+        withCredentials: true,
       });
+      if (!found) throw new Error("No endpoint available to save department");
 
-      const text = await res.text();
-      let parsed: any = null;
-      try {
-        parsed = text ? JSON.parse(text) : null;
-      } catch {
-        parsed = null;
-      }
+      const data = found.data ?? {};
+      // Prefer common shapes: { data: {...} } or { department: {...} } or the raw object.
+      const savedRecord =
+        (data && typeof data === "object" && (data.data ?? data.department ?? data)) || data;
 
-      if (!res.ok) {
-        // map server validation errors if present
-        if (parsed && parsed.errors && typeof parsed.errors === "object") {
-          Object.entries(parsed.errors).forEach(([k, v]) => {
-            // @ts-ignore
-            setError(k as keyof DepartmentFormValues, {
-              type: "server",
-              message: Array.isArray(v) ? v.join(", ") : String(v),
-            });
-          });
+      // Normalize: ensure object shape with id, name, company_id etc.
+      const normalized: DepartmentFormValues = {
+        id: savedRecord?.id ?? savedRecord?.department_id ?? initialData?.id ?? (values.id as any),
+        name: savedRecord?.name ?? values.name,
+        code: savedRecord?.code ?? values.code,
+        description: savedRecord?.description ?? values.description,
+        parent_id:
+          savedRecord?.parent_id ?? savedRecord?.parent ?? values.parent_id ?? null,
+        is_active:
+          typeof savedRecord?.is_active === "boolean"
+            ? savedRecord.is_active
+            : typeof values.is_active === "boolean"
+            ? values.is_active
+            : true,
+        company_id: savedRecord?.company_id ?? values.company_id ?? companyId ?? null,
+      };
 
-          // Focus first field with error (accessibility)
-          const firstKey = Object.keys(parsed.errors)[0];
-          const el = document.querySelector(
-            `input[name="${firstKey}"], textarea[name="${firstKey}"], select[name="${firstKey}"]`
-          ) as HTMLElement | null;
-          el?.focus();
-        }
-
-        const errMsg =
-          parsed?.message ||
-          parsed?.error ||
-          `Unable to ${isEdit ? "update" : "create"} department`;
-        setServerMessage(errMsg);
-        throw new Error(errMsg);
-      }
-
-      // Success: update savedAt, server message and reset dirty state while keeping values & returned id
-      const id = parsed?.id ?? initialData?.id ?? values.id;
       setSavedAt(new Date().toISOString());
       setServerMessage("Saved successfully");
-      reset({ ...payload, id });
+      // Reset form to the full returned record (so UI gets the canonical saved object)
+      reset(normalized);
+      console.info("Saved via:", found.url, "normalized:", normalized);
     } catch (err: any) {
+      if (axios.isCancel(err)) return;
       console.error("Save error:", err);
-      if (!serverMessage) setServerMessage(err?.message ?? "Save failed");
-      // move focus to status for SR users
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        (err?.response ? JSON.stringify(err.response.data) : "Save failed");
+      setServerMessage(message);
+      const ve = err?.response?.data?.errors;
+      if (ve && typeof ve === "object") {
+        Object.entries(ve).forEach(([k, v]) => {
+          setError(k as keyof DepartmentFormValues, {
+            type: "server",
+            message: Array.isArray(v) ? v.join(", ") : String(v),
+          });
+        });
+      }
       if (statusRef.current) statusRef.current.focus();
     }
   }
 
-  /* ---------------------------- Reset handler -------------------------- */
   function handleReset() {
     if (isDirty) {
-      const ok = confirm(
-        "You have unsaved changes. Are you sure you want to reset the form?"
-      );
+      const ok = confirm("You have unsaved changes. Are you sure you want to reset the form?");
       if (!ok) return;
     }
     reset({
@@ -309,27 +423,27 @@ export default function DepartmentsForm({
     setServerMessage(null);
   }
 
+  function formatSavedAt(ts: string | null) {
+    if (!ts) return null;
+    try {
+      return new Date(ts).toLocaleString();
+    } catch {
+      return ts;
+    }
+  }
+
   /* ---------------------------- Render UI ------------------------------ */
   return (
     <GlassCard title={isEdit ? "Edit Department" : "Create Department"}>
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="space-y-4 text-white/92"
-        noValidate
-      >
-        {/* Visible Company select (tenant-scoped list) */}
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 text-white/92" noValidate>
+        {/* Company */}
         <div>
           <label className="block text-sm font-medium mb-1">Company</label>
           <div className="relative">
             <select
               {...register("company_id", {
                 required: "Company is required",
-                onChange: (e) => {
-                  // Clear parent when company changes to avoid cross-company parent link
-                  setValue("parent_id", null);
-                  // setValue("company_id", e.target.value || null) is handled by register/onChange,
-                  // but we keep setValue available for programmatic changes if needed.
-                },
+                onChange: () => setValue("parent_id", null),
               })}
               name="company_id"
               className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2"
@@ -343,27 +457,18 @@ export default function DepartmentsForm({
                 </option>
               ))}
             </select>
-
             {companiesLoading && (
-              <div className="absolute right-3 top-2 text-xs text-zinc-400">
-                Loading…
-              </div>
+              <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>
             )}
           </div>
 
-          {companiesError && (
-            <p className="text-amber-300 text-sm mt-1">{companiesError}</p>
-          )}
+          {companiesError && <p className="text-amber-300 text-sm mt-1">{companiesError}</p>}
           {errors.company_id && (
             <p className="text-rose-400 text-sm mt-1" role="alert">
               {errors.company_id.message}
             </p>
           )}
         </div>
-
-        {/* Hidden company_id (keeps form payload consistent) */}
-        {/* note: already registered via the visible select, but keeping hidden input isn't strictly needed */}
-        {/* <input type="hidden" {...register("company_id" as const)} /> */}
 
         {/* Name */}
         <div>
@@ -400,16 +505,11 @@ export default function DepartmentsForm({
               className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 placeholder:text-white/50"
               placeholder="e.g. CARD"
             />
-            {errors.code && (
-              <p className="text-rose-400 text-sm mt-1">{errors.code.message}</p>
-            )}
+            {errors.code && <p className="text-rose-400 text-sm mt-1">{errors.code.message}</p>}
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">
-              Parent Department
-            </label>
-
+            <label className="block text-sm font-medium mb-1">Parent Department</label>
             <div className="relative">
               <select
                 {...register("parent_id")}
@@ -425,17 +525,11 @@ export default function DepartmentsForm({
                   </option>
                 ))}
               </select>
-
               {parentsLoading && (
-                <div className="absolute right-3 top-2 text-xs text-zinc-400">
-                  Loading…
-                </div>
+                <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>
               )}
             </div>
-
-            {parentsError && (
-              <p className="text-amber-300 text-sm mt-1">{parentsError}</p>
-            )}
+            {parentsError && <p className="text-amber-300 text-sm mt-1">{parentsError}</p>}
           </div>
         </div>
 
@@ -450,9 +544,7 @@ export default function DepartmentsForm({
             placeholder="Optional description for internal use"
           />
           {errors.description && (
-            <p className="text-rose-400 text-sm mt-1">
-              {errors.description.message}
-            </p>
+            <p className="text-rose-400 text-sm mt-1">{errors.description.message}</p>
           )}
         </div>
 
@@ -469,21 +561,12 @@ export default function DepartmentsForm({
           </label>
 
           <div className="ml-auto text-xs text-zinc-400">
-            {savedAt
-              ? `Saved ${formatSavedAt(savedAt)}`
-              : isDirty
-              ? "Unsaved changes"
-              : "All changes saved"}
+            {savedAt ? `Saved ${formatSavedAt(savedAt)}` : isDirty ? "Unsaved changes" : "All changes saved"}
           </div>
         </div>
 
-        {/* Server messages (aria-live for screen readers) */}
-        <div
-          ref={statusRef}
-          tabIndex={-1}
-          aria-live="polite"
-          className="sr-only"
-        >
+        {/* aria-live */}
+        <div ref={statusRef} tabIndex={-1} aria-live="polite" className="sr-only">
           {serverMessage ?? (savedAt ? `Saved at ${formatSavedAt(savedAt)}` : "")}
         </div>
 
@@ -494,8 +577,7 @@ export default function DepartmentsForm({
             disabled={isSubmitting}
             className="inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium text-white shadow-sm ring-1 ring-white/10 focus:outline-none disabled:opacity-60"
             style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01))",
+              background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01))",
             }}
             aria-disabled={isSubmitting}
           >
@@ -510,9 +592,7 @@ export default function DepartmentsForm({
             Reset
           </button>
 
-          {serverMessage && (
-            <div className="ml-3 text-sm text-amber-100/90">{serverMessage}</div>
-          )}
+          {serverMessage && <div className="ml-3 text-sm text-amber-100/90">{serverMessage}</div>}
         </div>
       </form>
     </GlassCard>
