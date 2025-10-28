@@ -31,31 +31,66 @@ export default function DepartmentsPage() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); // bump to refetch
 
-  const fetchDepartments = useCallback(async (signal?: AbortSignal) => {
+  // --- debug-friendly fetchDepartments (paste into your component) ---
+const [rawResponse, setRawResponse] = useState<string | null>(null);
+
+const fetchDepartments = useCallback(async (signal?: AbortSignal) => {
   setLoading(true);
   setError(null);
+  setRawResponse(null);
   try {
     const res = await fetch("/api/hms/departments", {
       method: "GET",
       headers: { "Content-Type": "application/json" },
-      credentials: "same-origin", // include cookies if your backend needs session
+      credentials: "same-origin",
       signal,
+      cache: "no-store", // debug: avoid any caching
     });
 
+    // show status and headers for debugging
+    const statusDesc = `HTTP ${res.status} ${res.statusText}`;
+    // try to parse json safely; handle empty-body
+    let parsed: any = null;
+    const contentType = res.headers.get("content-type") || "";
     const text = await res.text();
+
+    // show raw body (for quick inspection in UI)
+    setRawResponse(`${statusDesc}\n\nResponse body:\n${text || "<empty>"}\n\nContent-Type: ${contentType}`);
+
     if (!res.ok) {
       // include body text for easier debugging
       throw new Error(`Failed to fetch (${res.status}) ${text}`);
     }
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error("Invalid JSON response from server");
+    if (!text) {
+      // empty body -> treat as empty array
+      parsed = [];
+    } else {
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        // if JSON parse fails, throw for debugging
+        throw new Error("Invalid JSON response from server: " + (e as Error).message);
+      }
     }
 
-    setDepartments(Array.isArray(data) ? data : []);
+    // normalize typical shapes
+    //  - array -> use directly
+    //  - { data: [...] } -> use data
+    //  - { rows: [...] } -> use rows
+    //  - { departments: [...] } -> use departments
+    let list: any[] = [];
+    if (Array.isArray(parsed)) list = parsed;
+    else if (parsed && Array.isArray(parsed.data)) list = parsed.data;
+    else if (parsed && Array.isArray(parsed.rows)) list = parsed.rows;
+    else if (parsed && Array.isArray(parsed.departments)) list = parsed.departments;
+    else {
+      // fallback: if object is not recognized, try heuristics: pick first array value
+      const firstArray = Object.values(parsed || {}).find((v) => Array.isArray(v));
+      if (firstArray) list = firstArray as any[];
+    }
+
+    setDepartments(list);
   } catch (err: any) {
     if (err?.name === "AbortError") return;
     console.error("Error fetching departments:", err);
@@ -64,6 +99,7 @@ export default function DepartmentsPage() {
     setLoading(false);
   }
 }, []);
+// --- end fetchDepartments ---
 
 
   useEffect(() => {

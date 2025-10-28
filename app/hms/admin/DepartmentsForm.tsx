@@ -8,10 +8,10 @@ import apiClient from "@/lib/api-client"; // adjust if your apiClient path diffe
 type UUID = string;
 
 export type DepartmentFormValues = {
-  id?: UUID;
+  id?: UUID | null;
   name: string;
-  code?: string;
-  description?: string;
+  code?: string | null;
+  description?: string | null;
   parent_id?: UUID | null;
   is_active: boolean;
   company_id?: UUID | null;
@@ -27,18 +27,16 @@ type CompanyOption = {
   name: string;
 };
 
-/* ------------------------ Axios helper --------------------------------- */
-/** Normalize URL to avoid duplicate base parts (e.g. apiClient.baseURL === '/api' + url startsWith('/api/...') => strip one) */
+/* ------------------------ Axios helper (unchanged) --------------------- */
+/** Normalize URL to avoid duplicate base parts */
 function _normalizeUrlForApiClient(u: string) {
   try {
     const base = String(
       (apiClient && (apiClient as any).defaults && (apiClient as any).defaults.baseURL) || ""
     );
-    // if base is '/api' (or endsWith '/api') and u starts with '/api', strip the leading '/api'
     if (base && base.includes("/api") && u.startsWith("/api")) {
       return u.replace(/^\/api/, "") || "/";
     }
-    // if u equals base exactly, change to '/'
     if (base && u === base) return "/";
     return u;
   } catch {
@@ -46,7 +44,6 @@ function _normalizeUrlForApiClient(u: string) {
   }
 }
 
-/** Try multiple axios GET endpoints; return {url, data} of first success or null */
 async function tryAxiosVariantsGet(
   urls: string[],
   config?: AxiosRequestConfig
@@ -54,7 +51,6 @@ async function tryAxiosVariantsGet(
   let lastErr: any = null;
   for (const u of urls) {
     const candidates = [u];
-    // also try normalized version if applicable
     try {
       const norm = _normalizeUrlForApiClient(u);
       if (norm !== u) candidates.push(norm);
@@ -75,7 +71,6 @@ async function tryAxiosVariantsGet(
           e?.response?.status,
           e?.response?.data ?? e.message
         );
-        // continue trying other variants
         continue;
       }
     }
@@ -84,7 +79,6 @@ async function tryAxiosVariantsGet(
   return null;
 }
 
-/** Try multiple axios write endpoints (POST/PUT) */
 async function tryAxiosVariantsWrite(
   urls: string[],
   method: "post" | "put",
@@ -137,9 +131,7 @@ function GlassCard({
 }) {
   return (
     <div className="backdrop-blur-md bg-white/4 border border-white/8 rounded-2xl p-6 shadow-xl shadow-black/12 max-w-2xl w-full">
-      {title && (
-        <h2 className="text-lg md:text-xl font-semibold mb-4 text-white/95">{title}</h2>
-      )}
+      {title && <h2 className="text-lg md:text-xl font-semibold mb-4 text-white/95">{title}</h2>}
       <div className="space-y-4">{children}</div>
       {footer && <div className="mt-5">{footer}</div>}
     </div>
@@ -150,9 +142,11 @@ function GlassCard({
 export default function DepartmentsForm({
   initialData,
   companyId,
+  onSaved,
 }: {
   initialData?: Partial<DepartmentFormValues>;
   companyId?: string | null;
+  onSaved?: (d: DepartmentFormValues) => void;
 }) {
   const isEdit = Boolean(initialData?.id);
 
@@ -194,22 +188,37 @@ export default function DepartmentsForm({
 
   // cancel token sources
   const cancelSources = useRef<Set<CancelTokenSource>>(new Set());
-// Fetch logged-in user's default company_id from session (runs once)
-useEffect(() => {
-  (async () => {
-    try {
-      const resp = await apiClient.get("/auth/session", { withCredentials: true });
-      const companyFromSession = resp?.data?.user?.company_id ?? null;
-      if (companyFromSession) {
-        console.info("Default company from session:", companyFromSession);
-        setValue("company_id", companyFromSession);
+
+  // Reset form when incoming initialData or companyId changes (important for edit flows)
+  useEffect(() => {
+    reset({
+      name: initialData?.name ?? "",
+      code: initialData?.code ?? "",
+      description: initialData?.description ?? "",
+      parent_id: initialData?.parent_id ?? null,
+      is_active: typeof initialData?.is_active === "boolean" ? initialData!.is_active : true,
+      company_id: companyId ?? (initialData?.company_id as UUID | null) ?? null,
+      ...initialData,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialData?.id, companyId]);
+
+  // Fetch logged-in user's default company_id from session (runs once)
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await apiClient.get("/auth/session", { withCredentials: true });
+        const companyFromSession = resp?.data?.user?.company_id ?? null;
+        if (companyFromSession) {
+          console.info("Default company from session:", companyFromSession);
+          setValue("company_id", companyFromSession);
+        }
+      } catch (err) {
+        console.warn("Session company fetch failed:", err);
       }
-    } catch (err) {
-      console.warn("Session company fetch failed:", err);
-    }
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     // cleanup cancels on unmount
@@ -241,8 +250,10 @@ useEffect(() => {
           withCredentials: true,
         });
         if (!found) {
-          setCompaniesError("Failed to load companies (no matching endpoint)");
-          setCompanies([]);
+          if (!cancelled) {
+            setCompaniesError("Failed to load companies (no matching endpoint)");
+            setCompanies([]);
+          }
           return;
         }
         const data = found.data;
@@ -261,18 +272,22 @@ useEffect(() => {
         if (cancelled) return;
         setCompanies(mapped);
         const initialCompany =
-          companyId ??
-          (initialData?.company_id as UUID | null) ??
-          (mapped.length === 1 ? mapped[0].id : mapped[0]?.id ?? null);
+          companyId ?? (initialData?.company_id as UUID | null) ?? (mapped.length === 1 ? mapped[0].id : mapped[0]?.id ?? null);
         if (initialCompany) setValue("company_id", initialCompany);
         console.info("Companies fetched via:", found.url);
       } catch (err: any) {
         if (axios.isCancel(err)) return;
         console.error("Companies fetch failed", err);
-        setCompaniesError("Failed to load companies");
-        setCompanies([]);
+        if (!cancelled) {
+          setCompaniesError("Failed to load companies");
+          setCompanies([]);
+        }
       } finally {
         if (!cancelled) setCompaniesLoading(false);
+        // remove source from set
+        try {
+          cancelSources.current.delete(source);
+        } catch {}
       }
     })();
 
@@ -311,8 +326,10 @@ useEffect(() => {
         });
 
         if (!found) {
-          setParentsError("Could not load parent departments (no endpoint)");
-          setParents([]);
+          if (!cancelled) {
+            setParentsError("Could not load parent departments (no endpoint)");
+            setParents([]);
+          }
           return;
         }
 
@@ -334,10 +351,15 @@ useEffect(() => {
       } catch (err: any) {
         if (axios.isCancel(err)) return;
         console.error("Error fetching parents:", err);
-        setParentsError("Could not load parent departments");
-        setParents([]);
+        if (!cancelled) {
+          setParentsError("Could not load parent departments");
+          setParents([]);
+        }
       } finally {
         if (!cancelled) setParentsLoading(false);
+        try {
+          cancelSources.current.delete(source);
+        } catch {}
       }
     })();
 
@@ -354,8 +376,10 @@ useEffect(() => {
     clearErrors();
     setServerMessage(null);
 
+    // ensure booleans and company fallback
     const payload: DepartmentFormValues = {
       ...values,
+      is_active: !!values.is_active,
       company_id: (values.company_id ?? companyId ?? null) as UUID | null,
     };
 
@@ -374,31 +398,32 @@ useEffect(() => {
       if (!found) throw new Error("No endpoint available to save department");
 
       const data = found.data ?? {};
-      // Prefer common shapes: { data: {...} } or { department: {...} } or the raw object.
       const savedRecord =
         (data && typeof data === "object" && (data.data ?? data.department ?? data)) || data;
 
-      // Normalize: ensure object shape with id, name, company_id etc.
       const normalized: DepartmentFormValues = {
-        id: savedRecord?.id ?? savedRecord?.department_id ?? initialData?.id ?? (values.id as any),
-        name: savedRecord?.name ?? values.name,
-        code: savedRecord?.code ?? values.code,
-        description: savedRecord?.description ?? values.description,
-        parent_id:
-          savedRecord?.parent_id ?? savedRecord?.parent ?? values.parent_id ?? null,
+        id: savedRecord?.id ?? savedRecord?.department_id ?? initialData?.id ?? (payload.id as any ?? null),
+        name: savedRecord?.name ?? payload.name,
+        code: savedRecord?.code ?? payload.code ?? null,
+        description: savedRecord?.description ?? payload.description ?? null,
+        parent_id: savedRecord?.parent_id ?? savedRecord?.parent ?? payload.parent_id ?? null,
         is_active:
-          typeof savedRecord?.is_active === "boolean"
-            ? savedRecord.is_active
-            : typeof values.is_active === "boolean"
-            ? values.is_active
-            : true,
-        company_id: savedRecord?.company_id ?? values.company_id ?? companyId ?? null,
+          typeof savedRecord?.is_active === "boolean" ? savedRecord.is_active : !!payload.is_active,
+        company_id: savedRecord?.company_id ?? payload.company_id ?? companyId ?? null,
       };
 
       setSavedAt(new Date().toISOString());
       setServerMessage("Saved successfully");
-      // Reset form to the full returned record (so UI gets the canonical saved object)
+      // Reset form to canonical saved values
       reset(normalized);
+
+      // Inform parent (DepartmentsPage) — very important
+      try {
+        onSaved?.(normalized);
+      } catch (e) {
+        console.warn("onSaved callback threw:", e);
+      }
+
       console.info("Saved via:", found.url, "normalized:", normalized);
     } catch (err: any) {
       if (axios.isCancel(err)) return;
@@ -427,11 +452,11 @@ useEffect(() => {
       if (!ok) return;
     }
     reset({
-      name: "",
-      code: "",
-      description: "",
-      parent_id: null,
-      is_active: true,
+      name: initialData?.name ?? "",
+      code: initialData?.code ?? "",
+      description: initialData?.description ?? "",
+      parent_id: initialData?.parent_id ?? null,
+      is_active: typeof initialData?.is_active === "boolean" ? initialData!.is_active : true,
       company_id: companyId ?? (initialData?.company_id as UUID | null) ?? null,
       ...initialData,
     });
@@ -473,9 +498,7 @@ useEffect(() => {
                 </option>
               ))}
             </select>
-            {companiesLoading && (
-              <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>
-            )}
+            {companiesLoading && <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>}
           </div>
 
           {companiesError && <p className="text-amber-300 text-sm mt-1">{companiesError}</p>}
@@ -541,9 +564,7 @@ useEffect(() => {
                   </option>
                 ))}
               </select>
-              {parentsLoading && (
-                <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>
-              )}
+              {parentsLoading && <div className="absolute right-3 top-2 text-xs text-zinc-400">Loading…</div>}
             </div>
             {parentsError && <p className="text-amber-300 text-sm mt-1">{parentsError}</p>}
           </div>
@@ -559,9 +580,7 @@ useEffect(() => {
             className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 placeholder:text-white/50"
             placeholder="Optional description for internal use"
           />
-          {errors.description && (
-            <p className="text-rose-400 text-sm mt-1">{errors.description.message}</p>
-          )}
+          {errors.description && <p className="text-rose-400 text-sm mt-1">{errors.description.message}</p>}
         </div>
 
         {/* Active + Status */}
@@ -600,11 +619,7 @@ useEffect(() => {
             {isSubmitting ? "Saving…" : isEdit ? "Save Changes" : "Create Department"}
           </button>
 
-          <button
-            type="button"
-            onClick={handleReset}
-            className="rounded-2xl px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/5"
-          >
+          <button type="button" onClick={handleReset} className="rounded-2xl px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/5">
             Reset
           </button>
 
