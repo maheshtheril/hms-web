@@ -32,32 +32,39 @@ export default function DepartmentsPage() {
   const [refreshKey, setRefreshKey] = useState(0); // bump to refetch
 
   const fetchDepartments = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/hms/departments", {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        signal,
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Failed to fetch (${res.status}) ${txt}`);
-      }
-      const data = await res.json();
-      // Expecting array
-      setDepartments(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        // aborted — ignore
-        return;
-      }
-      console.error("Error fetching departments:", err);
-      setError(err?.message || "Failed to load departments");
-    } finally {
-      setLoading(false);
+  setLoading(true);
+  setError(null);
+  try {
+    const res = await fetch("/api/hms/departments", {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin", // include cookies if your backend needs session
+      signal,
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      // include body text for easier debugging
+      throw new Error(`Failed to fetch (${res.status}) ${text}`);
     }
-  }, []);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Invalid JSON response from server");
+    }
+
+    setDepartments(Array.isArray(data) ? data : []);
+  } catch (err: any) {
+    if (err?.name === "AbortError") return;
+    console.error("Error fetching departments:", err);
+    setError(err?.message || "Failed to load departments");
+  } finally {
+    setLoading(false);
+  }
+}, []);
+
 
   useEffect(() => {
     // reduced-motion preference
