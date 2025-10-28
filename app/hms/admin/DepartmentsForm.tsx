@@ -194,6 +194,22 @@ export default function DepartmentsForm({
 
   // cancel token sources
   const cancelSources = useRef<Set<CancelTokenSource>>(new Set());
+// Fetch logged-in user's default company_id from session (runs once)
+useEffect(() => {
+  (async () => {
+    try {
+      const resp = await apiClient.get("/auth/session", { withCredentials: true });
+      const companyFromSession = resp?.data?.user?.company_id ?? null;
+      if (companyFromSession) {
+        console.info("Default company from session:", companyFromSession);
+        setValue("company_id", companyFromSession);
+      }
+    } catch (err) {
+      console.warn("Session company fetch failed:", err);
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   useEffect(() => {
     // cleanup cancels on unmount
