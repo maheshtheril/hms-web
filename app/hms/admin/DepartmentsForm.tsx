@@ -481,19 +481,29 @@ export default function DepartmentsForm({
         <div>
           <label className="block text-sm font-medium mb-1">Company</label>
           <div className="relative">
+            {/* Keep select text white for dark UI; options below are forced dark text */}
             <select
               {...register("company_id", {
                 required: "Company is required",
                 onChange: () => setValue("parent_id", null),
               })}
               name="company_id"
-              className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2"
+              className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 text-white placeholder:text-white/50"
               disabled={companiesLoading}
               aria-invalid={errors.company_id ? "true" : "false"}
             >
-              <option value="">— Select company —</option>
+              <option value="" className="text-black" style={{ color: "#0b0b0b", backgroundColor: "#ffffff" }}>
+                — Select company —
+              </option>
+
               {companies.map((c) => (
-                <option key={c.id} value={c.id}>
+                // Explicitly force dark text + light background on options to avoid invisible text
+                <option
+                  key={c.id}
+                  value={c.id}
+                  className="text-black"
+                  style={{ color: "#0b0b0b", backgroundColor: "#ffffff" }}
+                >
                   {c.name}
                 </option>
               ))}
@@ -553,13 +563,21 @@ export default function DepartmentsForm({
               <select
                 {...register("parent_id")}
                 name="parent_id"
-                className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 pr-10"
+                className="w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-2 pr-10 text-white placeholder:text-white/50"
                 aria-disabled={parentsLoading}
                 disabled={parentsLoading}
               >
-                <option value="">— None —</option>
+                <option value="" className="text-black" style={{ color: "#0b0b0b", backgroundColor: "#ffffff" }}>
+                  — None —
+                </option>
+
                 {parents.map((p) => (
-                  <option key={p.id} value={p.id}>
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    className="text-black"
+                    style={{ color: "#0b0b0b", backgroundColor: "#ffffff" }}
+                  >
                     {p.name}
                   </option>
                 ))}
