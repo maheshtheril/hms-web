@@ -1,5 +1,6 @@
 // web/app/hms/patients/page.tsx
 "use client";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fetchPatients, deletePatient } from "./hooks";
 import Link from "next/link";
@@ -7,9 +8,9 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Search, Plus, Loader2, ChevronDown, ChevronUp, Trash2, FileText } from "lucide-react";
 
-/* ------------------------- Neural Glass primitives ------------------------ */
+/* ------------------------- Neural Glass primitives (dark-first) ------------------------ */
 /**
- * These primitives enforce accessible text colors and consistent glass styling.
+ * These primitives enforce accessible text colors and consistent dark glass styling.
  * Use them everywhere to keep the Neural Glass language consistent.
  */
 function GlassCard({ children, className = "" }: any) {
@@ -17,16 +18,20 @@ function GlassCard({ children, className = "" }: any) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`relative overflow-hidden rounded-2xl border border-white/12
-        bg-white/85 dark:bg-slate-900/60 backdrop-blur-xl shadow-lg p-6 ${className}
-        text-slate-900 dark:text-slate-50`}
+      className={`relative overflow-hidden rounded-2xl border border-white/8
+        bg-slate-900/48 backdrop-blur-2xl shadow-[0_12px_40px_rgba(2,6,23,0.6)] p-6 ${className}
+        text-white`}
       style={{ WebkitFontSmoothing: "antialiased" }}
     >
       {/* subtle sheen layer for depth */}
       <div
         aria-hidden
         className="absolute inset-0 pointer-events-none rounded-2xl"
-        style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02))" }}
+        style={{
+          background:
+            "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.18))",
+          mixBlendMode: "overlay",
+        }}
       />
       <div className="relative z-10">{children}</div>
     </motion.div>
@@ -40,30 +45,34 @@ function GlassButton({ children, className = "", ...rest }: any) {
       whileTap={{ scale: 0.99 }}
       {...rest}
       className={`px-3 py-2 rounded-xl font-medium
-        bg-white/90 dark:bg-slate-800/65 border border-white/12
+        bg-slate-800/60 border border-white/6
         shadow-sm backdrop-blur-md transition-all ${className}
-        text-slate-900 dark:text-slate-50`}
+        text-white`}
     >
       {children}
     </motion.button>
   );
 }
 
-function GlassInput({ className = "", ...rest }: any) {
-  return (
-    <input
-      {...rest}
-      className={`w-full px-3 py-2 rounded-xl border border-white/12
-        bg-white/95 dark:bg-slate-800/70 backdrop-blur-md
-        text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500
-        focus:outline-none focus:ring-2 focus:ring-sky-400/40 transition ${className}`}
-      style={{ caretColor: "#0ea5e9" }}
-    />
-  );
-}
+/* GlassInput must forward ref so parent can focus it (searchRef) */
+const GlassInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className = "", ...rest }, ref) => {
+    return (
+      <input
+        {...rest}
+        ref={ref}
+        className={`w-full px-3 py-2 rounded-xl border border-white/6
+        bg-slate-800/40 backdrop-blur-sm
+        text-white placeholder:text-slate-400
+        focus:outline-none focus:ring-2 focus:ring-sky-500/30 transition ${className}`}
+        style={{ caretColor: "#7dd3fc" }}
+      />
+    );
+  }
+);
+GlassInput.displayName = "GlassInput";
 
-/* ------------------------------- Toasts ---------------------------------- */
-/* Lightweight toast system tied to this page only (keeps logic local) */
+/* ------------------------------- Toasts (dark) ---------------------------------- */
 function useToasts() {
   const [toasts, setToasts] = useState<
     { id: string; message: string; undo?: () => void; tone?: "info" | "success" | "error" }[]
@@ -86,9 +95,9 @@ function Toasts({ toasts, remove }: { toasts: any[]; remove: (id: string) => voi
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
-          className={`min-w-[220px] rounded-lg p-3 shadow-xl border border-white/12 backdrop-blur-md bg-white/95 dark:bg-slate-900/70 flex items-start justify-between gap-3`}
+          className={`min-w-[240px] rounded-lg p-3 shadow-xl border border-white/8 backdrop-blur-md bg-slate-900/80 flex items-start justify-between gap-3`}
         >
-          <div className="text-sm text-slate-800 dark:text-slate-100">{t.message}</div>
+          <div className="text-sm text-white">{t.message}</div>
           <div className="flex items-center gap-2">
             {t.undo && (
               <button
@@ -96,12 +105,12 @@ function Toasts({ toasts, remove }: { toasts: any[]; remove: (id: string) => voi
                   t.undo();
                   remove(t.id);
                 }}
-                className="text-xs underline px-2 py-1 rounded"
+                className="text-xs underline px-2 py-1 rounded text-white/90"
               >
                 Undo
               </button>
             )}
-            <button onClick={() => remove(t.id)} className="text-xs px-2 py-1 rounded">
+            <button onClick={() => remove(t.id)} className="text-xs px-2 py-1 rounded text-white/70">
               ✕
             </button>
           </div>
@@ -200,7 +209,7 @@ export default function PatientsPageAdvanced() {
       const res = await fetchPatients(args);
       if (c.signal.aborted) return;
       const incoming = Array.isArray(res) ? res : res.rows ?? [];
-      const incomingHasMore = Array.isArray(res) ? incoming.length === limit : !!res.hasMore;
+      const incomingHasMore = Array.isArray(res) ? incoming.length === limit : !!res.hasMore || incoming.length === limit;
       setRows((r) => (nextOffset === 0 ? incoming : [...r, ...incoming]));
       setOffset(nextOffset + incoming.length);
       setHasMore(incomingHasMore);
@@ -335,22 +344,22 @@ export default function PatientsPageAdvanced() {
   const selectedCount = Object.keys(selected).length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100/50 to-slate-200/30 dark:from-slate-900 dark:to-slate-950 p-8">
+    <div className="min-h-screen flex flex-col items-center justify-start bg-gradient-to-br from-[#020617] via-[#07102a] to-[#03040a] p-10 text-white">
       <Toasts toasts={toasts} remove={remove} />
 
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="w-full max-w-6xl space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-600 to-indigo-500">
+          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-300 to-indigo-400">
             Patients
           </h1>
 
-          <div className="flex items-center gap-2">
-            <GlassButton onClick={() => exportSelectedOrAllCSV()} className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <GlassButton onClick={exportSelectedOrAllCSV} className="flex items-center gap-2 bg-slate-800/50">
               <FileText size={16} /> Export
             </GlassButton>
             <Link href="/hms/patients/new">
-              <GlassButton className="flex items-center gap-2">
+              <GlassButton className="flex items-center gap-2 bg-sky-500/80 hover:bg-sky-600/90 text-white">
                 <Plus size={18} /> New Patient
               </GlassButton>
             </Link>
@@ -359,80 +368,43 @@ export default function PatientsPageAdvanced() {
 
         {/* Controls */}
         <GlassCard className="flex items-center gap-3">
-          <Search className="text-slate-500" size={18} />
+          <Search className="text-slate-300" size={18} />
           <GlassInput
             ref={searchRef as any}
-            placeholder="Search by name, patient number, phone..."
+            placeholder="Search patients..."
             value={q}
             onChange={(e) => onChangeQ(e.target.value)}
-            aria-label="Search patients"
           />
-
           <div className="ml-auto flex items-center gap-2">
-            <div className="text-sm text-slate-500 mr-2">{rows.length} shown</div>
-
-            <GlassButton onClick={() => toggleSelectAll()} aria-pressed={selectAll}>
-              {selectAll ? "Unselect all" : "Select all"}
-            </GlassButton>
-
+            <div className="text-sm text-slate-300">{rows.length} shown</div>
+            <GlassButton onClick={toggleSelectAll}>{selectAll ? "Unselect all" : "Select all"}</GlassButton>
             <GlassButton
-              onClick={() => handleBulkDelete()}
+              onClick={handleBulkDelete}
               disabled={!selectedCount}
-              className={`${selectedCount ? "text-red-600" : "opacity-50 cursor-not-allowed"}`}
+              className={`${selectedCount ? "bg-rose-600/90 text-white hover:bg-rose-700" : "opacity-40 cursor-not-allowed"}`}
             >
-              <Trash2 size={14} /> Delete {selectedCount ? `(${selectedCount})` : ""}
+              <Trash2 size={14} /> Delete
             </GlassButton>
           </div>
         </GlassCard>
 
         {/* Table */}
         <GlassCard className="overflow-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm border-separate" style={{ borderSpacing: 0 }}>
             <thead>
-              <tr className="text-left text-slate-600 border-b border-white/20">
-                <th className="p-3">
-                  <input type="checkbox" checked={selectAll} onChange={() => toggleSelectAll()} aria-label="Select all visible" />
-                </th>
-
-                <th className="p-3 cursor-pointer" onClick={() => toggleSort("patient_number")}>
-                  <div className="flex items-center gap-2">
-                    Patient #
-                    {sortBy?.col === "patient_number" ? (sortBy.dir === "asc" ? <ChevronUp size={14} /> : <ChevronDown size={14} />) : null}
-                  </div>
-                </th>
-
-                <th className="p-3 cursor-pointer" onClick={() => toggleSort("name")}>
-                  <div className="flex items-center gap-2">
-                    Name
-                    {sortBy?.col === "name" ? (sortBy.dir === "asc" ? <ChevronUp size={14} /> : <ChevronDown size={14} />) : null}
-                  </div>
-                </th>
-
-                <th className="p-3 cursor-pointer" onClick={() => toggleSort("dob")}>
-                  <div className="flex items-center gap-2">
-                    DOB
-                    {sortBy?.col === "dob" ? (sortBy.dir === "asc" ? <ChevronUp size={14} /> : <ChevronDown size={14} />) : null}
-                  </div>
-                </th>
-
+              <tr className="text-left text-slate-400 border-b border-white/6">
+                <th className="p-3">#</th>
+                <th className="p-3">Patient</th>
+                <th className="p-3">DOB</th>
                 <th className="p-3">Gender</th>
                 <th className="p-3">Status</th>
-                <th className="p-3">Actions</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-
             <tbody>
-              {loading && rows.length === 0 ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i}>
-                    <td colSpan={7} className="p-4">
-                      <div className="animate-pulse h-8 rounded bg-white/10" />
-                    </td>
-                  </tr>
-                ))
-              ) : rows.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-slate-500">
+                  <td colSpan={6} className="p-4 text-center text-slate-400">
                     No patients found
                   </td>
                 </tr>
@@ -440,27 +412,29 @@ export default function PatientsPageAdvanced() {
                 rows.map((r: any, i: number) => (
                   <tr
                     key={r.id}
-                    className={`transition-colors ${i % 2 === 0 ? "bg-white/30 dark:bg-slate-800/30" : "bg-white/10 dark:bg-slate-900/30"} hover:bg-white/60 dark:hover:bg-slate-700/40`}
+                    className={`transition-colors ${
+                      i % 2 === 0 ? "bg-slate-900/30" : "bg-slate-900/22"
+                    } hover:bg-slate-800/40`}
                   >
-                    <td className="p-3">
-                      <input type="checkbox" checked={!!selected[r.id]} onChange={() => toggleSelect(r.id)} aria-label={`Select ${r.first_name} ${r.last_name}`} />
+                    <td className="p-3 text-slate-300">{r.patient_number}</td>
+                    <td className="p-3 font-medium text-white">
+                      {r.first_name} {r.last_name}
                     </td>
-
-                    <td className="p-3 text-slate-800 dark:text-slate-100">{r.patient_number}</td>
-                    <td className="p-3 text-slate-800 dark:text-slate-100">{r.first_name} {r.last_name}</td>
-                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.dob ? new Date(r.dob).toLocaleDateString() : "-"}</td>
-                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.gender || "-"}</td>
-                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.status || "-"}</td>
-
-                    <td className="p-3">
-                      <div className="flex gap-2">
+                    <td className="p-3 text-slate-300">{r.dob ? new Date(r.dob).toLocaleDateString() : "-"}</td>
+                    <td className="p-3 text-slate-300">{r.gender || "-"}</td>
+                    <td className="p-3 text-slate-300">{r.status || "-"}</td>
+                    <td className="p-3 text-right">
+                      <div className="flex justify-end gap-2">
                         <Link href={`/hms/patients/${r.id}`}>
-                          <GlassButton className="text-sm">View</GlassButton>
+                          <GlassButton className="text-sm bg-slate-800/40 hover:bg-slate-700/40">View</GlassButton>
                         </Link>
                         <Link href={`/hms/patients/${r.id}/edit`}>
-                          <GlassButton className="text-sm">Edit</GlassButton>
+                          <GlassButton className="text-sm bg-indigo-700/60 hover:bg-indigo-700/80">Edit</GlassButton>
                         </Link>
-                        <GlassButton className="text-sm text-red-600" onClick={() => handleDelete(r.id)}>
+                        <GlassButton
+                          className="text-sm bg-rose-700/50 hover:bg-rose-700/70"
+                          onClick={() => handleDelete(r.id)}
+                        >
                           Delete
                         </GlassButton>
                       </div>
@@ -471,13 +445,18 @@ export default function PatientsPageAdvanced() {
             </tbody>
           </table>
 
-          <div className="flex items-center justify-center py-4">
-            {hasMore ? (
-              <GlassButton onClick={() => loadMore(offset)} disabled={loading}>
-                {loading ? <Loader2 className="animate-spin" /> : "Load more"}
+          {/* Loading / Load more */}
+          <div className="mt-4 flex items-center justify-center">
+            {loading ? (
+              <div className="flex items-center gap-2 text-slate-300">
+                <Loader2 className="animate-spin" size={16} /> Loading…
+              </div>
+            ) : hasMore ? (
+              <GlassButton onClick={() => loadMore(offset)} className="bg-slate-800/50">
+                Load more
               </GlassButton>
             ) : (
-              <div className="text-sm text-slate-500">End of list</div>
+              <div className="text-xs text-slate-400">End of results</div>
             )}
           </div>
         </GlassCard>
