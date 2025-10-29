@@ -8,26 +8,44 @@ import { motion } from "framer-motion";
 import { Search, Plus, Loader2, ChevronDown, ChevronUp, Trash2, FileText } from "lucide-react";
 
 /* ------------------------- Neural Glass primitives ------------------------ */
+/**
+ * These primitives enforce accessible text colors and consistent glass styling.
+ * Use them everywhere to keep the Neural Glass language consistent.
+ */
 function GlassCard({ children, className = "" }: any) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`backdrop-blur-xl bg-white/60 dark:bg-slate-900/60 border border-white/20 shadow-lg rounded-2xl p-6 ${className}`}
+      className={`relative overflow-hidden rounded-2xl border border-white/12
+        bg-white/85 dark:bg-slate-900/60 backdrop-blur-xl shadow-lg p-6 ${className}
+        text-slate-900 dark:text-slate-50`}
+      style={{ WebkitFontSmoothing: "antialiased" }}
     >
-      {children}
+      {/* subtle sheen layer for depth */}
+      <div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none rounded-2xl"
+        style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02))" }}
+      />
+      <div className="relative z-10">{children}</div>
     </motion.div>
   );
 }
 
 function GlassButton({ children, className = "", ...rest }: any) {
   return (
-    <button
+    <motion.button
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.99 }}
       {...rest}
-      className={`px-3 py-2 rounded-xl font-medium bg-white/75 dark:bg-slate-800/70 border border-white/30 backdrop-blur-md shadow-sm hover:scale-[1.02] transition ${className}`}
+      className={`px-3 py-2 rounded-xl font-medium
+        bg-white/90 dark:bg-slate-800/65 border border-white/12
+        shadow-sm backdrop-blur-md transition-all ${className}
+        text-slate-900 dark:text-slate-50`}
     >
       {children}
-    </button>
+    </motion.button>
   );
 }
 
@@ -35,19 +53,24 @@ function GlassInput({ className = "", ...rest }: any) {
   return (
     <input
       {...rest}
-      className={`w-full px-3 py-2 rounded-xl border border-white/30 bg-white/60 dark:bg-slate-800/60 backdrop-blur-md placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40 transition ${className}`}
+      className={`w-full px-3 py-2 rounded-xl border border-white/12
+        bg-white/95 dark:bg-slate-800/70 backdrop-blur-md
+        text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500
+        focus:outline-none focus:ring-2 focus:ring-sky-400/40 transition ${className}`}
+      style={{ caretColor: "#0ea5e9" }}
     />
   );
 }
 
 /* ------------------------------- Toasts ---------------------------------- */
+/* Lightweight toast system tied to this page only (keeps logic local) */
 function useToasts() {
   const [toasts, setToasts] = useState<
     { id: string; message: string; undo?: () => void; tone?: "info" | "success" | "error" }[]
   >([]);
-  const push = (m: string, opts: any = {}) => {
+  const push = (message: string, opts: any = {}) => {
     const id = String(Date.now()) + Math.random().toString(36).slice(2, 6);
-    setToasts((t) => [...t, { id, message: m, ...opts }]);
+    setToasts((t) => [...t, { id, message, ...opts }]);
     return id;
   };
   const remove = (id: string) => setToasts((t) => t.filter((x) => x.id !== id));
@@ -63,9 +86,9 @@ function Toasts({ toasts, remove }: { toasts: any[]; remove: (id: string) => voi
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
-          className="min-w-[220px] rounded-lg p-3 shadow-xl border border-white/12 backdrop-blur-md bg-white/90 flex items-start justify-between gap-3"
+          className={`min-w-[220px] rounded-lg p-3 shadow-xl border border-white/12 backdrop-blur-md bg-white/95 dark:bg-slate-900/70 flex items-start justify-between gap-3`}
         >
-          <div className="text-sm">{t.message}</div>
+          <div className="text-sm text-slate-800 dark:text-slate-100">{t.message}</div>
           <div className="flex items-center gap-2">
             {t.undo && (
               <button
@@ -142,18 +165,15 @@ export default function PatientsPageAdvanced() {
   // keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // focus search with '/'
       if (e.key === "/" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
         e.preventDefault();
         searchRef.current?.focus();
       }
-      // select all Ctrl/Cmd + A
       const isMac = navigator.platform.toUpperCase().includes("MAC");
       if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         toggleSelectAll();
       }
-      // delete selected with 'Delete'
       if (e.key === "Delete" && Object.keys(selected).length > 0) {
         e.preventDefault();
         handleBulkDelete();
@@ -162,10 +182,9 @@ export default function PatientsPageAdvanced() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+  }, [selected, rows, selectAll]);
 
   useEffect(() => {
-    // initial load
     resetAndLoad();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy]);
@@ -178,7 +197,7 @@ export default function PatientsPageAdvanced() {
       if (controllerRef.current) controllerRef.current.abort();
       const c = new AbortController();
       controllerRef.current = c;
-      const res = await fetchPatients(args); // expects { rows, hasMore } or array
+      const res = await fetchPatients(args);
       if (c.signal.aborted) return;
       const incoming = Array.isArray(res) ? res : res.rows ?? [];
       const incomingHasMore = Array.isArray(res) ? incoming.length === limit : !!res.hasMore;
@@ -186,7 +205,7 @@ export default function PatientsPageAdvanced() {
       setOffset(nextOffset + incoming.length);
       setHasMore(incomingHasMore);
     } catch (err: any) {
-      if (err.name === "AbortError") return;
+      if (err?.name === "AbortError") return;
       console.error("fetchPatients failed", err);
       push("Failed to load patients", { tone: "error" });
     } finally {
@@ -201,7 +220,6 @@ export default function PatientsPageAdvanced() {
     loadMore(0);
   }
 
-  // debounced search
   function onChangeQ(v: string) {
     setQ(v);
     qRef.current = v;
@@ -237,14 +255,15 @@ export default function PatientsPageAdvanced() {
   /* ------------------ Optimistic delete with undo ------------------ */
   async function handleDelete(id: string) {
     if (!confirm("Delete patient? (soft-delete)")) return;
-    // optimistic: remove from UI
     const removed = rows.find((r) => r.id === id);
     setRows((r) => r.filter((x) => x.id !== id));
-    const toastId = push("Patient deleted", { tone: "info", undo: () => {
-      // undo: reinstate row locally
-      setRows((rs) => [removed, ...rs]);
-    }});
-    // schedule server delete after 5s unless undone
+    const toastId = push("Patient deleted", {
+      tone: "info",
+      undo: () => {
+        setRows((rs) => (removed ? [removed, ...rs] : rs));
+      },
+    });
+
     const timer = window.setTimeout(async () => {
       try {
         await deletePatient(id);
@@ -252,8 +271,7 @@ export default function PatientsPageAdvanced() {
       } catch (err) {
         console.error("deletePatient failed", err);
         push("Failed to delete on server", { tone: "error" });
-        // on failure, re-add locally
-        setRows((rs) => [removed, ...rs]);
+        setRows((rs) => (removed ? [removed, ...rs] : rs));
       } finally {
         remove(toastId);
       }
@@ -266,7 +284,6 @@ export default function PatientsPageAdvanced() {
     if (!ids.length) return;
     if (!confirm(`Delete ${ids.length} selected patients? (soft-delete)`)) return;
 
-    // optimistic remove
     const removedRows = rows.filter((r) => ids.includes(r.id));
     setRows((r) => r.filter((x) => !ids.includes(x.id)));
     setSelected({});
@@ -274,13 +291,10 @@ export default function PatientsPageAdvanced() {
 
     const toastId = push(`${ids.length} patients deleted`, {
       undo: () => {
-        // undo handler: restore removed rows
         setRows((rs) => [...removedRows, ...rs]);
       },
     });
 
-    // schedule deletes
-    const timers: number[] = [];
     for (const id of ids) {
       const t = window.setTimeout(async () => {
         try {
@@ -291,11 +305,9 @@ export default function PatientsPageAdvanced() {
           setRows((rs) => [...rs, ...removedRows.filter((r) => r.id === id)]);
         }
       }, 5000);
-      timers.push(t as unknown as number);
       deleteTimers.current[id] = t as unknown as number;
     }
 
-    // clear toast after server confirms roughly after delay
     window.setTimeout(() => remove(toastId), 5500);
   }
 
@@ -312,7 +324,6 @@ export default function PatientsPageAdvanced() {
     });
   }
 
-  // cleanup timers on unmount
   useEffect(() => {
     return () => {
       Object.values(deleteTimers.current).forEach((t) => window.clearTimeout(t));
@@ -347,7 +358,7 @@ export default function PatientsPageAdvanced() {
         </div>
 
         {/* Controls */}
-        <GlassCard className="flex items-center gap-2">
+        <GlassCard className="flex items-center gap-3">
           <Search className="text-slate-500" size={18} />
           <GlassInput
             ref={searchRef as any}
@@ -360,12 +371,7 @@ export default function PatientsPageAdvanced() {
           <div className="ml-auto flex items-center gap-2">
             <div className="text-sm text-slate-500 mr-2">{rows.length} shown</div>
 
-            <GlassButton
-              onClick={() => {
-                toggleSelectAll();
-              }}
-              aria-pressed={selectAll}
-            >
+            <GlassButton onClick={() => toggleSelectAll()} aria-pressed={selectAll}>
               {selectAll ? "Unselect all" : "Select all"}
             </GlassButton>
 
@@ -385,12 +391,7 @@ export default function PatientsPageAdvanced() {
             <thead>
               <tr className="text-left text-slate-600 border-b border-white/20">
                 <th className="p-3">
-                  <input
-                    type="checkbox"
-                    checked={selectAll}
-                    onChange={() => toggleSelectAll()}
-                    aria-label="Select all visible"
-                  />
+                  <input type="checkbox" checked={selectAll} onChange={() => toggleSelectAll()} aria-label="Select all visible" />
                 </th>
 
                 <th className="p-3 cursor-pointer" onClick={() => toggleSort("patient_number")}>
@@ -439,33 +440,27 @@ export default function PatientsPageAdvanced() {
                 rows.map((r: any, i: number) => (
                   <tr
                     key={r.id}
-                    className={`transition-colors ${i % 2 === 0 ? "bg-white/30 dark:bg-slate-800/30" : "bg-white/10 dark:bg-slate-900/30"
-                      } hover:bg-white/60 dark:hover:bg-slate-700/40`}
+                    className={`transition-colors ${i % 2 === 0 ? "bg-white/30 dark:bg-slate-800/30" : "bg-white/10 dark:bg-slate-900/30"} hover:bg-white/60 dark:hover:bg-slate-700/40`}
                   >
                     <td className="p-3">
-                      <input
-                        type="checkbox"
-                        checked={!!selected[r.id]}
-                        onChange={() => toggleSelect(r.id)}
-                        aria-label={`Select ${r.first_name} ${r.last_name}`}
-                      />
+                      <input type="checkbox" checked={!!selected[r.id]} onChange={() => toggleSelect(r.id)} aria-label={`Select ${r.first_name} ${r.last_name}`} />
                     </td>
 
-                    <td className="p-3">{r.patient_number}</td>
-                    <td className="p-3">{r.first_name} {r.last_name}</td>
-                    <td className="p-3">{r.dob ? new Date(r.dob).toLocaleDateString() : "-"}</td>
-                    <td className="p-3">{r.gender || "-"}</td>
-                    <td className="p-3">{r.status || "-"}</td>
+                    <td className="p-3 text-slate-800 dark:text-slate-100">{r.patient_number}</td>
+                    <td className="p-3 text-slate-800 dark:text-slate-100">{r.first_name} {r.last_name}</td>
+                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.dob ? new Date(r.dob).toLocaleDateString() : "-"}</td>
+                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.gender || "-"}</td>
+                    <td className="p-3 text-slate-700 dark:text-slate-200">{r.status || "-"}</td>
 
                     <td className="p-3">
                       <div className="flex gap-2">
                         <Link href={`/hms/patients/${r.id}`}>
-                          <GlassButton>View</GlassButton>
+                          <GlassButton className="text-sm">View</GlassButton>
                         </Link>
                         <Link href={`/hms/patients/${r.id}/edit`}>
-                          <GlassButton>Edit</GlassButton>
+                          <GlassButton className="text-sm">Edit</GlassButton>
                         </Link>
-                        <GlassButton className="text-red-500" onClick={() => handleDelete(r.id)}>
+                        <GlassButton className="text-sm text-red-600" onClick={() => handleDelete(r.id)}>
                           Delete
                         </GlassButton>
                       </div>
