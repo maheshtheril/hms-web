@@ -1,17 +1,15 @@
-// app/lib/apiClient.ts (or your existing path)
+// app/lib/api-client.ts
 "use client";
 
-import axios, { AxiosError, AxiosRequestConfig } from "axios";
+import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
 /**
  * Browser → Backend client.
- * - If NEXT_PUBLIC_API_URL is provided (prod or dev), we hit it directly (CORS path).
- *   We normalize it to end with `/api`.
- * - Otherwise, we use same-origin `/api` (Next.js rewrite → backend).
- * - Prevents double `/api` in URLs.
- * - Ensures JSON headers when sending a body.
- * - Logs in dev.
- * - Redirects to /login ONLY if /api/auth/me returns 401.
+ * - Normalizes NEXT_PUBLIC_API_URL / BACKEND_URL to end with /api.
+ * - Avoids double /api in paths.
+ * - Adds robust refresh-on-401 interceptor (queueing + retry once).
+ * - Keeps existing redirect-to-/login behaviour for the auth probe.
+ * - Exports idempotency helpers: setIdempotencyKey() and generateIdempotencyKey().
  */
 
 /* ───────────────── helpers ───────────────── */
@@ -42,7 +40,6 @@ function ensureJsonHeader(config: AxiosRequestConfig) {
 }
 
 function cleanPath(p: string): string {
-  // one leading slash, collapse doubles
   return ("/" + String(p || "").trim().replace(/^\/+/, "")).replace(/\/{2,}/g, "/");
 }
 
@@ -50,11 +47,10 @@ function up(m?: string) {
   return (m || "GET").toUpperCase();
 }
 
-/* ───────────────── baseURL ─────────────────
-   Use NEXT_PUBLIC_API_URL if present (normalized to end with /api).
-   Else fall back to same-origin /api (Next rewrite).
-──────────────────────────────────────────── */
-const envBase = resolveApiBase(process.env.BACKEND_URL);
+/* ───────────────── baseURL ───────────────── */
+const envBase =
+  resolveApiBase(process.env.NEXT_PUBLIC_API_URL) ??
+  resolveApiBase(process.env.BACKEND_URL);
 const computedBaseURL = envBase || "/api";
 
 /* ───────────────── axios instance ───────────────── */
@@ -67,8 +63,106 @@ export const apiClient = axios.create({
 
 if (process.env.NODE_ENV !== "production") {
   try {
+    // eslint-disable-next-line no-console
     console.log("[apiClient] baseURL =", apiClient.defaults.baseURL);
   } catch {}
+}
+
+/* ───────────────── Idempotency helpers ───────────────── */
+/**
+ * Attach an Idempotency-Key header to an axios config.
+ * Usage:
+ *   const key = generateIdempotencyKey('appointments');
+ *   await apiClient.post('/hms/appointments', body, setIdempotencyKey({}, key));
+ */
+export function setIdempotencyKey(config?: AxiosRequestConfig, key?: string): AxiosRequestConfig {
+  const c = config ?? {};
+  if (!key) return c;
+  c.headers = { ...(c.headers || {}), "Idempotency-Key": key };
+  return c;
+}
+
+/**
+ * Generate a reasonably collision-resistant idempotency key for client use.
+ * Format: <prefix>_<timestamp_ms>_<randomHex12>
+ * Example: "appointments_1698620000000_4f9a2b3c1d5e"
+ */
+export function generateIdempotencyKey(prefix?: string): string {
+  const now = Date.now();
+  // random 12 hex chars
+  const rand = Array.from(cryptoRandomBytes(6))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const p = (prefix ?? "id").replace(/[^a-zA-Z0-9-_]/g, "").slice(0, 24) || "id";
+  return `${p}_${now}_${rand}`;
+}
+
+function cryptoRandomBytes(n: number): Uint8Array {
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const arr = new Uint8Array(n);
+    crypto.getRandomValues(arr);
+    return arr;
+  }
+  // fallback to Math.random (should be rare in modern browsers)
+  const arr = new Uint8Array(n);
+  for (let i = 0; i < n; i++) arr[i] = Math.floor(Math.random() * 256);
+  return arr;
+}
+
+/* ───────────────── Refresh-on-401 (queue + retry) ─────────────────
+   Behavior:
+   - When a response returns 401 (and request hasn't already been retried),
+     attempt a single refresh by POSTing to /api/auth/refresh.
+   - While refresh is in progress, queue other requests that fail with 401.
+   - If refresh succeeds, retry queued requests once.
+   - If refresh fails, fall back to prior behavior (redirect on auth probe or reject).
+   - Each request is retried at most once to avoid loops. We mark
+     config._retry to track retries locally (non-enumerable).
+──────────────────────────────────────────────────────────── */
+
+let isRefreshing = false;
+let refreshPromise: Promise<void> | null = null;
+const failedQueue: {
+  config: AxiosRequestConfig;
+  resolve: (value: AxiosResponse | PromiseLike<AxiosResponse>) => void;
+  reject: (reason?: any) => void;
+}[] = [];
+
+function enqueueRequest(config: AxiosRequestConfig): Promise<AxiosResponse> {
+  return new Promise((resolve, reject) => {
+    failedQueue.push({ config, resolve, reject });
+  });
+}
+
+async function processQueue(error: any | null) {
+  while (failedQueue.length > 0) {
+    const q = failedQueue.shift()!;
+    if (error) {
+      q.reject(error);
+    } else {
+      apiClient(q.config)
+        .then(q.resolve)
+        .catch(q.reject);
+    }
+  }
+}
+
+async function attemptRefresh(): Promise<void> {
+  if (isRefreshing && refreshPromise) return refreshPromise;
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      // call your refresh endpoint. Assumes cookie-based refresh (withCredentials true).
+      await apiClient.post("/auth/refresh");
+      await Promise.resolve();
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 /* ───────────────── interceptors ───────────────── */
@@ -77,16 +171,13 @@ apiClient.interceptors.request.use((config) => {
   const raw = String(config.url ?? "");
 
   if (!isAbsolute(raw)) {
-    // Normalize once
     let p = cleanPath(raw);
 
-    // If baseURL already ends with /api, ensure we DON'T prefix /api again:
-    // strip a leading "/api" from the path so baseURL+/path => ".../api" + "/leads"
     if (String(apiClient.defaults.baseURL).toLowerCase().endsWith("/api")) {
       p = p.replace(/^\/api(\/|$)/i, "/");
     }
 
-    config.url = p; // e.g. "/leads", "/auth/me", etc.
+    config.url = p;
   }
 
   ensureJsonHeader(config);
@@ -94,18 +185,20 @@ apiClient.interceptors.request.use((config) => {
   if (process.env.NODE_ENV !== "production") {
     try {
       const base = String(config.baseURL || apiClient.defaults.baseURL || "");
+      // eslint-disable-next-line no-console
       console.debug("[apiClient] →", up(config.method), base.replace(/\/+$/, "") + String(config.url || ""));
     } catch {}
   }
   return config;
 });
 
-// RESPONSE: log; only redirect on 401 for /api/auth/me
+// RESPONSE: log; refresh-on-401 logic in error handler
 apiClient.interceptors.response.use(
   (res) => {
     if (process.env.NODE_ENV !== "production") {
       try {
         const base = String(res.config.baseURL || apiClient.defaults.baseURL || "");
+        // eslint-disable-next-line no-console
         console.debug(
           "[apiClient] ←",
           res.status,
@@ -116,30 +209,60 @@ apiClient.interceptors.response.use(
     }
     return res;
   },
-  (err) => {
+  async (err: AxiosError) => {
     const status = err?.response?.status;
-    const method = (err?.config?.method || "GET").toUpperCase();
+    const method = ((err?.config?.method as string) || "GET").toUpperCase();
     const base = String(err?.config?.baseURL || apiClient.defaults.baseURL || "");
     const url = String(err?.config?.url || "");
     const full = /^https?:\/\//i.test(url) ? url : base.replace(/\/+$/, "") + (url.startsWith("/") ? url : `/${url}`);
 
     if (process.env.NODE_ENV !== "production") {
       try {
+        // eslint-disable-next-line no-console
         console.warn("[apiClient] ✕", status ?? "ERR", method, full);
         if (!status) console.warn("[apiClient] network/error:", err.message);
       } catch {}
     }
 
-    // bounce to /login ONLY if the failing call is the auth check itself
-    if (typeof window !== "undefined" && status === 401 && /\/api\/auth\/me(\?|$)/.test(full)) {
-      try {
-        sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);
-      } catch {}
-      window.location.href = "/login";
-      return;
+    const originalConfig = err.config as AxiosRequestConfig & { _retry?: boolean } | undefined;
+
+    if (!originalConfig) return Promise.reject(err);
+    if (status !== 401) return Promise.reject(err);
+    if (/\/auth\/refresh(\?|$)/i.test(full)) {
+      return Promise.reject(err);
+    }
+    if ((originalConfig as any)._retry) {
+      return Promise.reject(err);
     }
 
-    return Promise.reject(err);
+    (originalConfig as any)._retry = true;
+
+    try {
+      if (!isRefreshing) {
+        try {
+          await attemptRefresh();
+        } catch (refreshErr) {
+          await processQueue(refreshErr);
+          if (typeof window !== "undefined" && /\/api\/auth\/me(\?|$)/.test(full) && status === 401) {
+            try {
+              sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);
+            } catch {}
+            try {
+              window.location.href = "/login";
+            } catch {}
+            return new Promise(() => {});
+          }
+          return Promise.reject(refreshErr);
+        }
+        await processQueue(null);
+      } else {
+        return enqueueRequest(originalConfig);
+      }
+
+      return apiClient(originalConfig);
+    } catch (finalErr) {
+      return Promise.reject(finalErr);
+    }
   }
 );
 
@@ -148,4 +271,5 @@ export type ApiError = AxiosError<{ message?: string; code?: string }>;
 export function isApiError(e: unknown): e is ApiError {
   return !!(e && typeof e === "object" && (e as any).isAxiosError);
 }
+
 export default apiClient;
