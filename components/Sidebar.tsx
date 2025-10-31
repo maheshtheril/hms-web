@@ -61,6 +61,89 @@ const SECTIONS: Section[] = [
     ],
   },
 
+
+{
+  id: "leads",
+  label: "Leads",
+  icon: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 7v6a2 2 0 0 0 2 2h3l4 3 4-3h3a2 2 0 0 0 2-2V7" />
+      <path d="M12 3v8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="11" r="2" />
+    </svg>
+  ),
+  items: [
+    {
+      label: "Overview",
+      children: [
+        { label: "All Leads", href: "/leads", keywords: ["list", "pipeline", "contacts"] },
+        { label: "Create Lead", href: "/leads/new", keywords: ["add", "new", "create"] },
+        { label: "My Leads", href: "/leads/my", keywords: ["assigned", "mine"] },
+      ],
+    },
+    {
+      label: "Pipelines & Stages",
+      children: [
+        { label: "Pipelines", href: "/leads/pipelines", keywords: ["funnels", "flows"] },
+        { label: "Stages", href: "/leads/stages", keywords: ["columns", "steps"] },
+        { label: "Pipeline Templates", href: "/leads/pipeline-templates", keywords: ["templates", "defaults"] },
+      ],
+    },
+    {
+      label: "Lead Data",
+      children: [
+        { label: "Sources", href: "/leads/sources", keywords: ["origin", "channel"] },
+        { label: "Tags", href: "/leads/tags", keywords: ["labels", "categorize"] },
+        { label: "Custom Fields", href: "/leads/custom-fields", keywords: ["schema", "fields"] },
+      ],
+    },
+    {
+      label: "Activity",
+      children: [
+        { label: "Notes", href: "/leads/notes", keywords: ["comments", "internal"] },
+        { label: "Tasks", href: "/leads/tasks", keywords: ["todos", "assignments"] },
+        { label: "Follow-ups", href: "/leads/followups", keywords: ["callbacks", "reminders"] },
+        { label: "Timeline", href: "/leads/timeline", keywords: ["history", "activity"] },
+      ],
+    },
+    {
+      label: "Assignments",
+      keywords: ["routing", "rules", "auto"],
+      children: [
+        { label: "Assignment Rules", href: "/leads/assignment-rules", keywords: ["auto-assign", "round-robin"] },
+        { label: "Assignment History", href: "/leads/assignment-history", keywords: ["audit", "changes"] },
+        { label: "Duplicates", href: "/leads/duplicates", keywords: ["merge", "find duplicates"] },
+      ],
+    },
+    {
+      label: "Templates",
+      children: [
+        { label: "Lead Templates", href: "/leads/templates", keywords: ["email", "scenarios"] },
+        { label: "Pipeline Templates", href: "/leads/template-pipelines", keywords: ["onboarding", "defaults"] },
+      ],
+    },
+    {
+      label: "Analytics",
+      children: [
+        { label: "Conversion Funnel", href: "/leads/analytics/funnel", keywords: ["conversion", "metrics"] },
+        { label: "Lead Sources Report", href: "/leads/analytics/sources", keywords: ["roi", "channels"] },
+        { label: "Forecast & Velocity", href: "/leads/analytics/forecast", keywords: ["forecast", "velocity"] },
+      ],
+    },
+    {
+      label: "Settings",
+      children: [
+        { label: "Lead Settings", href: "/leads/settings", keywords: ["preferences", "defaults"] },
+        { label: "Import / Export", href: "/leads/import-export", keywords: ["csv", "bulk"] },
+        { label: "Permissions", href: "/leads/settings/permissions", keywords: ["access", "roles"] },
+      ],
+    },
+  ],
+},
+
+
+
+
   {
     id: "admin",
     label: "Admin",
