@@ -181,7 +181,9 @@ const SECTIONS: Section[] = [
           { label: "General", href: "/dashboard/settings/general" },
           { label: "Billing", href: "/dashboard/settings/billing" },
           { label: "Teams", href: "/dashboard/settings/teams" },
-              {
+        ],
+         },
+            {
         label: "Leads (Master Data)",
         children: [
           { label: "Sources", href: "/dashboard/settings/leads/sources", keywords: ["source", "origin", "channel", "referral", "campaign"] },
@@ -197,8 +199,8 @@ const SECTIONS: Section[] = [
           { label: "Import / Field Mapping", href: "/dashboard/settings/leads/import", keywords: ["csv", "import", "mapping"] },
           { label: "Export / Retention", href: "/dashboard/settings/leads/export", keywords: ["export", "retention", "privacy"] },
           { label: "AI Actions & Audit", href: "/dashboard/settings/leads/ai-actions", keywords: ["ai", "audit", "logs"] }
-        ]
-      }
+        
+      
         ],
       },
     ],
