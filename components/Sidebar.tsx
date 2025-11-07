@@ -181,7 +181,24 @@ const SECTIONS: Section[] = [
           { label: "General", href: "/dashboard/settings/general" },
           { label: "Billing", href: "/dashboard/settings/billing" },
           { label: "Teams", href: "/dashboard/settings/teams" },
-          { label: "Custom Fields", href: "/dashboard/settings/custom-fields", keywords: ["dynamic", "fields", "definitions"] },
+              {
+        label: "Leads (Master Data)",
+        children: [
+          { label: "Sources", href: "/dashboard/settings/leads/sources", keywords: ["source", "origin", "channel", "referral", "campaign"] },
+          { label: "Professions", href: "/dashboard/settings/leads/professions", keywords: ["occupation", "job", "role", "title"] },
+          { label: "Industries", href: "/dashboard/settings/leads/industries", keywords: ["industry", "sector", "vertical"] },
+          { label: "Pipelines", href: "/dashboard/settings/leads/pipelines", keywords: ["pipeline", "sales pipeline", "workflow"] },
+          { label: "Stages", href: "/dashboard/settings/leads/stages", keywords: ["stage", "funnel", "order"] },
+          { label: "Tags", href: "/dashboard/settings/leads/tags", keywords: ["tag", "label", "categorize"] },
+          { label: "Custom Fields", href: "/dashboard/settings/leads/custom-fields", keywords: ["custom", "dynamic", "schema", "metadata"] },
+          { label: "Scoring & AI", href: "/dashboard/settings/leads/scoring", keywords: ["score", "model", "ai"] },
+          { label: "Assignment Rules", href: "/dashboard/settings/leads/rules", keywords: ["automation", "assign", "routing"] },
+          { label: "Duplicate Rules", href: "/dashboard/settings/leads/duplicates", keywords: ["dedupe", "merge", "duplicate"] },
+          { label: "Import / Field Mapping", href: "/dashboard/settings/leads/import", keywords: ["csv", "import", "mapping"] },
+          { label: "Export / Retention", href: "/dashboard/settings/leads/export", keywords: ["export", "retention", "privacy"] },
+          { label: "AI Actions & Audit", href: "/dashboard/settings/leads/ai-actions", keywords: ["ai", "audit", "logs"] }
+        ]
+      }
         ],
       },
     ],
