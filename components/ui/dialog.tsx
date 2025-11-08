@@ -25,10 +25,16 @@ const Dialog: React.FC<DialogProps> = ({ children }) => {
 const DialogTrigger: React.FC<React.PropsWithChildren<{ asChild?: boolean }>> = ({ children }) =>
   <>{children}</>;
 
-/** Dialog content container */
-const DialogContent: React.FC<React.PropsWithChildren<{ className?: string }>> = ({ children, className = "" }) => {
+/**
+ * Dialog content container
+ * Accepts all standard div HTML attributes so callers can pass aria-*, role, id, onClick, etc.
+ */
+type DialogContentProps = React.HTMLAttributes<HTMLDivElement> & { className?: string; children?: React.ReactNode };
+
+const DialogContent: React.FC<DialogContentProps> = ({ children, className = "", ...rest }) => {
   return (
     <div
+      {...rest}
       className={cn(
         "relative z-50 mx-auto w-full max-w-lg rounded-2xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/20 shadow-xl p-6",
         "transition-all duration-200 animate-in fade-in-0 zoom-in-95",
