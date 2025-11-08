@@ -1,4 +1,5 @@
 "use client";
+
 import React, { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -37,6 +38,7 @@ export default function SourceForm({
     defaultValues: { name: "", description: "", is_active: true },
   });
 
+  // focus name when opened
   useEffect(() => {
     if (open) {
       form.reset({
@@ -44,10 +46,19 @@ export default function SourceForm({
         description: source?.description ?? "",
         is_active: source?.is_active ?? true,
       });
-      // Use RHF's setFocus instead of a local ref to avoid ref conflicts
+      // slight delay to ensure DOM mounted
       setTimeout(() => form.setFocus("name"), 50);
     }
   }, [open, source, form]);
+
+  // close on Escape
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && open) onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const saveMut = useMutation({
     mutationFn: async (payload: FormData) => {
@@ -79,60 +90,84 @@ export default function SourceForm({
 
   return (
     <>
+      {/* overlay */}
       <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
+        aria-hidden
       />
+
+      {/* dialog */}
       <DialogContent
         role="dialog"
         aria-modal="true"
         aria-label={source ? "Edit Source" : "Create Source"}
-        className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[520px]"
+        className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[560px] max-w-[95%]"
       >
         <DialogHeader>
-          <DialogTitle>{source ? "Edit Source" : "Create Source"}</DialogTitle>
+          <div>
+            <DialogTitle>{source ? "Edit Source" : "Create Source"}</DialogTitle>
+            <p className="text-sm text-neutral-300 mt-1">Manage lead source entries.</p>
+          </div>
+
+          {/* close button */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-3 rounded p-1 hover:bg-white/6 transition-colors"
+          >
+            <svg className="w-5 h-5 text-neutral-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         </DialogHeader>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-3">
           <div>
-            <Label required>Name</Label>
+            <Label className="text-sm text-neutral-200">Name <span className="text-rose-500">*</span></Label>
             <input
               {...form.register("name")}
-              className="mt-1 w-full p-2 rounded bg-white/6 text-slate-100 border border-white/10"
+              className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition"
               placeholder="Source name"
+              autoComplete="off"
             />
             {form.formState.errors.name && (
-              <p className="text-xs text-red-400 mt-1">{String(form.formState.errors.name.message)}</p>
+              <p className="text-xs text-rose-400 mt-1">{String(form.formState.errors.name.message)}</p>
             )}
           </div>
 
           <div>
-            <Label>Description</Label>
+            <Label className="text-sm text-neutral-200">Description</Label>
             <textarea
               {...form.register("description")}
-              className="mt-1 w-full p-2 rounded bg-white/6 text-slate-100 border border-white/10"
+              className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition resize-none h-28"
               placeholder="Optional description"
             />
           </div>
 
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-sm text-neutral-200">
             <input type="checkbox" {...form.register("is_active")} className="accent-indigo-500 w-4 h-4" />
             <span>Active</span>
           </label>
 
-          <DialogFooter className="flex justify-end gap-3 mt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded bg-white/10">
+          <DialogFooter className="flex items-center justify-end gap-3 mt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg bg-neutral-800 text-neutral-300 border border-neutral-700 hover:bg-neutral-700 transition"
+            >
               Cancel
             </button>
 
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 rounded bg-gradient-to-r from-indigo-500 to-violet-500 text-white"
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-semibold shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {saving ? "Saving..." : "Save"}
+              {saving ? "Saving…" : source ? "Update" : "Save"}
             </button>
           </DialogFooter>
         </form>
