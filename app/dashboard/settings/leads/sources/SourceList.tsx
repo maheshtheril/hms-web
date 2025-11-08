@@ -1,57 +1,85 @@
-// web/app/leads/admin/sources/SourceList.tsx
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import apiClient from "@/lib/api-client";
 import SourceForm from "./SourceForm";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/use-toast";
+import Link from "next/link";
+import { motion } from "framer-motion";
 
-type Source = { id: string; tenant_id: string | null; key: string; name: string; config: any; created_at: string };
+export type Source = {
+  id: string;
+  tenant_id?: string | null;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+};
+
+const fetchSources = async (q = "") => {
+  const res = await apiClient.get("/leads/sources", { params: { q } });
+  return res.data?.rows ?? res.data?.data ?? [];
+};
 
 export default function SourceList() {
-  const [items, setItems] = useState<Source[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<Source | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
   const [q, setQ] = useState("");
+  const [editing, setEditing] = useState<Source | null>(null);
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const { toast } = useToast();
 
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/leads/sources?q=${encodeURIComponent(q)}`, { credentials: "include" });
-      const j = await res.json();
-      setItems(j.data ?? []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { data: items = [], isLoading } = useQuery<Source[]>({
+    queryKey: ["leads", "sources", q],
+    queryFn: () => fetchSources(q),
+    staleTime: 60_000,
+    placeholderData: [],
+  });
 
-  useEffect(() => { load(); }, [q]);
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/leads/sources/${id}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leads", "sources"] });
+      toast({ title: "Deleted", description: "Source deleted." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err?.message ?? "Delete failed", variant: "destructive" });
+    },
+  });
 
   return (
-    <div>
-      <div className="flex gap-2 mb-4">
-        <input value={q} onChange={(e)=> setQ(e.target.value)} placeholder="Search sources..." className="p-2 rounded bg-slate-100 flex-1" />
-        <button onClick={() => setShowCreate(true)} className="px-3 py-2 bg-blue-600 text-white rounded">Create</button>
+    <div className="rounded-xl bg-slate-900/70 text-slate-100 border border-white/10 p-5 shadow-md">
+      <div className="flex flex-col md:flex-row items-center justify-between gap-3 mb-5">
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search sources..." className="w-full md:w-1/2 bg-white/6" />
+        <Button onClick={() => { setEditing(null); setOpen(true); }}>+ Create</Button>
       </div>
 
-      <div className="space-y-2">
-        {loading ? <div>Loading…</div> : null}
-        {items.map(s => (
-          <div key={s.id} className="flex items-center justify-between p-3 border rounded">
-            <div>
-              <div className="font-medium">{s.name}</div>
-              <div className="text-sm text-muted">{s.key} • {s.tenant_id ?? "global"}</div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setEditing(s)} className="px-2 py-1 border rounded">Edit</button>
-              <button onClick={async ()=> { if(!confirm("Delete source?")) return; await fetch(`/api/leads/sources/${s.id}`, { method: "DELETE", credentials: "include" }); load(); }} className="px-2 py-1 bg-red-600 text-white rounded">Delete</button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {isLoading ? (
+        <div className="text-sm text-slate-400">Loading sources…</div>
+      ) : items.length === 0 ? (
+        <div className="text-sm text-slate-500">No sources found.</div>
+      ) : (
+        <div className="space-y-3">
+          {items.map((s: Source) => (
+            <motion.div key={s.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="p-4 border border-white/6 bg-white/3 rounded-xl flex items-center justify-between">
+              <div>
+                <div className="font-medium text-white">{s.name}</div>
+                <div className="text-xs text-slate-300">{s.description ?? "—"}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-300">{s.is_active ? "Active" : "Inactive"}</span>
+                <Button variant="outline" size="sm" onClick={() => { setEditing(s); setOpen(true); }}>Edit</Button>
+                <Button variant="destructive" size="sm" onClick={() => { if (confirm("Delete source?")) deleteMut.mutate(s.id); }}>Delete</Button>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
-      {showCreate && <SourceForm onClose={() => { setShowCreate(false); load(); }} />}
-      {editing && <SourceForm source={editing} onClose={() => { setEditing(null); load(); }} />}
+      <SourceForm open={open} onClose={() => { setOpen(false); setEditing(null); }} source={editing} />
     </div>
   );
 }
