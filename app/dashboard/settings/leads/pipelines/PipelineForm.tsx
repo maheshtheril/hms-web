@@ -1,123 +1,103 @@
 "use client";
-import React, { useEffect } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
+import React, { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { useToast } from "@/components/ui/use-toast";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import apiClient from "@/lib/api-client";
-import { Pipeline } from "./PipelineList";
-
-const Schema = z.object({
-  name: z.string().min(2, "Name is required"),
-  description: z.string().optional().nullable(),
-  is_active: z.boolean().optional(),
-});
-type FormData = z.infer<typeof Schema>;
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 
 export default function PipelineForm({
-  open,
-  onOpenChange,
   pipeline,
+  onClose,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  pipeline?: Pipeline | null;
+  pipeline?: any;
+  onClose: () => void;
 }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
+  const [name, setName] = useState(pipeline?.name ?? "");
+  const [description, setDescription] = useState(pipeline?.description ?? "");
+  const [isActive, setIsActive] = useState(pipeline?.is_active ?? true);
+  const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(true);
 
-  const form = useForm<FormData>({
-    resolver: zodResolver(Schema),
-    defaultValues: {
-      name: pipeline?.name ?? "",
-      description: pipeline?.description ?? "",
-      is_active: pipeline?.is_active ?? true,
-    },
-  });
+  useEffect(() => setOpen(true), []);
 
-  useEffect(() => {
-    form.reset({
-      name: pipeline?.name ?? "",
-      description: pipeline?.description ?? "",
-      is_active: pipeline?.is_active ?? true,
-    });
-  }, [pipeline]);
-
-  const saveMut = useMutation({
-    mutationFn: async (data: FormData) => {
-      const payload = { ...data };
-      if (pipeline?.id) {
-        await apiClient.put(`/leads/pipelines/${pipeline.id}`, payload);
-      } else {
-        await apiClient.post(`/leads/pipelines`, payload);
-      }
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["pipelines"] });
-      toast({
-        title: pipeline ? "Updated" : "Created",
-        description: pipeline
-          ? "Pipeline updated successfully."
-          : "Pipeline created successfully.",
+  async function save() {
+    setSaving(true);
+    try {
+      const payload = { name, description, is_active: isActive };
+      const url = pipeline
+        ? `/api/leads/pipelines/${pipeline.id}`
+        : `/api/leads/pipelines`;
+      const method = pipeline ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
       });
-      onOpenChange(false);
-    },
-    onError: (err: any) =>
-      toast({
-        title: "Error",
-        description: err?.message ?? "Save failed.",
-        variant: "destructive",
-      }),
-  });
+      if (!res.ok) throw new Error(await res.text());
+      onClose();
+    } catch (e) {
+      alert("Error saving pipeline");
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-w-lg backdrop-blur-xl bg-white/50 border border-white/10 shadow-xl"
-        aria-label={pipeline ? "Edit Pipeline" : "Create Pipeline"}
-      >
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
+      <DialogContent className="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 shadow-2xl p-6 text-slate-900 dark:text-slate-100">
         <DialogHeader>
           <DialogTitle>{pipeline ? "Edit Pipeline" : "Create Pipeline"}</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit((d) => saveMut.mutate(d))} className="space-y-4 mt-2">
+        <div className="space-y-4 mt-4">
           <div>
-            <Label>Name</Label>
-            <Input {...form.register("name")} placeholder="Pipeline name" />
-            {form.formState.errors.name && (
-              <p className="text-xs text-red-600 mt-1">
-                {form.formState.errors.name.message}
-              </p>
-            )}
+            <Label required>Name</Label>
+            <input
+              className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Pipeline name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
-
           <div>
             <Label>Description</Label>
-            <Textarea {...form.register("description")} rows={3} placeholder="Short description" />
+            <textarea
+              className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 px-3 py-2 min-h-[90px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Short description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
           </div>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+            />
+            <span>Active</span>
+          </label>
+        </div>
 
-          <div className="flex items-center gap-2">
-            <input type="checkbox" {...form.register("is_active")} id="is_active" />
-            <label htmlFor="is_active" className="text-sm">
-              Active
-            </label>
-          </div>
-
-          <DialogFooter className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saveMut.isPending}>
-              {saveMut.isPending ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
-        </form>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={onClose}
+            className="hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={saving}
+            onClick={save}
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
