@@ -6,12 +6,12 @@ import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
-import Link from "next/link";
 import { motion } from "framer-motion";
 
 export type Source = {
   id: string;
   tenant_id?: string | null;
+  key?: string;
   name: string;
   description?: string | null;
   is_active?: boolean;
@@ -20,8 +20,15 @@ export type Source = {
 
 const fetchSources = async (q = "") => {
   const res = await apiClient.get("/leads/sources", { params: { q } });
-  return res.data?.rows ?? res.data?.data ?? [];
+  // backend sometimes returns { data: rows } or { data: { rows: [...] } }
+  // normalize to an array
+  return res.data?.data ?? res.data ?? [];
 };
+
+/** react-query v4/v5 compatible loading checker for mutations */
+function isMutationLoading(mut: any) {
+  return Boolean((mut as any)?.isLoading ?? (mut as any)?.isPending ?? (mut as any)?.status === "loading");
+}
 
 export default function SourceList() {
   const [q, setQ] = useState("");
@@ -46,15 +53,30 @@ export default function SourceList() {
       toast({ title: "Deleted", description: "Source deleted." });
     },
     onError: (err: any) => {
-      toast({ title: "Error", description: err?.message ?? "Delete failed", variant: "destructive" });
+      const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
+      toast({ title: "Error", description: msg, variant: "destructive" });
     },
   });
+
+  const deleting = isMutationLoading(deleteMut);
 
   return (
     <div className="rounded-xl bg-slate-900/70 text-slate-100 border border-white/10 p-5 shadow-md">
       <div className="flex flex-col md:flex-row items-center justify-between gap-3 mb-5">
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search sources..." className="w-full md:w-1/2 bg-white/6" />
-        <Button onClick={() => { setEditing(null); setOpen(true); }}>+ Create</Button>
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search sources..."
+          className="w-full md:w-1/2 bg-white/6"
+        />
+        <Button
+          onClick={() => {
+            setEditing(null);
+            setOpen(true);
+          }}
+        >
+          + Create
+        </Button>
       </div>
 
       {isLoading ? (
@@ -64,22 +86,58 @@ export default function SourceList() {
       ) : (
         <div className="space-y-3">
           {items.map((s: Source) => (
-            <motion.div key={s.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="p-4 border border-white/6 bg-white/3 rounded-xl flex items-center justify-between">
+            <motion.div
+              key={s.id}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 border border-white/6 bg-white/3 rounded-xl flex items-center justify-between"
+            >
               <div>
                 <div className="font-medium text-white">{s.name}</div>
                 <div className="text-xs text-slate-300">{s.description ?? "—"}</div>
+                {s.key && <div className="text-xs text-slate-400 mt-1">Key: {s.key}</div>}
               </div>
+
               <div className="flex items-center gap-2">
                 <span className="text-sm text-slate-300">{s.is_active ? "Active" : "Inactive"}</span>
-                <Button variant="outline" size="sm" onClick={() => { setEditing(s); setOpen(true); }}>Edit</Button>
-                <Button variant="destructive" size="sm" onClick={() => { if (confirm("Delete source?")) deleteMut.mutate(s.id); }}>Delete</Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditing(s);
+                    setOpen(true);
+                  }}
+                  disabled={deleting}
+                >
+                  Edit
+                </Button>
+
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (!confirm("Delete source?")) return;
+                    deleteMut.mutate(s.id);
+                  }}
+                  disabled={deleting}
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </Button>
               </div>
             </motion.div>
           ))}
         </div>
       )}
 
-      <SourceForm open={open} onClose={() => { setOpen(false); setEditing(null); }} source={editing} />
+      <SourceForm
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setEditing(null);
+        }}
+        source={editing}
+      />
     </div>
   );
 }
