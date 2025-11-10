@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -11,6 +11,7 @@ import { DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/compon
 import { useToast } from "@/components/ui/use-toast";
 
 const Schema = z.object({
+  key: z.string().min(1),
   name: z.string().min(2),
   description: z.string().optional(),
   is_active: z.boolean().optional(),
@@ -20,6 +21,17 @@ type FormData = z.infer<typeof Schema>;
 /** Helper: react-query v4/v5 compatible loading checker */
 function isMutationLoading(mut: any) {
   return Boolean(mut?.isLoading ?? mut?.isPending ?? mut?.status === "loading");
+}
+
+/** Turn a name into a reasonable KEY: uppercase, letters/numbers/_ only */
+function makeKeyFromName(name: string) {
+  return (
+    name
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, "_") // non-alnum -> underscore
+      .replace(/^_+|_+$/g, "") // trim underscores
+      .toUpperCase() || ""
+  );
 }
 
 export default function SourceForm({
@@ -33,23 +45,46 @@ export default function SourceForm({
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [keyTouched, setKeyTouched] = useState(false);
+  const keyTouchedRef = useRef(false);
+
   const form = useForm<FormData>({
     resolver: zodResolver(Schema),
-    defaultValues: { name: "", description: "", is_active: true },
+    defaultValues: { key: "", name: "", description: "", is_active: true },
   });
 
-  // focus name when opened
+  // sync form when modal opens or source changes
   useEffect(() => {
     if (open) {
+      const initialKey = source?.key ?? "";
       form.reset({
+        key: initialKey,
         name: source?.name ?? "",
         description: source?.description ?? "",
         is_active: source?.is_active ?? true,
       });
+      keyTouchedRef.current = Boolean(initialKey); // if source has key, treat it as touched
+      setKeyTouched(Boolean(initialKey));
       // slight delay to ensure DOM mounted
       setTimeout(() => form.setFocus("name"), 50);
+    } else {
+      // reset touched tracker when closed
+      keyTouchedRef.current = false;
+      setKeyTouched(false);
     }
   }, [open, source, form]);
+
+  // auto-generate key from name until user edits key
+  useEffect(() => {
+    const sub = form.watch((value, { name: watchedName }) => {
+      if (!keyTouchedRef.current) {
+        // auto-generate only if user hasn't touched key
+        const gen = makeKeyFromName(value.name ?? "");
+        form.setValue("key", gen, { shouldTouch: false, shouldDirty: true });
+      }
+    });
+    return () => sub.unsubscribe?.();
+  }, [form]);
 
   // close on Escape
   useEffect(() => {
@@ -62,6 +97,8 @@ export default function SourceForm({
 
   const saveMut = useMutation({
     mutationFn: async (payload: FormData) => {
+      // IMPORTANT: apiClient must include credentials (cookies). If it doesn't,
+      // replace with fetch(..., { credentials: "include" })
       if (source?.id) {
         await apiClient.put(`/leads/sources/${source.id}`, payload);
       } else {
@@ -76,15 +113,40 @@ export default function SourceForm({
       });
       onClose();
     },
-    onError: (err: any) =>
-      toast({ title: "Error", description: err?.message ?? "Save failed", variant: "destructive" }),
+    onError: (err: any) => {
+      // Try to show helpful server-side error messages
+      const serverMessage =
+        err?.response?.data?.error ??
+        err?.response?.data?.message ??
+        err?.message ??
+        String(err);
+      // if details provided, include them
+      const details = err?.response?.data?.details ? JSON.stringify(err.response.data.details) : undefined;
+      toast({
+        title: "Error",
+        description: details ? `${serverMessage} — ${details}` : serverMessage,
+        variant: "destructive",
+      });
+    },
   });
 
   function onSubmit(data: FormData) {
-    saveMut.mutate(data);
+    // ensure key normalized to upper-case (server also normalizes)
+    const payload = {
+      ...data,
+      key: (data.key ?? "").toString().trim().toUpperCase(),
+    };
+    saveMut.mutate(payload);
   }
 
   const saving = isMutationLoading(saveMut);
+
+  // handlers
+  const onKeyChange = (val: string) => {
+    keyTouchedRef.current = true;
+    setKeyTouched(true);
+    form.setValue("key", val);
+  };
 
   if (!open) return null;
 
@@ -127,7 +189,26 @@ export default function SourceForm({
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-3">
           <div>
-            <Label className="text-sm text-neutral-200">Name <span className="text-rose-500">*</span></Label>
+            <Label className="text-sm text-neutral-200">
+              Key / Code <span className="text-rose-500">*</span>
+            </Label>
+            <input
+              {...form.register("key")}
+              onChange={(e) => onKeyChange(e.target.value)}
+              className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition"
+              placeholder="Unique key (e.g. WEB_FORM)"
+              autoComplete="off"
+            />
+            {form.formState.errors.key && (
+              <p className="text-xs text-rose-400 mt-1">{String(form.formState.errors.key.message)}</p>
+            )}
+            <p className="text-xs text-neutral-400 mt-1">Automatically generated from name unless edited.</p>
+          </div>
+
+          <div>
+            <Label className="text-sm text-neutral-200">
+              Name <span className="text-rose-500">*</span>
+            </Label>
             <input
               {...form.register("name")}
               className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-neutral-100 placeholder:text-neutral-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition"
