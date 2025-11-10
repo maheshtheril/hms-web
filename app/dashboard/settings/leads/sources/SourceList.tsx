@@ -110,7 +110,9 @@ export default function SourceList() {
               <div className="flex items-center gap-2">
                 <span className="text-sm text-slate-300">{s.is_active ? "Active" : "Inactive"}</span>
 
+                {/* Edit button: give it a dark bg + white text so it's readable immediately */}
                 <Button
+                  // keep outline variant for consistency but add classes to ensure visible background/text
                   variant="outline"
                   size="sm"
                   onClick={() => {
@@ -118,6 +120,7 @@ export default function SourceList() {
                     setOpen(true);
                   }}
                   disabled={deleting}
+                  className="bg-neutral-800 text-white border-neutral-700 hover:bg-neutral-700"
                 >
                   Edit
                 </Button>
