@@ -1,7 +1,8 @@
+// app/components/leads/SourceForm.tsx
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -53,6 +54,9 @@ export default function SourceForm({
     defaultValues: { key: "", name: "", description: "", is_active: true },
   });
 
+  // useWatch for the name field only (prevents infinite watch->setValue loops)
+  const watchedName = useWatch({ control: form.control, name: "name" });
+
   // sync form when modal opens or source changes
   useEffect(() => {
     if (open) {
@@ -71,20 +75,24 @@ export default function SourceForm({
       // reset touched tracker when closed
       keyTouchedRef.current = false;
       setKeyTouched(false);
+      // also reset the form to defaults to avoid stale values when reopened blank
+      form.reset({ key: "", name: "", description: "", is_active: true });
     }
-  }, [open, source, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, source]);
 
   // auto-generate key from name until user edits key
   useEffect(() => {
-    const sub = form.watch((value, { name: watchedName }) => {
-      if (!keyTouchedRef.current) {
-        // auto-generate only if user hasn't touched key
-        const gen = makeKeyFromName(value.name ?? "");
-        form.setValue("key", gen, { shouldTouch: false, shouldDirty: true });
-      }
-    });
-    return () => sub.unsubscribe?.();
-  }, [form]);
+    if (keyTouchedRef.current) return; // user already edited key — don't auto-change
+    const gen = makeKeyFromName(String(watchedName ?? ""));
+    const currentKey = form.getValues("key") ?? "";
+    if (currentKey !== gen) {
+      // only update if different — prevents feedback loop
+      form.setValue("key", gen, { shouldTouch: false, shouldDirty: true });
+    }
+    // intentionally only depends on watchedName
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedName]);
 
   // close on Escape
   useEffect(() => {
@@ -145,7 +153,10 @@ export default function SourceForm({
   const onKeyChange = (val: string) => {
     keyTouchedRef.current = true;
     setKeyTouched(true);
-    form.setValue("key", val);
+    // only set when value actually differs
+    if (form.getValues("key") !== val) {
+      form.setValue("key", val, { shouldTouch: true, shouldDirty: true });
+    }
   };
 
   if (!open) return null;

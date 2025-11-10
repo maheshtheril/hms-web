@@ -1,5 +1,6 @@
+// app/components/leads/SourceList.tsx
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import apiClient from "@/lib/api-client";
 import SourceForm from "./SourceForm";
@@ -32,14 +33,21 @@ function isMutationLoading(mut: any) {
 
 export default function SourceList() {
   const [q, setQ] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
   const [editing, setEditing] = useState<Source | null>(null);
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const { toast } = useToast();
 
+  // debounce search input (200ms)
+  useEffect(() => {
+    const t = setTimeout(() => setQDebounced(q.trim()), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+
   const { data: items = [], isLoading } = useQuery<Source[]>({
-    queryKey: ["leads", "sources", q],
-    queryFn: () => fetchSources(q),
+    queryKey: ["leads", "sources", qDebounced],
+    queryFn: () => fetchSources(qDebounced),
     staleTime: 60_000,
     placeholderData: [],
   });
@@ -49,6 +57,7 @@ export default function SourceList() {
       await apiClient.delete(`/leads/sources/${id}`);
     },
     onSuccess: () => {
+      // invalidate all sources queries (prefix ["leads","sources"])
       qc.invalidateQueries({ queryKey: ["leads", "sources"] });
       toast({ title: "Deleted", description: "Source deleted." });
     },
