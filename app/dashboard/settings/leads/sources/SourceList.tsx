@@ -55,6 +55,13 @@ const LOAD_THRESHOLD = 6;
 /* -------------------------
  * API
  * ------------------------ */
+/**
+ * Resilient mapper for server shapes:
+ * - { data: rows[] }
+ * - { data: { rows: rows[], total: N } }
+ * - { rows: rows[], total: N }
+ * - rows[] (array directly)
+ */
 const fetchSourcesPage = async ({
   pageParam = 1,
   q = "",
@@ -65,7 +72,36 @@ const fetchSourcesPage = async ({
   const res = await apiClient.get(`/leads/sources`, {
     params: { page: pageParam, limit: PAGE_SIZE, q },
   });
-  return res.data;
+
+  const payload = res.data ?? {};
+
+  // shape: { data: { rows: [...], total: N } }
+  if (payload.data && Array.isArray(payload.data.rows)) {
+    return {
+      data: {
+        rows: payload.data.rows,
+        total: Number(payload.data.total ?? payload.data.rows.length),
+      },
+    };
+  }
+
+  // shape: { data: [...] }
+  if (Array.isArray(payload.data)) {
+    return { data: { rows: payload.data, total: payload.data.length } };
+  }
+
+  // shape: { rows: [...], total: N }
+  if (Array.isArray(payload.rows)) {
+    return { data: { rows: payload.rows, total: Number(payload.total ?? payload.rows.length) } };
+  }
+
+  // payload itself is array
+  if (Array.isArray(payload)) {
+    return { data: { rows: payload, total: payload.length } };
+  }
+
+  // ultimate fallback: empty
+  return { data: { rows: [], total: 0 } };
 };
 
 /* -------------------------
@@ -170,9 +206,16 @@ export default function SourceList(): JSX.Element {
     queryFn: async ({ pageParam = 1 }: { pageParam: number }) =>
       fetchSourcesPage({ pageParam, q: qDebounced }),
     getNextPageParam: (lastPage, pages) => {
-      const fetched = pages.flatMap((p) => p.data.rows).length;
-      const total = lastPage?.data?.total ?? 0;
-      return fetched < total ? pages.length + 1 : undefined;
+      // Prefer server-provided total. Otherwise use heuristic: if last page was full PAGE_SIZE, try next.
+      const allRows = pages.flatMap((p) => p.data.rows);
+      const lastRows = lastPage?.data?.rows ?? [];
+      const totalFromServer = lastPage?.data?.total;
+
+      if (typeof totalFromServer === "number") {
+        return allRows.length < totalFromServer ? pages.length + 1 : undefined;
+      }
+
+      return lastRows.length === PAGE_SIZE ? pages.length + 1 : undefined;
     },
     staleTime: 30_000,
     initialPageParam: 1,
@@ -198,7 +241,12 @@ export default function SourceList(): JSX.Element {
     () => data?.pages.flatMap((p) => p.data.rows) ?? [],
     [data]
   );
-  const total = data?.pages?.[0]?.data?.total ?? flattened.length;
+
+  const total = useMemo(() => {
+    const firstTotal = data?.pages?.[0]?.data?.total;
+    if (typeof firstTotal === "number") return firstTotal;
+    return flattened.length;
+  }, [data, flattened]);
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
