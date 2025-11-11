@@ -41,7 +41,8 @@ const DropdownMenuSubTrigger = React.forwardRef<
     <ChevronRight className="ml-auto w-4 h-4 text-slate-300" />
   </DropdownMenuPrimitive.SubTrigger>
 ));
-DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName;
+// stable fallback displayName for cleaner traces
+DropdownMenuSubTrigger.displayName = "DropdownMenuSubTrigger";
 
 /* SubContent */
 const DropdownMenuSubContent = React.forwardRef<
@@ -58,7 +59,7 @@ const DropdownMenuSubContent = React.forwardRef<
     {...props}
   />
 ));
-DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
+DropdownMenuSubContent.displayName = "DropdownMenuSubContent";
 
 /* Content */
 const DropdownMenuContent = React.forwardRef<
@@ -79,7 +80,7 @@ const DropdownMenuContent = React.forwardRef<
     />
   </DropdownMenuPrimitive.Portal>
 ));
-DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
+DropdownMenuContent.displayName = "DropdownMenuContent";
 
 /* Item */
 const DropdownMenuItem = React.forwardRef<
@@ -98,7 +99,7 @@ const DropdownMenuItem = React.forwardRef<
     {...props}
   />
 ));
-DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
+DropdownMenuItem.displayName = "DropdownMenuItem";
 
 /* Checkbox item */
 const DropdownMenuCheckboxItem = React.forwardRef<
@@ -123,7 +124,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
     {children}
   </DropdownMenuPrimitive.CheckboxItem>
 ));
-DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName;
+DropdownMenuCheckboxItem.displayName = "DropdownMenuCheckboxItem";
 
 /* Radio item */
 const DropdownMenuRadioItem = React.forwardRef<
@@ -147,7 +148,7 @@ const DropdownMenuRadioItem = React.forwardRef<
     {children}
   </DropdownMenuPrimitive.RadioItem>
 ));
-DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
+DropdownMenuRadioItem.displayName = "DropdownMenuRadioItem";
 
 /* Label */
 const DropdownMenuLabel = React.forwardRef<
@@ -160,7 +161,7 @@ const DropdownMenuLabel = React.forwardRef<
     {...props}
   />
 ));
-DropdownMenuLabel.displayName = DropdownMenuPrimitive.Label.displayName;
+DropdownMenuLabel.displayName = "DropdownMenuLabel";
 
 /* Separator */
 const DropdownMenuSeparator = React.forwardRef<
@@ -169,7 +170,7 @@ const DropdownMenuSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Separator ref={ref} className={cn("my-1 h-px bg-white/8", className)} {...props} />
 ));
-DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName;
+DropdownMenuSeparator.displayName = "DropdownMenuSeparator";
 
 /* Shortcut (right aligned small text) */
 const DropdownMenuShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => (
