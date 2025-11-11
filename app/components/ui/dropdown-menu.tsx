@@ -195,3 +195,5 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
 };
+// ensure both named and default export exist (safe)
+export default DropdownMenu;
