@@ -49,8 +49,7 @@ function up(m?: string) {
 
 /* ───────────────── baseURL ───────────────── */
 const envBase =
-  resolveApiBase(process.env.NEXT_PUBLIC_API_URL) ??
-  resolveApiBase(process.env.BACKEND_URL);
+  resolveApiBase(process.env.NEXT_PUBLIC_API_URL) ?? resolveApiBase(process.env.BACKEND_URL);
 const computedBaseURL = envBase || "/api";
 
 /* ───────────────── axios instance ───────────────── */
@@ -66,7 +65,11 @@ export const apiClient = axios.create({
 const refreshClient = axios.create({
   baseURL: apiClient.defaults.baseURL,
   withCredentials: true,
-  headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/json" },
+  headers: {
+    Accept: "application/json",
+    "X-Requested-With": "XMLHttpRequest",
+    "Content-Type": "application/json",
+  },
   timeout: 15000,
 });
 
@@ -121,13 +124,17 @@ function cryptoRandomBytes(n: number): Uint8Array {
 /* ───────────────── Refresh-on-401 (queue + retry) ─────────────────
    Behavior:
    - When a response returns 401 (and request hasn't already been retried),
-     attempt a single refresh by POSTing to /auth/refresh.
+     attempt a single refresh by POSTing to /auth/refresh (configurable).
    - While refresh is in progress, queue other requests that fail with 401.
    - If refresh succeeds, retry queued requests once.
    - If refresh fails, fall back to prior behavior (redirect on auth probe or reject).
    - Each request is retried at most once to avoid loops. We mark
      config._retry to track retries locally (non-enumerable).
 ──────────────────────────────────────────────────────────── */
+
+/* Make the refresh path configurable via env var so deployments that expose
+   a different refresh path (e.g. /api/auth/refresh) work without code changes. */
+const REFRESH_PATH = process.env.NEXT_PUBLIC_REFRESH_PATH ?? "/auth/refresh";
 
 let isRefreshing = false;
 let refreshPromise: Promise<void> | null = null;
@@ -163,8 +170,19 @@ async function attemptRefresh(): Promise<void> {
   refreshPromise = (async () => {
     try {
       // Use refreshClient to avoid our response interceptor recursion.
-      await refreshClient.post("/auth/refresh");
+      await refreshClient.post(REFRESH_PATH);
       await Promise.resolve();
+    } catch (e: any) {
+      // Better debug information when refresh fails in dev / staging.
+      try {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[apiClient] refresh failed:",
+          e?.response?.status ?? "NO_STATUS",
+          e?.response?.data ?? e?.message ?? e
+        );
+      } catch {}
+      throw e;
     } finally {
       isRefreshing = false;
       refreshPromise = null;
@@ -233,7 +251,7 @@ apiClient.interceptors.response.use(
       } catch {}
     }
 
-    const originalConfig = err.config as AxiosRequestConfig & { _retry?: boolean } | undefined;
+    const originalConfig = err.config as (AxiosRequestConfig & { _retry?: boolean }) | undefined;
 
     if (!originalConfig) return Promise.reject(err);
     if (status !== 401) return Promise.reject(err);
@@ -252,6 +270,7 @@ apiClient.interceptors.response.use(
           await attemptRefresh();
         } catch (refreshErr) {
           await processQueue(refreshErr);
+          // If a direct auth probe (me) failed, preserve redirect behaviour:
           if (typeof window !== "undefined" && /\/api\/auth\/me(\?|$)/.test(full) && status === 401) {
             try {
               sessionStorage.setItem("postLoginRedirect", window.location.pathname + window.location.search);

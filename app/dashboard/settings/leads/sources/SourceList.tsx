@@ -49,7 +49,7 @@ type PagedResp<T> = {
  * ------------------------ */
 const PAGE_SIZE = 30;
 const ROW_HEIGHT = 88;
-const LIST_HEIGHT = 640;
+const LIST_HEIGHT = 640; // you can make this responsive if needed
 const LOAD_THRESHOLD = 6;
 
 /* -------------------------
@@ -139,10 +139,10 @@ export default function SourceList(): JSX.Element {
       try {
         const mod = await import("@/components/ui/dropdown-menu");
         const ok =
-          Boolean(mod?.DropdownMenu) &&
-          Boolean(mod?.DropdownMenuTrigger) &&
-          Boolean(mod?.DropdownMenuContent) &&
-          Boolean(mod?.DropdownMenuItem);
+          Boolean((mod as any)?.DropdownMenu) &&
+          Boolean((mod as any)?.DropdownMenuTrigger) &&
+          Boolean((mod as any)?.DropdownMenuContent) &&
+          Boolean((mod as any)?.DropdownMenuItem);
         if (mounted) setPrimitivesAvailable(Boolean(ok));
       } catch {
         if (mounted) setPrimitivesAvailable(false);
@@ -223,8 +223,7 @@ export default function SourceList(): JSX.Element {
     },
     onError: (err: any, _id, ctx: any) => {
       qc.setQueryData(["leads", "sources", qDebounced], ctx?.previous);
-      const msg =
-        err?.response?.data?.error ?? err?.message ?? "Delete failed";
+      const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
       toast({
         title: "Delete failed",
         description: msg,
@@ -281,7 +280,13 @@ export default function SourceList(): JSX.Element {
     },
   });
 
-  const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+  const RowInner = ({
+    index,
+    style,
+  }: {
+    index: number;
+    style: React.CSSProperties;
+  }) => {
     const item = flattened[index];
     if (!item) {
       return (
@@ -305,17 +310,12 @@ export default function SourceList(): JSX.Element {
       <div
         style={style}
         className="p-4 border border-white/10 bg-white/5 rounded-xl flex items-center justify-between gap-4"
+        data-source-id={item.id}
       >
         <div className="flex-1">
-          <div className="font-medium text-white tracking-tight">
-            {item.name}
-          </div>
-          <div className="text-xs text-slate-300">
-            {item.description ?? "—"}
-          </div>
-          {item.key && (
-            <div className="text-xs text-slate-400 mt-1">Key: {item.key}</div>
-          )}
+          <div className="font-medium text-white tracking-tight">{item.name}</div>
+          <div className="text-xs text-slate-300">{item.description ?? "—"}</div>
+          {item.key && <div className="text-xs text-slate-400 mt-1">Key: {item.key}</div>}
         </div>
 
         <div className="flex items-center gap-2">
@@ -347,10 +347,7 @@ export default function SourceList(): JSX.Element {
                 className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
               >
                 <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onDelete}
-                  className="text-rose-400"
-                >
+                <DropdownMenuItem onClick={onDelete} className="text-rose-400">
                   🗑 Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -363,8 +360,10 @@ export default function SourceList(): JSX.Element {
     );
   };
 
-  const itemCount =
-    total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
+  // memoize row to avoid unnecessary re-renders
+  const Row = React.memo(RowInner);
+
+  const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
 
   const virtuosoRef = useRef<any>(null);
 
@@ -394,7 +393,7 @@ export default function SourceList(): JSX.Element {
         <div className="space-y-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div
-              key={i}
+              key={`skeleton-${i}`}
               className="p-4 border border-white/10 bg-white/4 rounded-xl animate-pulse"
             >
               <div className="h-4 w-1/3 bg-slate-700 rounded mb-2" />
@@ -410,10 +409,10 @@ export default function SourceList(): JSX.Element {
           style={{ height: LIST_HEIGHT, width: "100%" }}
           totalCount={itemCount}
           itemContent={(index) => {
-            // Wrap Row so style gets respected
             const style: React.CSSProperties = { height: ROW_HEIGHT };
+            const id = flattened[index]?.id ?? `skeleton-${index}`;
             return (
-              <div style={style}>
+              <div key={id} style={style}>
                 <Row index={index} style={style} />
               </div>
             );
@@ -429,15 +428,12 @@ export default function SourceList(): JSX.Element {
       {/* Footer */}
       <div className="mt-3 flex items-center justify-between">
         <div className="text-sm text-slate-400">
-          Showing{" "}
-          <span className="font-medium">{flattened.length}</span> of{" "}
+          Showing <span className="font-medium">{flattened.length}</span> of{" "}
           <span className="font-medium">{total}</span>
         </div>
 
         <div className="flex items-center gap-2">
-          {isFetchingNextPage && (
-            <div className="text-sm text-slate-400">Loading more…</div>
-          )}
+          {isFetchingNextPage && <div className="text-sm text-slate-400">Loading more…</div>}
           <Button variant="outline" size="sm" onClick={() => refetch()}>
             Refresh
           </Button>
