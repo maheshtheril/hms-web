@@ -3,32 +3,26 @@ import "flag-icons/css/flag-icons.min.css";
 import "./globals.css";
 
 import type { Metadata, Viewport } from "next";
-import { Providers } from "./providers"; // ✅ ensure this is a named export (see providers.tsx)
+import { Providers } from "./providers"; // server-safe providers (React Query server setup etc.)
+import ClientProviders from "@/components/ClientProviders"; // NEW: client wrapper
 import { Toaster } from "@/components/ui/toaster";
 
-/**
- * Global app metadata
- */
+/* metadata omitted for brevity — keep your existing metadata and viewport */
+
 export const metadata: Metadata = {
   title: "HMS SaaS ERP",
   description:
     "AI-integrated SaaS ERP platform built for modern enterprises — CRM, HMS, and intelligent automation powered by Neural Glass UI.",
-  icons: {
-    icon: "/favicon.ico",
-  },
+  icons: { icon: "/favicon.ico" },
   openGraph: {
     title: "HMS SaaS ERP",
-    description:
-      "Revolutionary AI-driven ERP built on Neural Glass Design Language.",
+    description: "Revolutionary AI-driven ERP built on Neural Glass Design Language.",
     type: "website",
     locale: "en_US",
     url: "https://hmsweb.onrender.com",
   },
 };
 
-/**
- * Viewport configuration
- */
 export const viewport: Viewport = {
   themeColor: "#0f0f0f",
   colorScheme: "dark",
@@ -37,24 +31,17 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-/**
- * Root layout (Server Component)
- * - Wraps app in QueryClientProvider via `Providers`
- * - Includes global Toaster notifications
- * - Provides dark Neural Glass base theme
- */
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="scroll-smooth antialiased">
       <body className="min-h-screen bg-neutral-950 text-neutral-100 selection:bg-emerald-400/30 font-sans antialiased overflow-x-hidden">
-        {/* React Query + Theme + Toast Providers */}
+        {/* Server-safe Providers */}
         <Providers>
-          {children}
-          <Toaster />
+          {/* ClientProviders ensures ToastProvider (and other client-only providers) wrap children at runtime */}
+          <ClientProviders>
+            {children}
+            <Toaster />
+          </ClientProviders>
         </Providers>
       </body>
     </html>
