@@ -61,6 +61,15 @@ export const apiClient = axios.create({
   timeout: 20000,
 });
 
+/* Minimal axios instance used for refresh calls to avoid interceptor recursion.
+   It shares baseURL + withCredentials but does NOT reuse our interceptors. */
+const refreshClient = axios.create({
+  baseURL: apiClient.defaults.baseURL,
+  withCredentials: true,
+  headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/json" },
+  timeout: 15000,
+});
+
 if (process.env.NODE_ENV !== "production") {
   try {
     // eslint-disable-next-line no-console
@@ -98,9 +107,9 @@ export function generateIdempotencyKey(prefix?: string): string {
 }
 
 function cryptoRandomBytes(n: number): Uint8Array {
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+  if (typeof crypto !== "undefined" && typeof (crypto as any).getRandomValues === "function") {
     const arr = new Uint8Array(n);
-    crypto.getRandomValues(arr);
+    (crypto as any).getRandomValues(arr);
     return arr;
   }
   // fallback to Math.random (should be rare in modern browsers)
@@ -112,7 +121,7 @@ function cryptoRandomBytes(n: number): Uint8Array {
 /* ───────────────── Refresh-on-401 (queue + retry) ─────────────────
    Behavior:
    - When a response returns 401 (and request hasn't already been retried),
-     attempt a single refresh by POSTing to /api/auth/refresh.
+     attempt a single refresh by POSTing to /auth/refresh.
    - While refresh is in progress, queue other requests that fail with 401.
    - If refresh succeeds, retry queued requests once.
    - If refresh fails, fall back to prior behavior (redirect on auth probe or reject).
@@ -153,8 +162,8 @@ async function attemptRefresh(): Promise<void> {
   isRefreshing = true;
   refreshPromise = (async () => {
     try {
-      // call your refresh endpoint. Assumes cookie-based refresh (withCredentials true).
-      await apiClient.post("/auth/refresh");
+      // Use refreshClient to avoid our response interceptor recursion.
+      await refreshClient.post("/auth/refresh");
       await Promise.resolve();
     } finally {
       isRefreshing = false;
