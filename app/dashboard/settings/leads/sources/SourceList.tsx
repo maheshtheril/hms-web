@@ -21,16 +21,8 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { EllipsisVertical } from "lucide-react";
 
-// robust import for react-window (no TS errors)
-import * as RW from "react-window";
-const FixedSizeList = (RW as any).FixedSizeList as React.ComponentType<any>;
-
-type ListOnItemsRenderedProps = {
-  overscanStartIndex: number;
-  overscanStopIndex: number;
-  visibleStartIndex: number;
-  visibleStopIndex: number;
-};
+// virtuoso
+import { Virtuoso } from "react-virtuoso";
 
 /* -------------------------
  * Types
@@ -77,7 +69,7 @@ const fetchSourcesPage = async ({
 };
 
 /* -------------------------
- * Fallback Menu (kept for safety)
+ * Fallback Menu
  * ------------------------ */
 function FallbackMenu({
   onEdit,
@@ -138,6 +130,28 @@ export default function SourceList(): JSX.Element {
   const { toast } = useToast();
 
   const listRef = useRef<any>(null);
+  const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
+
+  // runtime check for dropdown primitives
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const mod = await import("@/components/ui/dropdown-menu");
+        const ok =
+          Boolean(mod?.DropdownMenu) &&
+          Boolean(mod?.DropdownMenuTrigger) &&
+          Boolean(mod?.DropdownMenuContent) &&
+          Boolean(mod?.DropdownMenuItem);
+        if (mounted) setPrimitivesAvailable(Boolean(ok));
+      } catch {
+        if (mounted) setPrimitivesAvailable(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // debounce search
   useEffect(() => {
@@ -267,19 +281,6 @@ export default function SourceList(): JSX.Element {
     },
   });
 
-  const handleItemsRendered = useCallback(
-    (props: ListOnItemsRenderedProps) => {
-      const { visibleStopIndex } = props;
-      const loadedCount = flattened.length;
-      if (!hasNextPage || isFetchingNextPage) return;
-      if (loadedCount === 0) return;
-      if (visibleStopIndex >= loadedCount - 1 - LOAD_THRESHOLD) {
-        fetchNextPage();
-      }
-    },
-    [flattened.length, hasNextPage, isFetchingNextPage, fetchNextPage]
-  );
-
   const Row = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const item = flattened[index];
     if (!item) {
@@ -328,32 +329,35 @@ export default function SourceList(): JSX.Element {
             {item.is_active ? "Active" : "Inactive"}
           </span>
 
-          {/* Clean named imports used directly */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="hover:bg-white/8"
-                aria-label="Actions"
+          {primitivesAvailable ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="hover:bg-white/8"
+                  aria-label="Actions"
+                >
+                  <EllipsisVertical className="w-5 h-5 text-slate-300" />
+                </Button>
+              </DropdownMenuTrigger>
+
+              <DropdownMenuContent
+                align="end"
+                className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
               >
-                <EllipsisVertical className="w-5 h-5 text-slate-300" />
-              </Button>
-            </DropdownMenuTrigger>
-
-            <DropdownMenuContent
-              align="end"
-              className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
-            >
-              <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
-              <DropdownMenuItem onClick={onDelete} className="text-rose-400">
-                🗑 Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Keep fallback available but unused unless you explicitly prefer it */}
-          {/* <FallbackMenu onEdit={onEdit} onDelete={onDelete} /> */}
+                <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={onDelete}
+                  className="text-rose-400"
+                >
+                  🗑 Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <FallbackMenu onEdit={onEdit} onDelete={onDelete} />
+          )}
         </div>
       </div>
     );
@@ -361,6 +365,8 @@ export default function SourceList(): JSX.Element {
 
   const itemCount =
     total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
+
+  const virtuosoRef = useRef<any>(null);
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 text-slate-100 border border-white/10 p-6 shadow-lg backdrop-blur-xl">
@@ -399,18 +405,25 @@ export default function SourceList(): JSX.Element {
       ) : isError ? (
         <div className="text-rose-400">Failed to load sources. Try refreshing.</div>
       ) : (
-        <FixedSizeList
-          height={LIST_HEIGHT}
-          itemCount={itemCount}
-          itemSize={ROW_HEIGHT}
-          width="100%"
-          onItemsRendered={handleItemsRendered}
-          ref={(inst: any) => {
-            listRef.current = inst;
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ height: LIST_HEIGHT, width: "100%" }}
+          totalCount={itemCount}
+          itemContent={(index) => {
+            // Wrap Row so style gets respected
+            const style: React.CSSProperties = { height: ROW_HEIGHT };
+            return (
+              <div style={style}>
+                <Row index={index} style={style} />
+              </div>
+            );
           }}
-        >
-          {Row}
-        </FixedSizeList>
+          endReached={() => {
+            if (hasNextPage && !isFetchingNextPage) {
+              fetchNextPage();
+            }
+          }}
+        />
       )}
 
       {/* Footer */}
