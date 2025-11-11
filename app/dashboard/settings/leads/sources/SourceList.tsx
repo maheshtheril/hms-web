@@ -13,7 +13,7 @@ import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  // We keep imports for dropdown primitives in case you want to re-enable them later
+  // keep imports for dropdown primitives (unused by default but available)
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -167,7 +167,7 @@ export default function SourceList(): JSX.Element {
 
   const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
 
-  // runtime check for dropdown primitives (kept but we will use fallback unconditionally for now)
+  // runtime check for dropdown primitives (kept for later; fallback used now)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -449,7 +449,7 @@ export default function SourceList(): JSX.Element {
         />
       )}
 
-      {/* Footer */}
+      {/* Footer - native refresh button to avoid UI-lib styling/click issues */}
       <div className="mt-3 flex items-center justify-between">
         <div className="text-sm text-slate-400">
           Showing <span className="font-medium">{flattened.length}</span> of{" "}
@@ -458,17 +458,22 @@ export default function SourceList(): JSX.Element {
 
         <div className="flex items-center gap-2">
           {isFetchingNextPage && <div className="text-sm text-slate-400">Loading more…</div>}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              console.log("[Sources] refresh clicked");
-              refetch();
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log("[Sources] refresh clicked (native button)");
+              try {
+                void refetch();
+              } catch (err) {
+                console.error("[Sources] refetch threw", err);
+              }
             }}
-            className="text-white bg-transparent border-white/20 hover:bg-white/6"
+            style={{ WebkitTapHighlightColor: "transparent" }}
+            className="px-3 py-1 rounded text-sm font-medium text-white bg-transparent border border-white/20 hover:bg-white/6 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 z-50 relative"
           >
             Refresh
-          </Button>
+          </button>
         </div>
       </div>
 
