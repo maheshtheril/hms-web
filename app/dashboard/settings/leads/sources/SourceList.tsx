@@ -13,6 +13,7 @@ import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  // We keep imports for dropdown primitives in case you want to re-enable them later
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -49,8 +50,7 @@ type PagedResp<T> = {
  * ------------------------ */
 const PAGE_SIZE = 30;
 const ROW_HEIGHT = 88;
-const LIST_HEIGHT = 640; // you can make this responsive if needed
-const LOAD_THRESHOLD = 6;
+const LIST_HEIGHT = 640;
 
 /* -------------------------
  * API
@@ -165,10 +165,9 @@ export default function SourceList(): JSX.Element {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const listRef = useRef<any>(null);
   const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
 
-  // runtime check for dropdown primitives
+  // runtime check for dropdown primitives (kept but we will use fallback unconditionally for now)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -206,7 +205,6 @@ export default function SourceList(): JSX.Element {
     queryFn: async ({ pageParam = 1 }: { pageParam: number }) =>
       fetchSourcesPage({ pageParam, q: qDebounced }),
     getNextPageParam: (lastPage, pages) => {
-      // Prefer server-provided total. Otherwise use heuristic: if last page was full PAGE_SIZE, try next.
       const allRows = pages.flatMap((p) => p.data.rows);
       const lastRows = lastPage?.data?.rows ?? [];
       const totalFromServer = lastPage?.data?.total;
@@ -253,6 +251,7 @@ export default function SourceList(): JSX.Element {
       await apiClient.delete(`/leads/sources/${id}`);
     },
     onMutate: async (id: string) => {
+      console.log("[Sources] optimistic delete", id);
       await qc.cancelQueries({ queryKey: ["leads", "sources", qDebounced] });
       const previous = qc.getQueryData<any>(["leads", "sources", qDebounced]);
       qc.setQueryData<any>(["leads", "sources", qDebounced], (old: any) => {
@@ -270,6 +269,7 @@ export default function SourceList(): JSX.Element {
       return { previous, deletedItem };
     },
     onError: (err: any, _id, ctx: any) => {
+      console.error("[Sources] delete error", err);
       qc.setQueryData(["leads", "sources", qDebounced], ctx?.previous);
       const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
       toast({
@@ -377,32 +377,8 @@ export default function SourceList(): JSX.Element {
             {item.is_active ? "Active" : "Inactive"}
           </span>
 
-          {primitivesAvailable ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="hover:bg-white/8"
-                  aria-label="Actions"
-                >
-                  <EllipsisVertical className="w-5 h-5 text-slate-300" />
-                </Button>
-              </DropdownMenuTrigger>
-
-              <DropdownMenuContent
-                align="end"
-                className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
-              >
-                <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
-                <DropdownMenuItem onClick={onDelete} className="text-rose-400">
-                  🗑 Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <FallbackMenu onEdit={onEdit} onDelete={onDelete} />
-          )}
+          {/* FORCE FallbackMenu for guaranteed visible edit/delete while debugging */}
+          <FallbackMenu onEdit={onEdit} onDelete={onDelete} />
         </div>
       </div>
     );
@@ -482,7 +458,15 @@ export default function SourceList(): JSX.Element {
 
         <div className="flex items-center gap-2">
           {isFetchingNextPage && <div className="text-sm text-slate-400">Loading more…</div>}
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              console.log("[Sources] refresh clicked");
+              refetch();
+            }}
+            className="text-white bg-transparent border-white/20 hover:bg-white/6"
+          >
             Refresh
           </Button>
         </div>
