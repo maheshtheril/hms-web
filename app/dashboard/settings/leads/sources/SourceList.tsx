@@ -21,9 +21,10 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { EllipsisVertical } from "lucide-react";
 
-// ✅ FIX: robust import for react-window (no TS errors)
+// robust import for react-window (no TS errors)
 import * as RW from "react-window";
 const FixedSizeList = (RW as any).FixedSizeList as React.ComponentType<any>;
+
 type ListOnItemsRenderedProps = {
   overscanStartIndex: number;
   overscanStopIndex: number;
@@ -76,7 +77,7 @@ const fetchSourcesPage = async ({
 };
 
 /* -------------------------
- * Fallback Menu
+ * Fallback Menu (kept for safety)
  * ------------------------ */
 function FallbackMenu({
   onEdit,
@@ -137,28 +138,6 @@ export default function SourceList(): JSX.Element {
   const { toast } = useToast();
 
   const listRef = useRef<any>(null);
-  const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
-
-  // runtime check for dropdown primitives
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const mod = await import("@/components/ui/dropdown-menu");
-        const ok =
-          Boolean(mod?.DropdownMenu) &&
-          Boolean(mod?.DropdownMenuTrigger) &&
-          Boolean(mod?.DropdownMenuContent) &&
-          Boolean(mod?.DropdownMenuItem);
-        if (mounted) setPrimitivesAvailable(Boolean(ok));
-      } catch {
-        if (mounted) setPrimitivesAvailable(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   // debounce search
   useEffect(() => {
@@ -349,35 +328,32 @@ export default function SourceList(): JSX.Element {
             {item.is_active ? "Active" : "Inactive"}
           </span>
 
-          {primitivesAvailable ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="hover:bg-white/8"
-                  aria-label="Actions"
-                >
-                  <EllipsisVertical className="w-5 h-5 text-slate-300" />
-                </Button>
-              </DropdownMenuTrigger>
-
-              <DropdownMenuContent
-                align="end"
-                className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
+          {/* Clean named imports used directly */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="hover:bg-white/8"
+                aria-label="Actions"
               >
-                <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onDelete}
-                  className="text-rose-400"
-                >
-                  🗑 Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <FallbackMenu onEdit={onEdit} onDelete={onDelete} />
-          )}
+                <EllipsisVertical className="w-5 h-5 text-slate-300" />
+              </Button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent
+              align="end"
+              className="bg-neutral-900/90 border border-white/10 backdrop-blur-md shadow-xl rounded-xl"
+            >
+              <DropdownMenuItem onClick={onEdit}>✏️ Edit</DropdownMenuItem>
+              <DropdownMenuItem onClick={onDelete} className="text-rose-400">
+                🗑 Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Keep fallback available but unused unless you explicitly prefer it */}
+          {/* <FallbackMenu onEdit={onEdit} onDelete={onDelete} /> */}
         </div>
       </div>
     );
