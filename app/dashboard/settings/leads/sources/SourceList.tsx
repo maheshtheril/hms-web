@@ -13,7 +13,7 @@ import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  // keep imports for dropdown primitives (unused by default but available)
+  // kept for future re-enable; currently using fallback UI
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -21,8 +21,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
 import { EllipsisVertical } from "lucide-react";
-
-// virtuoso
 import { Virtuoso } from "react-virtuoso";
 
 /* -------------------------
@@ -75,7 +73,6 @@ const fetchSourcesPage = async ({
 
   const payload = res.data ?? {};
 
-  // shape: { data: { rows: [...], total: N } }
   if (payload.data && Array.isArray(payload.data.rows)) {
     return {
       data: {
@@ -85,22 +82,18 @@ const fetchSourcesPage = async ({
     };
   }
 
-  // shape: { data: [...] }
   if (Array.isArray(payload.data)) {
     return { data: { rows: payload.data, total: payload.data.length } };
   }
 
-  // shape: { rows: [...], total: N }
   if (Array.isArray(payload.rows)) {
     return { data: { rows: payload.rows, total: Number(payload.total ?? payload.rows.length) } };
   }
 
-  // payload itself is array
   if (Array.isArray(payload)) {
     return { data: { rows: payload, total: payload.length } };
   }
 
-  // ultimate fallback: empty
   return { data: { rows: [], total: 0 } };
 };
 
@@ -167,7 +160,7 @@ export default function SourceList(): JSX.Element {
 
   const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
 
-  // runtime check for dropdown primitives (kept for later; fallback used now)
+  // runtime check for dropdown primitives (kept but fallback used unconditionally)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -391,6 +384,34 @@ export default function SourceList(): JSX.Element {
 
   const virtuosoRef = useRef<any>(null);
 
+  // ---------- robust refresh handler ----------
+  const handleRefresh = useCallback(
+    async (e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      // strong logging so we can see what's happening in the user's console
+      console.log("[Sources] refresh clicked — handler running", { refetch, qDebounced });
+      if (typeof refetch !== "function") {
+        console.warn("[Sources] refetch is not a function:", refetch);
+        // try to nudge a full cache invalidation as fallback
+        try {
+          await qc.invalidateQueries({ queryKey: ["leads", "sources", qDebounced] });
+          console.log("[Sources] fallback invalidateQueries invoked");
+        } catch (err) {
+          console.error("[Sources] fallback invalidate failed", err);
+        }
+        return;
+      }
+      try {
+        await refetch();
+        console.log("[Sources] refetch completed");
+      } catch (err) {
+        console.error("[Sources] refetch error", err);
+      }
+    },
+    // refetch can be a stable function from react-query, but we include it to be safe
+    [refetch, qDebounced, qc]
+  );
+
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 text-slate-100 border border-white/10 p-6 shadow-lg backdrop-blur-xl">
       {/* Header */}
@@ -449,7 +470,7 @@ export default function SourceList(): JSX.Element {
         />
       )}
 
-      {/* Footer - native refresh button to avoid UI-lib styling/click issues */}
+      {/* Footer */}
       <div className="mt-3 flex items-center justify-between">
         <div className="text-sm text-slate-400">
           Showing <span className="font-medium">{flattened.length}</span> of{" "}
@@ -459,21 +480,15 @@ export default function SourceList(): JSX.Element {
         <div className="flex items-center gap-2">
           {isFetchingNextPage && <div className="text-sm text-slate-400">Loading more…</div>}
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              console.log("[Sources] refresh clicked (native button)");
-              try {
-                void refetch();
-              } catch (err) {
-                console.error("[Sources] refetch threw", err);
-              }
-            }}
-            style={{ WebkitTapHighlightColor: "transparent" }}
-            className="px-3 py-1 rounded text-sm font-medium text-white bg-transparent border border-white/20 hover:bg-white/6 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 z-50 relative"
+          {/* Use your Button component (less likely to be blocked by CSS overlays) */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            className="text-white bg-transparent border-white/20 hover:bg-white/6"
           >
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
