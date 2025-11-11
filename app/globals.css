@@ -231,3 +231,31 @@ body[data-page="lead-detailed"] [data-create-lead] {
   pointer-events: auto !important;
   opacity: 1 !important;
 }
+/* dropdown animations: paste into globals.css */
+@keyframes ng-fade-in {
+  from { opacity: 0; transform: translateY(-6px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ng-fade-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-6px) scale(.97); }
+}
+
+/* small slide-in helpers for sides (used by classes in component) */
+@keyframes ng-slide-in-from-right-2 { from { opacity:0; transform: translateX(6px) scale(.98);} to {opacity:1; transform:translateX(0) scale(1);} }
+@keyframes ng-slide-in-from-left-2  { from { opacity:0; transform: translateX(-6px) scale(.98);} to {opacity:1; transform:translateX(0) scale(1);} }
+@keyframes ng-slide-in-from-top-2   { from { opacity:0; transform: translateY(-6px) scale(.98);} to {opacity:1; transform:translateY(0) scale(1);} }
+@keyframes ng-slide-in-from-bottom-2{ from { opacity:0; transform: translateY(6px) scale(.98);}  to {opacity:1; transform:translateY(0) scale(1);} }
+
+/* helper classes used by component's data attributes */
+.data-\[state\=open\]\:animate-in,
+[data-state="open"] { animation: ng-fade-in 160ms cubic-bezier(.2,.9,.2,1); }
+.data-\[state\=closed\]\:animate-out,
+[data-state="closed"] { animation: ng-fade-out 120ms cubic-bezier(.3,.8,.25,1) forwards; }
+
+/* targeted slide helpers (Radix side attr is added automatically) */
+[data-side="right"][data-state="open"] { animation: ng-slide-in-from-right-2 170ms cubic-bezier(.2,.9,.2,1); }
+[data-side="left"][data-state="open"]  { animation: ng-slide-in-from-left-2 170ms cubic-bezier(.2,.9,.2,1); }
+[data-side="top"][data-state="open"]   { animation: ng-slide-in-from-top-2 170ms cubic-bezier(.2,.9,.2,1); }
+[data-side="bottom"][data-state="open"]{ animation: ng-slide-in-from-bottom-2 170ms cubic-bezier(.2,.9,.2,1); }
+
