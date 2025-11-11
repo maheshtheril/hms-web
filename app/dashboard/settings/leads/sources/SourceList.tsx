@@ -20,7 +20,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
-import { EllipsisVertical } from "lucide-react";
+import { EllipsisVertical, RefreshCw } from "lucide-react";
 import { Virtuoso } from "react-virtuoso";
 
 /* -------------------------
@@ -51,6 +51,18 @@ const ROW_HEIGHT = 88;
 const LIST_HEIGHT = 640;
 
 /* -------------------------
+ * Tenant helper (adjust to your auth/session provider)
+ * ------------------------ */
+const getTenantId = (): string => {
+  // adapt this helper to your app's tenant source (context, cookie, token, apiClient default header, etc.)
+  if (typeof window !== "undefined" && (window as any).__TENANT_ID__) return (window as any).__TENANT_ID__;
+  if ((apiClient as any)?.defaults?.headers?.["x-tenant-id"]) return (apiClient as any).defaults.headers["x-tenant-id"];
+  return "default";
+};
+
+const sourcesQueryKey = (tenantId: string, q = "") => ["leads", "sources", tenantId, q] as const;
+
+/* -------------------------
  * API
  * ------------------------ */
 /**
@@ -63,12 +75,16 @@ const LIST_HEIGHT = 640;
 const fetchSourcesPage = async ({
   pageParam = 1,
   q = "",
+  tenantId,
 }: {
   pageParam?: number;
   q?: string;
+  tenantId?: string;
 }): Promise<PagedResp<Source>> => {
   const res = await apiClient.get(`/leads/sources`, {
     params: { page: pageParam, limit: PAGE_SIZE, q },
+    // it's good practice to include tenant header, adjust as needed server-side
+    headers: tenantId ? { "x-tenant-id": tenantId } : undefined,
   });
 
   const payload = res.data ?? {};
@@ -98,7 +114,7 @@ const fetchSourcesPage = async ({
 };
 
 /* -------------------------
- * Fallback Menu
+ * Fallback Menu (improved basic keyboard + ARIA)
  * ------------------------ */
 function FallbackMenu({
   onEdit,
@@ -108,21 +124,51 @@ function FallbackMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = React.useRef<HTMLButtonElement | null>(null);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!btnRef.current?.contains(e.target as Node) && !menuRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   return (
     <div className="relative">
       <Button
+        ref={btnRef as any}
         size="icon"
         variant="ghost"
         className="hover:bg-white/8"
         aria-label="Actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((s) => !s)}
       >
         <EllipsisVertical className="w-5 h-5 text-slate-300" />
       </Button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-40 z-50 bg-neutral-900/95 border border-white/10 rounded-xl shadow-lg p-2">
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Source actions"
+          className="absolute right-0 mt-2 w-40 z-50 bg-neutral-900/95 border border-white/10 rounded-xl shadow-lg p-2"
+        >
           <button
+            role="menuitem"
             onClick={() => {
               setOpen(false);
               onEdit();
@@ -132,6 +178,7 @@ function FallbackMenu({
             ✏️ Edit
           </button>
           <button
+            role="menuitem"
             onClick={() => {
               setOpen(false);
               onDelete();
@@ -150,6 +197,8 @@ function FallbackMenu({
  * Component
  * ------------------------ */
 export default function SourceList(): JSX.Element {
+  const tenantId = getTenantId();
+
   const [q, setQ] = useState<string>("");
   const [qDebounced, setQDebounced] = useState<string>("");
   const [editing, setEditing] = useState<Source | null>(null);
@@ -194,9 +243,9 @@ export default function SourceList(): JSX.Element {
     readonly unknown[],
     number
   > = {
-    queryKey: ["leads", "sources", qDebounced],
+    queryKey: sourcesQueryKey(tenantId, qDebounced),
     queryFn: async ({ pageParam = 1 }: { pageParam: number }) =>
-      fetchSourcesPage({ pageParam, q: qDebounced }),
+      fetchSourcesPage({ pageParam, q: qDebounced, tenantId }),
     getNextPageParam: (lastPage, pages) => {
       const allRows = pages.flatMap((p) => p.data.rows);
       const lastRows = lastPage?.data?.rows ?? [];
@@ -210,6 +259,9 @@ export default function SourceList(): JSX.Element {
     },
     staleTime: 30_000,
     initialPageParam: 1,
+    // Better UX for "live" dashboards:
+    refetchOnWindowFocus: true,
+    refetchInterval: false, // set to a number (ms) if you want periodic polling
   };
 
   const {
@@ -220,6 +272,7 @@ export default function SourceList(): JSX.Element {
     hasNextPage,
     isFetchingNextPage,
     refetch,
+    isFetching,
   } = useInfiniteQuery<
     PagedResp<Source>,
     Error,
@@ -241,13 +294,13 @@ export default function SourceList(): JSX.Element {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
-      await apiClient.delete(`/leads/sources/${id}`);
+      await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
     },
     onMutate: async (id: string) => {
       console.log("[Sources] optimistic delete", id);
-      await qc.cancelQueries({ queryKey: ["leads", "sources", qDebounced] });
-      const previous = qc.getQueryData<any>(["leads", "sources", qDebounced]);
-      qc.setQueryData<any>(["leads", "sources", qDebounced], (old: any) => {
+      await qc.cancelQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) });
+      const previous = qc.getQueryData<any>(sourcesQueryKey(tenantId, qDebounced));
+      qc.setQueryData<any>(sourcesQueryKey(tenantId, qDebounced), (old: any) => {
         if (!old?.pages) return old;
         const newPages = old.pages.map((pg: any) => ({
           ...pg,
@@ -263,7 +316,7 @@ export default function SourceList(): JSX.Element {
     },
     onError: (err: any, _id, ctx: any) => {
       console.error("[Sources] delete error", err);
-      qc.setQueryData(["leads", "sources", qDebounced], ctx?.previous);
+      qc.setQueryData(sourcesQueryKey(tenantId, qDebounced), ctx?.previous);
       const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
       toast({
         title: "Delete failed",
@@ -271,7 +324,7 @@ export default function SourceList(): JSX.Element {
         variant: "destructive",
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["leads", "sources"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) }),
     onSuccess: (_data, _id, ctx: any) => {
       const deleted = ctx?.deletedItem ?? null;
 
@@ -280,20 +333,24 @@ export default function SourceList(): JSX.Element {
           onClick={async () => {
             if (!deleted) {
               await qc.invalidateQueries({
-                queryKey: ["leads", "sources", qDebounced],
+                queryKey: sourcesQueryKey(tenantId, qDebounced),
               });
               return;
             }
             try {
               try {
-                await apiClient.post(`/leads/sources/${deleted.id}/restore`);
+                await apiClient.post(
+                  `/leads/sources/${deleted.id}/restore`,
+                  {},
+                  { headers: { "x-tenant-id": tenantId } }
+                );
               } catch {
                 const recreate = { ...deleted };
                 delete (recreate as any).id;
-                await apiClient.post(`/leads/sources`, recreate);
+                await apiClient.post(`/leads/sources`, recreate, { headers: { "x-tenant-id": tenantId } });
               }
               await qc.invalidateQueries({
-                queryKey: ["leads", "sources", qDebounced],
+                queryKey: sourcesQueryKey(tenantId, qDebounced),
               });
               toast({
                 title: "Restored",
@@ -388,13 +445,11 @@ export default function SourceList(): JSX.Element {
   const handleRefresh = useCallback(
     async (e?: React.MouseEvent) => {
       if (e) e.stopPropagation();
-      // strong logging so we can see what's happening in the user's console
       console.log("[Sources] refresh clicked — handler running", { refetch, qDebounced });
       if (typeof refetch !== "function") {
         console.warn("[Sources] refetch is not a function:", refetch);
-        // try to nudge a full cache invalidation as fallback
         try {
-          await qc.invalidateQueries({ queryKey: ["leads", "sources", qDebounced] });
+          await qc.invalidateQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) });
           console.log("[Sources] fallback invalidateQueries invoked");
         } catch (err) {
           console.error("[Sources] fallback invalidate failed", err);
@@ -408,8 +463,7 @@ export default function SourceList(): JSX.Element {
         console.error("[Sources] refetch error", err);
       }
     },
-    // refetch can be a stable function from react-query, but we include it to be safe
-    [refetch, qDebounced, qc]
+    [refetch, qDebounced, qc, tenantId]
   );
 
   return (
@@ -422,15 +476,29 @@ export default function SourceList(): JSX.Element {
           placeholder="Search sources..."
           className="w-full md:w-1/2 bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/40"
         />
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setOpen(true);
-          }}
-          className="bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-md"
-        >
-          + Create
-        </Button>
+
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleRefresh}
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh sources"
+            className="hover:bg-white/6"
+            title={isFetching ? "Refreshing…" : "Refresh"}
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
+          </Button>
+
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setOpen(true);
+            }}
+            className="bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-md"
+          >
+            + Create
+          </Button>
+        </div>
       </div>
 
       {/* Body */}
@@ -447,12 +515,13 @@ export default function SourceList(): JSX.Element {
           ))}
         </div>
       ) : isError ? (
-        <div className="text-rose-400">Failed to load sources. Try refreshing.</div>
+        <div className="text-rose-400">Failed to load sources. Try the refresh button above.</div>
       ) : (
         <Virtuoso
           ref={virtuosoRef}
           style={{ height: LIST_HEIGHT, width: "100%" }}
           totalCount={itemCount}
+          computeItemKey={(index) => flattened[index]?.id ?? `skeleton-${index}`}
           itemContent={(index) => {
             const style: React.CSSProperties = { height: ROW_HEIGHT };
             const id = flattened[index]?.id ?? `skeleton-${index}`;
@@ -479,16 +548,6 @@ export default function SourceList(): JSX.Element {
 
         <div className="flex items-center gap-2">
           {isFetchingNextPage && <div className="text-sm text-slate-400">Loading more…</div>}
-
-          {/* Use your Button component (less likely to be blocked by CSS overlays) */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            className="text-white bg-transparent border-white/20 hover:bg-white/6"
-          >
-            Refresh
-          </Button>
         </div>
       </div>
 
