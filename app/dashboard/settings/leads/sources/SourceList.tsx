@@ -13,7 +13,7 @@ import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
-import { EllipsisVertical, RefreshCw } from "lucide-react";
+import { EllipsisVertical, RefreshCw, X } from "lucide-react";
 import { Virtuoso } from "react-virtuoso";
 
 /* -------------------------
@@ -44,7 +44,7 @@ const ROW_HEIGHT = 88;
 const LIST_HEIGHT = 640;
 
 /* -------------------------
- * Tenant helper (adjust to your auth/session provider)
+ * Tenant helper
  * ------------------------ */
 const getTenantId = (): string => {
   if (typeof window !== "undefined" && (window as any).__TENANT_ID__) return (window as any).__TENANT_ID__;
@@ -98,7 +98,7 @@ const fetchSourcesPage = async ({
 };
 
 /* -------------------------
- * Fallback Menu (improved keyboard + ARIA)
+ * Fallback Menu (keyboard + ARIA)
  * ------------------------ */
 function FallbackMenu({
   onEdit,
@@ -123,7 +123,6 @@ function FallbackMenu({
         setOpen(false);
         btnRef.current?.focus();
       }
-      // basic arrow navigation
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const items = Array.from(menuRef.current?.querySelectorAll('[role="menuitem"]') ?? []) as HTMLElement[];
@@ -136,7 +135,6 @@ function FallbackMenu({
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
-    // focus first menuitem after open
     const t = setTimeout(() => {
       const first = menuRef.current?.querySelector('[role="menuitem"]') as HTMLElement | null;
       first?.focus();
@@ -269,10 +267,25 @@ export default function SourceList(): JSX.Element {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  // debounce search
+  // debounce timer ref so we can cancel on Reset
+  const debounceRef = useRef<number | null>(null);
+
+  // debounce search (250ms)
   useEffect(() => {
-    const t = setTimeout(() => setQDebounced(q.trim()), 250);
-    return () => clearTimeout(t);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = window.setTimeout(() => {
+      setQDebounced(q.trim());
+      debounceRef.current = null;
+    }, 250);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
   }, [q]);
 
   const infiniteQueryOptions: UseInfiniteQueryOptions<
@@ -425,10 +438,10 @@ export default function SourceList(): JSX.Element {
   // local refreshing indicator (separate from react-query isFetching)
   const [refreshing, setRefreshing] = useState(false);
 
-  // ---------- robust refresh handler (manual fetch + prime cache) ----------
+  // ---------- robust refresh handler (keeps current search) ----------
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    console.log("🔥 Manual refresh clicked (manualFetch)");
+    console.log("🔥 Manual refresh clicked (manualFetch) — keeping current search:", qDebounced);
 
     const key = sourcesQueryKey(tenantId, qDebounced);
 
@@ -455,7 +468,6 @@ export default function SourceList(): JSX.Element {
       });
 
       console.log("Manual fetch + cache prime done ✅", page);
-      // visible feedback
       virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
     } catch (err) {
       console.error("❌ Manual fetch failed", err);
@@ -469,7 +481,45 @@ export default function SourceList(): JSX.Element {
     }
   }, [qDebounced, tenantId, qc, toast]);
 
-  // small helper stable callbacks passed to Row (avoid re-creating inline)
+  // ---------- reset handler (explicitly clear filter) ----------
+  const handleResetSearch = useCallback(() => {
+    // cancel pending debounce and immediately clear both states
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    setQ("");
+    setQDebounced("");
+    // optional: scroll top and prime empty query quickly
+    const key = sourcesQueryKey(tenantId, "");
+    (async () => {
+      try {
+        const res = await apiClient.get("/leads/sources", {
+          params: { page: 1, limit: PAGE_SIZE, q: "" },
+          headers: { "x-tenant-id": tenantId },
+        });
+        const page: PagedResp<Source> =
+          res.data && Array.isArray(res.data.rows ? res.data.rows : res.data)
+            ? {
+                data: {
+                  rows: res.data.rows ?? res.data,
+                  total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)),
+                },
+              }
+            : await fetchSourcesPage({ pageParam: 1, q: "", tenantId });
+
+        qc.setQueryData<InfiniteCache>(key, {
+          pages: [page],
+          pageParams: [1],
+        });
+        virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
+      } catch (err) {
+        console.error("Reset fetch failed", err);
+      }
+    })();
+  }, [qc, tenantId]);
+
+  // stable callbacks for Row
   const onEdit = useCallback(
     (item: Source) => {
       setEditing(item);
@@ -489,12 +539,26 @@ export default function SourceList(): JSX.Element {
     <div className="rounded-2xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 text-slate-100 border border-white/10 p-6 shadow-lg backdrop-blur-xl">
       {/* Header */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-3 mb-6">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search sources..."
-          className="w-full md:w-1/2 bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/40"
-        />
+        <div className="flex-1 flex items-center gap-3">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search sources..."
+            className="w-full md:w-1/2 bg-white/10 border-white/20 text-white placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500/40"
+            aria-label="Search sources"
+          />
+          {/* Clear / Reset button — explicit reset of filter */}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={handleResetSearch}
+            title="Reset search"
+            aria-label="Reset search"
+            className="hover:bg-white/6"
+          >
+            <X className="w-4 h-4 text-slate-300" />
+          </Button>
+        </div>
 
         <div className="flex items-center gap-2">
           <Button
