@@ -353,14 +353,13 @@ export default function SourceList(): JSX.Element {
       await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
     },
     onMutate: async (id: string) => {
-      // cancel queries for this tenant + current search (type-safe predicate)
+      // cancel queries for this tenant (broad) to avoid races
       await qc.cancelQueries({
         predicate: (query) =>
           Array.isArray(query.queryKey) &&
           query.queryKey[0] === "leads" &&
           query.queryKey[1] === "sources" &&
-          query.queryKey[2] === tenantId &&
-          query.queryKey[3] === qDebounced,
+          query.queryKey[2] === tenantId,
       });
 
       const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
@@ -667,9 +666,17 @@ export default function SourceList(): JSX.Element {
 
       <SourceForm
         open={open}
-        onClose={() => {
+        onClose={async () => {
           setOpen(false);
           setEditing(null);
+          // Invalidate tenant queries after create/update
+          await qc.invalidateQueries({
+            predicate: (query) =>
+              Array.isArray(query.queryKey) &&
+              query.queryKey[0] === "leads" &&
+              query.queryKey[1] === "sources" &&
+              query.queryKey[2] === tenantId,
+          });
         }}
         source={editing}
       />
