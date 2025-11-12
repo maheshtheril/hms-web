@@ -407,12 +407,40 @@ export default function SourceList(): JSX.Element {
    onSuccess: (_data, _id, ctx: any) => {
   const deleted = ctx?.deletedItem ?? null;
 
-  const undoButton = (
-    <button
-      type="button"
-      onClick={async (e) => {
-        e.stopPropagation();
-        if (!deleted) {
+  // inside deleteMut.onSuccess -> undoButton
+const undoButton = (
+  <button
+    type="button"
+    onClick={async (e) => {
+      e.stopPropagation();
+      if (!deleted) {
+        // no deleted item (shouldn't happen) -> refresh and return
+        await qc.invalidateQueries({
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            query.queryKey[0] === "leads" &&
+            query.queryKey[1] === "sources" &&
+            query.queryKey[2] === tenantId &&
+            query.queryKey[3] === qDebounced,
+        });
+        toast({ title: "Undo", description: "Refreshed list." });
+        return;
+      }
+
+      try {
+        // try restore (server route does auto soft-delete if needed)
+        const resp = await apiClient.post(
+          `/leads/sources/${deleted.id}/restore`,
+          {},
+          { headers: { "x-tenant-id": tenantId } }
+        );
+
+        // DEBUG: log full response so you can inspect body/status in console
+        console.debug("[sources] restore response:", resp);
+
+        // treat any 2xx as success
+        if (resp && resp.status >= 200 && resp.status < 300) {
+          // invalidate queries for tenant + current search
           await qc.invalidateQueries({
             predicate: (query) =>
               Array.isArray(query.queryKey) &&
@@ -421,77 +449,66 @@ export default function SourceList(): JSX.Element {
               query.queryKey[2] === tenantId &&
               query.queryKey[3] === qDebounced,
           });
-          toast({ title: "Undo", description: "Refreshed list." });
+
+          const successMsg =
+            resp?.data?.message ??
+            (resp?.data?.data ? `${deleted.name} restored.` : "Restored.");
+
+          toast({ title: "Restored", description: successMsg });
           return;
         }
 
-        try {
-          // Try server restore first
-          await apiClient.post(
-            `/leads/sources/${deleted.id}/restore`,
-            {},
-            { headers: { "x-tenant-id": tenantId } }
-          );
+        // non-2xx (should be rare because axios throws on non-2xx)
+        console.warn("[sources] unexpected restore response:", resp);
+        throw new Error("Unexpected restore response");
+      } catch (restoreErr: any) {
+        // log the error object and server response (if present)
+        console.warn("[sources] restore failed:", restoreErr?.response ?? restoreErr);
 
-          // refresh tenant+query
-          await qc.invalidateQueries({
-            predicate: (query) =>
-              Array.isArray(query.queryKey) &&
-              query.queryKey[0] === "leads" &&
-              query.queryKey[1] === "sources" &&
-              query.queryKey[2] === tenantId &&
-              query.queryKey[3] === qDebounced,
-          });
+        // If server returned JSON payload, prefer its message
+        const serverMsg =
+          restoreErr?.response?.data?.message ??
+          restoreErr?.response?.data?.error ??
+          restoreErr?.message ??
+          "Restore failed on server.";
 
-          toast({ title: "Restored", description: `${deleted.name} restored.` });
-          return;
-        } catch (restoreErr: any) {
-          // show server error & open editor so user can fix and recreate manually
-          console.error("[sources] restore failed:", restoreErr?.response ?? restoreErr);
-          const serverMsg =
-            restoreErr?.response?.data?.error ??
-            restoreErr?.response?.data?.message ??
-            restoreErr?.message ??
-            "Restore failed on server.";
+        // Open edit form prefilled so user can manually recreate/fix
+        toast({
+          title: "Undo failed",
+          description: serverMsg,
+          variant: "destructive",
+          action: (
+            <button
+              type="button"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setEditing(deleted);
+                setOpen(true);
+              }}
+              className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
+            >
+              Edit
+            </button>
+          ),
+        });
 
-          toast({
-            title: "Undo failed",
-            description: serverMsg,
-            variant: "destructive",
-            action: (
-              <button
-                type="button"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  // open the SourceForm prefilled for manual repair
-                  setEditing(deleted);
-                  setOpen(true);
-                }}
-                className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
-              >
-                Edit
-              </button>
-            ),
-          });
+        // keep UI consistent: refresh tenant queries
+        await qc.invalidateQueries({
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            query.queryKey[0] === "leads" &&
+            query.queryKey[1] === "sources" &&
+            query.queryKey[2] === tenantId &&
+            query.queryKey[3] === qDebounced,
+        });
+      }
+    }}
+    className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
+  >
+    Undo
+  </button>
+);
 
-          // refresh the list to reflect server state
-          await qc.invalidateQueries({
-            predicate: (query) =>
-              Array.isArray(query.queryKey) &&
-              query.queryKey[0] === "leads" &&
-              query.queryKey[1] === "sources" &&
-              query.queryKey[2] === tenantId &&
-              query.queryKey[3] === qDebounced,
-          });
-
-          return;
-        }
-      }}
-      className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
-    >
-      Undo
-    </button>
-  );
 
   toast({
     title: "Source deleted",
