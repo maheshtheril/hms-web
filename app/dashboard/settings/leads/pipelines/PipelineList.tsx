@@ -1,132 +1,628 @@
 "use client";
-import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type UseInfiniteQueryOptions,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import apiClient from "@/lib/api-client";
+import PipelineForm from "./PipelineForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
+import { EllipsisVertical, RefreshCw, X } from "lucide-react";
+import { Virtuoso } from "react-virtuoso";
 import { motion } from "framer-motion";
-import Link from "next/link";
-import PipelineForm from "./PipelineForm";
 
+/* -------------------------
+ * Types
+ * ------------------------ */
 export interface Pipeline {
   id: string;
-  tenant_id: string | null;
+  tenant_id?: string | null;
   name: string;
   description?: string | null;
-  is_active: boolean;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string;
+  deleted_at?: string | null;
 }
 
-/* ---------------- FETCH HOOKS ---------------- */
-const fetchPipelines = async (q: string) => {
-  const res = await apiClient.get("/leads/pipelines", { params: { q } });
-  return res.data?.rows ?? res.data?.data ?? [];
+type PagedResp<T> = {
+  data: {
+    rows: T[];
+    total: number;
+  };
 };
 
-export default function PipelineList() {
-  const [q, setQ] = useState("");
-  const [editing, setEditing] = useState<Pipeline | null>(null);
+/* -------------------------
+ * Config
+ * ------------------------ */
+const PAGE_SIZE = 30;
+const ROW_HEIGHT = 88;
+const LIST_HEIGHT = 640;
+
+/* -------------------------
+ * Tenant helper
+ * ------------------------ */
+const getTenantId = (): string => {
+  if (typeof window !== "undefined" && (window as any).__TENANT_ID__) return (window as any).__TENANT_ID__;
+  if ((apiClient as any)?.defaults?.headers?.["x-tenant-id"]) return (apiClient as any).defaults.headers["x-tenant-id"];
+  return "default";
+};
+
+const pipelinesQueryKey = (tenantId: string, q = "") => ["leads", "pipelines", tenantId, q] as const;
+
+/* -------------------------
+ * API
+ * ------------------------ */
+const fetchPipelinesPage = async ({
+  pageParam = 1,
+  q = "",
+  tenantId,
+}: {
+  pageParam?: number;
+  q?: string;
+  tenantId?: string;
+}): Promise<PagedResp<Pipeline>> => {
+  const res = await apiClient.get(`/leads/pipelines`, {
+    params: { page: pageParam, limit: PAGE_SIZE, q },
+    headers: tenantId ? { "x-tenant-id": tenantId } : undefined,
+  });
+
+  const payload = res.data ?? {};
+
+  if (payload.data && Array.isArray(payload.data.rows)) {
+    return {
+      data: {
+        rows: payload.data.rows,
+        total: Number(payload.data.total ?? payload.data.rows.length),
+      },
+    };
+  }
+
+  if (Array.isArray(payload.data)) {
+    return { data: { rows: payload.data, total: payload.data.length } };
+  }
+
+  if (Array.isArray(payload.rows)) {
+    return { data: { rows: payload.rows, total: Number(payload.total ?? payload.rows.length) } };
+  }
+
+  if (Array.isArray(payload)) {
+    return { data: { rows: payload, total: payload.length } };
+  }
+
+  return { data: { rows: [], total: 0 } };
+};
+
+/* -------------------------
+ * Simple accessible fallback menu
+ * ------------------------ */
+function FallbackMenu({
+  onEdit,
+  onDelete,
+}: {
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const btnRef = React.useRef<HTMLButtonElement | null>(null);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!btnRef.current?.contains(e.target as Node) && !menuRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        btnRef.current?.focus();
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const items = Array.from(menuRef.current?.querySelectorAll('[role="menuitem"]') ?? []) as HTMLElement[];
+        if (!items.length) return;
+        const active = document.activeElement as HTMLElement | null;
+        const idx = active ? items.indexOf(active) : -1;
+        const next = e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+        items[next]?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    const t = setTimeout(() => {
+      const first = menuRef.current?.querySelector('[role="menuitem"]') as HTMLElement | null;
+      first?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <Button
+        ref={btnRef as any}
+        size="icon"
+        variant="ghost"
+        className="hover:bg-white/8"
+        aria-label="Actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((s) => !s)}
+      >
+        <EllipsisVertical className="w-5 h-5 text-slate-600" />
+      </Button>
+
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Pipeline actions"
+          className="absolute right-0 mt-2 w-40 z-50 bg-white/95 border border-slate-200 rounded-xl shadow-lg p-2"
+        >
+          <button
+            role="menuitem"
+            tabIndex={0}
+            onClick={() => {
+              setOpen(false);
+              onEdit();
+            }}
+            className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-100"
+          >
+            ✏️ Edit
+          </button>
+          <button
+            role="menuitem"
+            tabIndex={0}
+            onClick={() => {
+              setOpen(false);
+              onDelete();
+            }}
+            className="w-full text-left px-3 py-2 rounded-md hover:bg-rose-50 text-rose-600 mt-1"
+          >
+            🗑 Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------
+ * Row component
+ * ------------------------ */
+type RowProps = {
+  item?: Pipeline | null;
+  style: React.CSSProperties;
+  onEdit: (item: Pipeline) => void;
+  onDelete: (id: string) => void;
+};
+
+function RowInnerStatic({ item, style, onEdit, onDelete }: RowProps) {
+  if (!item) {
+    return (
+      <div style={style} className="p-4 border border-slate-200/10 bg-slate-100/6 rounded-xl animate-pulse">
+        <div className="h-4 w-1/3 bg-slate-300 rounded mb-2" />
+        <div className="h-3 w-1/2 bg-slate-300 rounded mb-1" />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={style}
+      className="p-4 border border-white/10 bg-white/6 rounded-xl flex items-center justify-between gap-4"
+      data-pipeline-id={item.id}
+    >
+      <div className="flex-1">
+        <div className="font-medium text-slate-900 tracking-tight">{item.name}</div>
+        <div className="text-xs text-slate-500">{item.description ?? "—"}</div>
+        <div className="text-xs text-slate-400 mt-1">Tenant: {item.tenant_id ?? "global"}</div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span
+          className={`text-xs px-2 py-1 rounded-full ${
+            item.is_active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"
+          }`}
+        >
+          {item.is_active ? "Active" : "Inactive"}
+        </span>
+
+        <FallbackMenu onEdit={() => onEdit(item)} onDelete={() => onDelete(item.id)} />
+      </div>
+    </div>
+  );
+}
+
+export const Row = React.memo(RowInnerStatic);
+
+/* -------------------------
+ * Component
+ * ------------------------ */
+export default function PipelineList(): JSX.Element {
+  const tenantId = getTenantId();
+
+  const [q, setQ] = useState<string>("");
+  const [qDebounced, setQDebounced] = useState<string>("");
+  const [editing, setEditing] = useState<Pipeline | null>(null);
+  const [open, setOpen] = useState<boolean>(false);
+
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const { data: items = [], isLoading } = useQuery({
-  queryKey: ["pipelines", q],
-  queryFn: () => fetchPipelines(q),
-  // make data "fresh" for 60s to avoid refetch flicker
-  staleTime: 1000 * 60,
-  // optionally show previous data until the new data arrives
-  placeholderData: () => {
-    // you can return [] or previous cached value here if you want
-    return [];
-  },
-});
+  const debounceRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = window.setTimeout(() => {
+      setQDebounced(q.trim());
+      debounceRef.current = null;
+    }, 250);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, [q]);
+
+  const infiniteQueryOptions: UseInfiniteQueryOptions<
+    PagedResp<Pipeline>,
+    Error,
+    InfiniteData<PagedResp<Pipeline>>,
+    readonly unknown[],
+    number
+  > = {
+    queryKey: pipelinesQueryKey(tenantId, qDebounced),
+    queryFn: async ({ pageParam = 1 }: { pageParam: number }) =>
+      fetchPipelinesPage({ pageParam, q: qDebounced, tenantId }),
+    getNextPageParam: (lastPage, pages) => {
+      const allRows = pages.flatMap((p) => p.data.rows);
+      const lastRows = lastPage?.data?.rows ?? [];
+      const totalFromServer = lastPage?.data?.total;
+
+      if (typeof totalFromServer === "number") {
+        return allRows.length < totalFromServer ? pages.length + 1 : undefined;
+      }
+
+      return lastRows.length === PAGE_SIZE ? pages.length + 1 : undefined;
+    },
+    staleTime: 30_000,
+    initialPageParam: 1,
+    refetchOnWindowFocus: true,
+    refetchInterval: false,
+  };
+
+  const {
+    data,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+    isFetching,
+  } = useInfiniteQuery<PagedResp<Pipeline>, Error, InfiniteData<PagedResp<Pipeline>>, readonly unknown[], number>(
+    infiniteQueryOptions
+  );
+
+  const flattened = useMemo<Pipeline[]>(() => data?.pages.flatMap((p) => p.data.rows) ?? [], [data]);
+
+  const total = useMemo(() => {
+    const firstTotal = data?.pages?.[0]?.data?.total;
+    if (typeof firstTotal === "number") return firstTotal;
+    return flattened.length;
+  }, [data, flattened]);
+
+  type InfiniteCache = {
+    pages: PagedResp<Pipeline>[];
+    pageParams: number[];
+  };
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
-      await apiClient.delete(`/leads/pipelines/${id}`);
+      await apiClient.delete(`/leads/pipelines/${id}`, { headers: { "x-tenant-id": tenantId } });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["pipelines"] });
-      toast({ title: "Deleted", description: "Pipeline deleted successfully." });
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines" });
+      const previous = qc.getQueryData<InfiniteCache>(pipelinesQueryKey(tenantId, qDebounced));
+      qc.setQueryData<InfiniteCache>(pipelinesQueryKey(tenantId, qDebounced), (old) => {
+        if (!old?.pages) return old ?? { pages: [], pageParams: [] };
+        const newPages = old.pages.map((pg) => ({
+          ...pg,
+          data: {
+            ...pg.data,
+            rows: pg.data.rows.filter((r) => r.id !== id),
+          },
+        }));
+        return { ...old, pages: newPages };
+      });
+      const deletedItem = flattened.find((x) => x.id === id) ?? null;
+      return { previous, deletedItem };
     },
-    onError: (err: any) =>
+    onError: (err: any, _id, ctx: any) => {
+      qc.setQueryData(pipelinesQueryKey(tenantId, qDebounced), ctx?.previous);
+      const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
       toast({
-        title: "Error",
-        description: err?.message ?? "Delete failed.",
+        title: "Delete failed",
+        description: msg,
         variant: "destructive",
-      }),
+      });
+    },
+    onSettled: async () => {
+      await qc.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          query.queryKey[0] === "leads" &&
+          query.queryKey[1] === "pipelines" &&
+          query.queryKey[2] === tenantId,
+      });
+    },
+    onSuccess: async (_data, _id, ctx: any) => {
+      const deleted = ctx?.deletedItem ?? null;
+
+      const undoButton = (
+        <button
+          onClick={async () => {
+            if (!deleted) {
+              await qc.invalidateQueries({
+                predicate: (query) =>
+                  Array.isArray(query.queryKey) &&
+                  query.queryKey[0] === "leads" &&
+                  query.queryKey[1] === "pipelines" &&
+                  query.queryKey[2] === tenantId,
+              });
+              return;
+            }
+            try {
+              // try restore endpoint first (if API supports soft-delete)
+              try {
+                await apiClient.post(
+                  `/leads/pipelines/${deleted.id}/restore`,
+                  {},
+                  { headers: { "x-tenant-id": tenantId } }
+                );
+              } catch {
+                // fallback: recreate
+                const recreate = { ...deleted };
+                delete (recreate as any).id;
+                await apiClient.post(`/leads/pipelines`, recreate, { headers: { "x-tenant-id": tenantId } });
+              }
+
+              await qc.invalidateQueries({
+                predicate: (query) =>
+                  Array.isArray(query.queryKey) &&
+                  query.queryKey[0] === "leads" &&
+                  query.queryKey[1] === "pipelines" &&
+                  query.queryKey[2] === tenantId &&
+                  query.queryKey[3] === qDebounced,
+              });
+
+              toast({
+                title: "Restored",
+                description: `${deleted.name} restored.`,
+              });
+            } catch {
+              toast({
+                title: "Undo failed",
+                description: "Could not restore pipeline.",
+                variant: "destructive",
+              });
+            }
+          }}
+          className="px-3 py-1 rounded bg-slate-100/20 hover:bg-slate-100/40 text-sm"
+        >
+          Undo
+        </button>
+      );
+
+      toast({
+        title: "Pipeline deleted",
+        description: "Undo available for a short time.",
+        action: undoButton,
+      });
+    },
   });
 
+  const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
+  const virtuosoRef = useRef<any>(null);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const key = pipelinesQueryKey(tenantId, qDebounced);
+
+    try {
+      const res = await apiClient.get("/leads/pipelines", {
+        params: { page: 1, limit: PAGE_SIZE, q: qDebounced },
+        headers: { "x-tenant-id": tenantId },
+      });
+
+      const page: PagedResp<Pipeline> =
+        res.data && Array.isArray(res.data.rows ? res.data.rows : res.data)
+          ? {
+              data: {
+                rows: res.data.rows ?? res.data,
+                total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)),
+              },
+            }
+          : await fetchPipelinesPage({ pageParam: 1, q: qDebounced, tenantId });
+
+      qc.setQueryData<InfiniteCache>(key, {
+        pages: [page],
+        pageParams: [1],
+      });
+
+      virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
+    } catch (err) {
+      console.error("Refresh failed", err);
+      toast({
+        title: "Refresh failed",
+        description: "Could not refresh pipelines. Check network or server.",
+        variant: "destructive",
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [qDebounced, tenantId, qc, toast]);
+
+  const handleResetSearch = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    setQ("");
+    setQDebounced("");
+    const key = pipelinesQueryKey(tenantId, "");
+    (async () => {
+      try {
+        const res = await apiClient.get("/leads/pipelines", {
+          params: { page: 1, limit: PAGE_SIZE, q: "" },
+          headers: { "x-tenant-id": tenantId },
+        });
+        const page: PagedResp<Pipeline> =
+          res.data && Array.isArray(res.data.rows ? res.data.rows : res.data)
+            ? {
+                data: {
+                  rows: res.data.rows ?? res.data,
+                  total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)),
+                },
+              }
+            : await fetchPipelinesPage({ pageParam: 1, q: "", tenantId });
+
+        qc.setQueryData<InfiniteCache>(key, {
+          pages: [page],
+          pageParams: [1],
+        });
+        virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
+      } catch (err) {
+        console.error("Reset fetch failed", err);
+      }
+    })();
+  }, [qc, tenantId]);
+
+  const onEdit = useCallback((item: Pipeline) => {
+    setEditing(item);
+    setOpen(true);
+  }, []);
+
+  const onDelete = useCallback(
+    (id: string) => {
+      if (!confirm("Delete pipeline? This action is irreversible.")) return;
+      deleteMut.mutate(id);
+    },
+    [deleteMut]
+  );
+
   return (
-    <div className="rounded-xl bg-white/40 backdrop-blur-lg border border-white/20 p-5 shadow-md">
-      <div className="flex flex-col md:flex-row items-center justify-between gap-3 mb-5">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search pipelines..."
-          className="w-full md:w-1/2 bg-white/70 border-white/30"
-        />
-        <Button onClick={() => { setEditing(null); setOpen(true); }}>
-          + Create
-        </Button>
+    <div className="rounded-2xl bg-gradient-to-b from-white/6 to-white/4 text-slate-900 border border-slate-200/10 p-6 shadow-md backdrop-blur-sm">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row items-center justify-between gap-3 mb-6">
+        <div className="flex-1 flex items-center gap-3">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search pipelines..."
+            className="w-full md:w-1/2 bg-white/70 border-white/20"
+            aria-label="Search pipelines"
+          />
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={handleResetSearch}
+            title="Reset search"
+            aria-label="Reset search"
+            className="hover:bg-white/6"
+          >
+            <X className="w-4 h-4 text-slate-700" />
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleRefresh}
+            variant="ghost"
+            size="icon"
+            aria-label={isFetching || refreshing ? "Refreshing pipelines" : "Refresh pipelines"}
+            className="hover:bg-white/6"
+            title={isFetching || refreshing ? "Refreshing…" : "Refresh"}
+            disabled={isFetching || refreshing}
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetching || refreshing ? "animate-spin" : ""}`} />
+          </Button>
+
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setOpen(true);
+            }}
+            className="bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-md"
+          >
+            + Create
+          </Button>
+        </div>
       </div>
 
+      {/* Body */}
       {isLoading ? (
-        <div className="text-sm text-slate-500">Loading pipelines…</div>
-      ) : items.length === 0 ? (
-        <div className="text-sm text-slate-400">No pipelines found.</div>
-      ) : (
         <div className="space-y-3">
-          {items.map((p: Pipeline) => (
-
-            <motion.div
-              key={p.id}
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="p-4 border border-white/30 bg-white/60 backdrop-blur-xl rounded-xl flex items-center justify-between"
-            >
-              <div>
-                <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-slate-500">
-                  {p.description ?? "No description"} • {p.tenant_id ?? "Global"}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-600">
-                  {p.is_active ? "Active" : "Inactive"}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { setEditing(p); setOpen(true); }}
-                >
-                  Edit
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    if (confirm("Delete pipeline? This action is irreversible."))
-                      deleteMut.mutate(p.id);
-                  }}
-                >
-                  Delete
-                </Button>
-                <Link
-                  href={`/dashboard/settings/leads/stages?pipeline_id=${p.id}`}
-                  className="text-sm px-2 py-1 border rounded hover:bg-white/50"
-                >
-                  Manage Stages
-                </Link>
-              </div>
-            </motion.div>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={`skeleton-${i}`} className="p-4 border border-white/10 bg-white/6 rounded-xl animate-pulse">
+              <div className="h-4 w-1/3 bg-slate-300 rounded mb-2" />
+              <div className="h-3 w-1/2 bg-slate-300 rounded" />
+            </div>
           ))}
         </div>
+      ) : isError ? (
+        <div className="text-rose-500">Failed to load pipelines. Try the refresh button above.</div>
+      ) : (
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ height: LIST_HEIGHT, width: "100%" }}
+          totalCount={itemCount}
+          computeItemKey={(index) => flattened[index]?.id ?? `skeleton-${index}`}
+          itemContent={(index) => {
+            const style: React.CSSProperties = { height: ROW_HEIGHT };
+            const item = flattened[index] ?? null;
+            return (
+              <div key={item?.id ?? `p-${index}`} style={style}>
+                <Row item={item} style={style} onEdit={onEdit} onDelete={onDelete} />
+              </div>
+            );
+          }}
+          endReached={() => {
+            if (hasNextPage && !isFetchingNextPage) {
+              fetchNextPage();
+            }
+          }}
+        />
       )}
+
+      {/* Footer */}
+      <div className="mt-3 flex items-center justify-between">
+        <div className="text-sm text-slate-500">
+          Showing <span className="font-medium">{flattened.length}</span> of <span className="font-medium">{total}</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isFetchingNextPage && <div className="text-sm text-slate-500">Loading more…</div>}
+        </div>
+      </div>
 
       <PipelineForm open={open} onOpenChange={setOpen} pipeline={editing} />
     </div>

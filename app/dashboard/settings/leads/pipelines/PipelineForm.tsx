@@ -1,177 +1,289 @@
 "use client";
-import React, { useEffect, useRef } from "react";
-import { DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 
-/**
- * Controlled modal:
- * - open: boolean (controlled by parent)
- * - onClose: () => void  (called when user clicks overlay, presses Esc, or clicks Cancel)
- *
- * This implementation does NOT maintain its own "open" state.
- * It traps minimal keyboard (Escape) and restores focus to opener (best-effort).
- */
+import React, { useEffect, useRef } from "react";
+import { useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import apiClient from "@/lib/api-client";
+import { Label } from "@/components/ui/label";
+import { DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
+
+/* -------------------------------------------------------------------------- */
+/*  Schema & Types                                                            */
+/* -------------------------------------------------------------------------- */
+
+const Schema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  description: z.string().optional().nullable(),
+  is_active: z.boolean().optional(),
+});
+
+type FormData = z.infer<typeof Schema>;
+
+export type Pipeline = {
+  id: string;
+  tenant_id?: string | null;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+  deleted_at?: string | null;
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Helpers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function isMutationLoading(mut: any) {
+  return Boolean(mut?.isLoading ?? mut?.isPending ?? mut?.status === "loading");
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                 */
+/* -------------------------------------------------------------------------- */
 
 export default function PipelineForm({
   open,
-  pipeline,
   onClose,
+  pipeline,
 }: {
   open: boolean;
-  pipeline?: any;
   onClose: () => void;
+  pipeline?: Pipeline | null;
 }) {
-  const nameRef = useRef<HTMLInputElement | null>(null);
-  const overlayRef = useRef<HTMLDivElement | null>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
+  const qc = useQueryClient();
+  const { toast } = useToast();
 
-  // form state (local)
-  const [name, setName] = React.useState(pipeline?.name ?? "");
-  const [description, setDescription] = React.useState(pipeline?.description ?? "");
-  const [isActive, setIsActive] = React.useState(pipeline?.is_active ?? true);
-  const [saving, setSaving] = React.useState(false);
+  const form = useForm<FormData>({
+    resolver: zodResolver(Schema),
+    defaultValues: { name: "", description: "", is_active: true },
+    mode: "onChange",
+  });
 
-  // update local form values when pipeline changes or when opening
+  const focusRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
-    setName(pipeline?.name ?? "");
-    setDescription(pipeline?.description ?? "");
-    setIsActive(pipeline?.is_active ?? true);
-  }, [pipeline, open]);
-
-  // focus first field when opened and remember opener to restore focus
-  useEffect(() => {
-    if (!open) return;
-    openerRef.current = document.activeElement as HTMLElement | null;
-    // small timeout so element exists
-    setTimeout(() => nameRef.current?.focus(), 50);
-
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      try { openerRef.current?.focus(); } catch {}
-    };
-  }, [open, onClose]);
-
-  async function save() {
-    if (!name.trim()) {
-      alert("Name is required");
-      nameRef.current?.focus();
-      return;
-    }
-    setSaving(true);
-    try {
-      const payload = { name: name.trim(), description, is_active: isActive };
-      const url = pipeline ? `/api/leads/pipelines/${pipeline.id}` : `/api/leads/pipelines`;
-      const method = pipeline ? "PUT" : "POST";
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
+    if (open) {
+      form.reset({
+        name: pipeline?.name ?? "",
+        description: pipeline?.description ?? "",
+        is_active: pipeline?.is_active ?? true,
       });
-      if (!res.ok) throw new Error(await res.text());
-      onClose();
-    } catch (err) {
-      console.error("save pipeline error", err);
-      alert("Failed to save pipeline");
-    } finally {
-      setSaving(false);
+      setTimeout(() => focusRef.current?.focus(), 60);
+    } else {
+      form.reset({ name: "", description: "", is_active: true });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pipeline]);
+
+  /* ------------------------------- Mutation -------------------------------- */
+  const saveMut = useMutation({
+    mutationFn: async (payload: FormData) => {
+      return pipeline?.id
+        ? (await apiClient.put(`/leads/pipelines/${pipeline.id}`, payload)).data
+        : (await apiClient.post(`/leads/pipelines`, payload)).data;
+    },
+
+    onMutate: async (payload) => {
+      await qc.cancelQueries({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines" });
+      const prev = qc.getQueryData<any>(["leads", "pipelines"]);
+
+      const optimistic: Pipeline =
+        pipeline?.id
+          ? { ...(pipeline as Pipeline), ...payload }
+          : {
+              id: `tmp-${crypto.randomUUID()}`,
+              name: payload.name,
+              description: payload.description ?? null,
+              is_active: payload.is_active ?? true,
+              created_at: new Date().toISOString(),
+            };
+
+      const applyOptimistic = (old: any) => {
+        if (!old?.pages) return old;
+        const updatedPages = old.pages.map((pg: any, i: number) => {
+          const rows: Pipeline[] = pg.data.rows;
+          const idx = rows.findIndex((r) => r.id === optimistic.id);
+          if (idx !== -1) {
+            const newRows = [...rows];
+            newRows[idx] = optimistic;
+            return { ...pg, data: { ...pg.data, rows: newRows } };
+          }
+          if (i === 0 && optimistic.id.startsWith("tmp-")) {
+            return { ...pg, data: { ...pg.data, rows: [optimistic, ...rows] } };
+          }
+          return pg;
+        });
+        return { ...old, pages: updatedPages };
+      };
+
+      qc.getQueryCache()
+        .getAll()
+        .filter((q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines")
+        .forEach((q) => qc.setQueryData(q.queryKey, (old: any) => applyOptimistic(old)));
+
+      return { prev, optimistic };
+    },
+
+    onError: (err: any, _vars, ctx: any) => {
+      if (ctx?.prev) {
+        qc.getQueryCache()
+          .getAll()
+          .filter((q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines")
+          .forEach((q) => qc.setQueryData(q.queryKey, ctx.prev));
+      } else {
+        qc.invalidateQueries({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines" });
+      }
+      toast({
+        title: "Save failed",
+        description: err?.response?.data?.error ?? err?.message ?? "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    },
+
+    onSuccess: (res: any, _vars, ctx: any) => {
+      const canonical: Pipeline = res?.data ?? res;
+      qc.getQueryCache()
+        .getAll()
+        .filter((q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines")
+        .forEach((q) =>
+          qc.setQueryData(q.queryKey, (old: any) => {
+            if (!old?.pages) return old;
+            const newPages = old.pages.map((pg: any) => {
+              const rows = pg.data.rows.map((r: Pipeline) => (r.id === (ctx?.optimistic?.id || pipeline?.id) ? canonical : r));
+              return { ...pg, data: { ...pg.data, rows } };
+            });
+            return { ...old, pages: newPages };
+          })
+        );
+
+      toast({
+        title: pipeline ? "Updated" : "Created",
+        description: pipeline ? "Pipeline updated successfully." : "Pipeline created successfully.",
+      });
+
+      onClose();
+    },
+
+    onSettled: () =>
+      qc.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "leads" && q.queryKey[1] === "pipelines",
+      }),
+  });
+
+  /* ------------------------------- Handlers -------------------------------- */
+  function onSubmit(data: FormData) {
+    saveMut.mutate(data);
   }
 
-  // don't render anything if closed
+  const saving = isMutationLoading(saveMut);
+
   if (!open) return null;
+
+  /* -------------------------------------------------------------------------- */
+  /*  Render                                                                    */
+  /* -------------------------------------------------------------------------- */
 
   return (
     <>
       {/* overlay */}
       <div
-        ref={overlayRef}
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-md"
+        className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
         onMouseDown={(e) => {
-          // close if clicking the overlay (not when clicking inside modal)
-          if (e.target === overlayRef.current) onClose();
+          if (e.target === e.currentTarget) onClose();
         }}
-        aria-hidden
       />
 
-      {/* modal content */}
       <DialogContent
-        className="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 
-          rounded-2xl border border-white/20 bg-white/30 dark:bg-slate-900/40 
-          backdrop-blur-2xl shadow-2xl p-6 text-slate-900 dark:text-slate-100 ring-1 ring-white/10"
         role="dialog"
         aria-modal="true"
         aria-label={pipeline ? "Edit Pipeline" : "Create Pipeline"}
+        className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[640px] max-w-[95%]"
       >
         <DialogHeader>
-          <DialogTitle className="text-lg font-semibold tracking-wide">
-            {pipeline ? "Edit Pipeline" : "Create Pipeline"}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 mt-4">
           <div>
-            <Label required>Name</Label>
-            <input
-              ref={nameRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-white/20 bg-white/40 dark:bg-slate-800/40 
-                px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-              placeholder="Pipeline name"
-              aria-required
-            />
+            <DialogTitle className="text-lg font-semibold text-white tracking-tight">
+              {pipeline ? "Edit Pipeline" : "Create Pipeline"}
+            </DialogTitle>
+            <p className="text-sm text-slate-400 mt-1">
+              {pipeline ? "Modify existing pipeline details." : "Add a new pipeline to the system."}
+            </p>
           </div>
 
-          <div>
-            <Label>Description</Label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-white/20 bg-white/40 dark:bg-slate-800/40 
-                px-3 py-2 min-h-[90px] text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-              placeholder="Short description"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-              className="accent-blue-500 w-4 h-4"
-            />
-            <span>Active</span>
-          </label>
-        </div>
-
-        <DialogFooter className="flex justify-end gap-3 mt-6">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm font-medium 
-              bg-white/20 hover:bg-white/30 dark:bg-slate-800/30 dark:hover:bg-slate-700/40 
-              border border-white/10 transition-all"
+            aria-label="Close"
+            className="rounded p-1 hover:bg-white/6 transition-colors"
           >
-            Cancel
+            <svg
+              className="w-5 h-5 text-slate-300"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
+        </DialogHeader>
 
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-semibold 
-              bg-gradient-to-r from-blue-500 to-blue-600 text-white 
-              hover:from-blue-600 hover:to-blue-700 shadow-lg shadow-blue-500/25 
-              transition-all disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </DialogFooter>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5 mt-3">
+          {/* Name */}
+          <div>
+            <Label className="text-sm text-slate-200">
+              Name <span className="text-rose-500">*</span>
+            </Label>
+            <input
+              {...form.register("name")}
+              ref={(el) => {
+                form.register("name").ref(el);
+                if (el) focusRef.current = el;
+              }}
+              className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-white placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition"
+              placeholder="Pipeline name"
+              autoComplete="off"
+            />
+            {form.formState.errors.name && (
+              <p className="text-xs text-rose-400 mt-1">{String(form.formState.errors.name.message)}</p>
+            )}
+          </div>
+
+          {/* Description */}
+          <div>
+            <Label className="text-sm text-slate-200">Description</Label>
+            <textarea
+              {...form.register("description")}
+              className="mt-1 w-full p-3 rounded-lg bg-neutral-800/50 border border-neutral-700 text-white placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 outline-none transition resize-none h-24"
+              placeholder="Optional description"
+            />
+          </div>
+
+          {/* Active */}
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input type="checkbox" {...form.register("is_active")} className="accent-indigo-500 w-4 h-4" />
+            Active
+          </label>
+
+          <DialogFooter className="flex justify-end gap-3 mt-5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg bg-neutral-800 text-slate-300 border border-neutral-700 hover:bg-neutral-700 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 text-white font-semibold shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {saving ? "Saving…" : pipeline ? "Update" : "Save"}
+            </button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </>
   );
