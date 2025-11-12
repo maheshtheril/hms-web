@@ -27,6 +27,8 @@ export type Source = {
   description?: string | null;
   is_active?: boolean;
   created_at?: string;
+  config?: any;
+  deleted_at?: string | null;
 };
 
 type PagedResp<T> = {
@@ -229,6 +231,7 @@ function RowInnerStatic({ item, style, onEdit, onDelete }: RowProps) {
         <div className="font-medium text-white tracking-tight">{item.name}</div>
         <div className="text-xs text-slate-300">{item.description ?? "—"}</div>
         {item.key && <div className="text-xs text-slate-400 mt-1">Key: {item.key}</div>}
+        <div className="text-xs text-slate-400 mt-1">Tenant: {item.tenant_id ?? "global"}</div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -348,99 +351,68 @@ export default function SourceList(): JSX.Element {
     pageParams: number[];
   };
 
+  /* -------------------------
+   * deleteMut (confirm BEFORE calling, optimistic removal, undo toast on success)
+   * Matches the working professions implementation.
+   * ------------------------ */
   const deleteMut = useMutation({
-  mutationFn: async (id: string) => {
-    await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
-  },
-  onMutate: async (id: string) => {
-    await qc.cancelQueries({
-      predicate: (query) =>
-        Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "leads" &&
-        query.queryKey[1] === "sources" &&
-        query.queryKey[2] === tenantId,
-    });
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
+    },
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          query.queryKey[0] === "leads" &&
+          query.queryKey[1] === "sources" &&
+          query.queryKey[2] === tenantId,
+      });
 
-    const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
+      const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
 
-    qc.setQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced), (old) => {
-      if (!old?.pages) return old ?? { pages: [], pageParams: [] };
-      const newPages = old.pages.map((pg) => ({
-        ...pg,
-        data: {
-          ...pg.data,
-          rows: pg.data.rows.filter((r) => r.id !== id),
-        },
-      }));
-      return { ...old, pages: newPages };
-    });
+      qc.setQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced), (old) => {
+        if (!old?.pages) return old ?? { pages: [], pageParams: [] };
+        const newPages = old.pages.map((pg) => ({
+          ...pg,
+          data: {
+            ...pg.data,
+            rows: pg.data.rows.filter((r) => r.id !== id),
+          },
+        }));
+        return { ...old, pages: newPages };
+      });
 
-    const deletedItem = flattened.find((x) => x.id === id) ?? null;
-    return { previous, deletedItem };
-  },
-  onError: (err: any, _id, ctx: any) => {
-    qc.setQueryData(sourcesQueryKey(tenantId, qDebounced), ctx?.previous);
-    const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
-    console.error("[sources] delete error:", err);
-    toast({
-      title: "Delete failed",
-      description: msg,
-      variant: "destructive",
-    });
-  },
-  onSettled: async () => {
-    await qc.invalidateQueries({
-      predicate: (query) =>
-        Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "leads" &&
-        query.queryKey[1] === "sources" &&
-        query.queryKey[2] === tenantId,
-    });
-  },
-  onSuccess: (_data, _id, ctx: any) => {
-    const deleted = ctx?.deletedItem ?? null;
+      const deletedItem = flattened.find((x) => x.id === id) ?? null;
+      return { previous, deletedItem };
+    },
+    onError: (err: any, _id: any, ctx: any) => {
+      qc.setQueryData(sourcesQueryKey(tenantId, qDebounced), ctx?.previous);
+      const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
+      console.error("[sources] delete error:", err);
+      toast({
+        title: "Delete failed",
+        description: msg,
+        variant: "destructive",
+      });
+    },
+    onSettled: async () => {
+      await qc.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          query.queryKey[0] === "leads" &&
+          query.queryKey[1] === "sources" &&
+          query.queryKey[2] === tenantId,
+      });
+    },
+    onSuccess: (_data, _id, ctx: any) => {
+      const deleted = ctx?.deletedItem ?? null;
 
-    const undoButton = (
-      <button
-        type="button"
-        onClick={async (e) => {
-          e.stopPropagation();
-          if (!deleted) {
-            await qc.invalidateQueries({
-              predicate: (query) =>
-                Array.isArray(query.queryKey) &&
-                query.queryKey[0] === "leads" &&
-                query.queryKey[1] === "sources" &&
-                query.queryKey[2] === tenantId &&
-                query.queryKey[3] === qDebounced,
-            });
-            toast({ title: "Undo", description: "Refreshed list." });
-            return;
-          }
-
-          try {
-            await apiClient.post(`/leads/sources/${deleted.id}/restore`, {}, { headers: { "x-tenant-id": tenantId } });
-            await qc.invalidateQueries({
-              predicate: (query) =>
-                Array.isArray(query.queryKey) &&
-                query.queryKey[0] === "leads" &&
-                query.queryKey[1] === "sources" &&
-                query.queryKey[2] === tenantId &&
-                query.queryKey[3] === qDebounced,
-            });
-            toast({ title: "Restored", description: `${deleted.name} restored.` });
-          } catch (restoreErr: any) {
-            console.warn("[sources] restore failed, attempting recreate:", restoreErr);
-            const recreatePayload: any = {
-              name: deleted.name,
-              description: deleted.description ?? null,
-              is_active: !!deleted.is_active,
-              tenant_id: deleted.tenant_id ?? tenantId,
-            };
-            if ((deleted as any).key) recreatePayload.key = (deleted as any).key;
-            if ((deleted as any).config) recreatePayload.config = (deleted as any).config;
-
-            if (!recreatePayload.key) {
+      const undoButton = (
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (!deleted) {
               await qc.invalidateQueries({
                 predicate: (query) =>
                   Array.isArray(query.queryKey) &&
@@ -449,16 +421,13 @@ export default function SourceList(): JSX.Element {
                   query.queryKey[2] === tenantId &&
                   query.queryKey[3] === qDebounced,
               });
-              toast({
-                title: "Undo failed",
-                description: "Item cannot be recreated automatically (missing key). Refreshed list.",
-                variant: "destructive",
-              });
+              toast({ title: "Undo", description: "Refreshed list." });
               return;
             }
 
             try {
-              await apiClient.post(`/leads/sources`, recreatePayload, { headers: { "x-tenant-id": tenantId } });
+              // Try restore first
+              await apiClient.post(`/leads/sources/${deleted.id}/restore`, {}, { headers: { "x-tenant-id": tenantId } });
               await qc.invalidateQueries({
                 predicate: (query) =>
                   Array.isArray(query.queryKey) &&
@@ -467,32 +436,69 @@ export default function SourceList(): JSX.Element {
                   query.queryKey[2] === tenantId &&
                   query.queryKey[3] === qDebounced,
               });
-              toast({ title: "Recreated", description: `${deleted.name} recreated.` });
-            } catch (recreateErr: any) {
-              console.error("[sources] recreate failed:", recreateErr);
-              toast({
-                title: "Undo failed",
-                description: recreateErr?.response?.data?.error ?? recreateErr?.message ?? "Could not restore/recreate.",
-                variant: "destructive",
-              });
+              toast({ title: "Restored", description: `${deleted.name} restored.` });
+            } catch (restoreErr: any) {
+              console.warn("[sources] restore failed, attempting recreate:", restoreErr);
+              const recreatePayload: any = {
+                name: deleted.name,
+                description: deleted.description ?? null,
+                is_active: !!deleted.is_active,
+                tenant_id: deleted.tenant_id ?? tenantId,
+              };
+              if ((deleted as any).key) recreatePayload.key = (deleted as any).key;
+              if ((deleted as any).config) recreatePayload.config = (deleted as any).config;
+
+              if (!recreatePayload.key) {
+                await qc.invalidateQueries({
+                  predicate: (query) =>
+                    Array.isArray(query.queryKey) &&
+                    query.queryKey[0] === "leads" &&
+                    query.queryKey[1] === "sources" &&
+                    query.queryKey[2] === tenantId &&
+                    query.queryKey[3] === qDebounced,
+                });
+                toast({
+                  title: "Undo failed",
+                  description: "Item cannot be recreated automatically (missing key). Refreshed list.",
+                  variant: "destructive",
+                });
+                return;
+              }
+
+              try {
+                await apiClient.post(`/leads/sources`, recreatePayload, { headers: { "x-tenant-id": tenantId } });
+                await qc.invalidateQueries({
+                  predicate: (query) =>
+                    Array.isArray(query.queryKey) &&
+                    query.queryKey[0] === "leads" &&
+                    query.queryKey[1] === "sources" &&
+                    query.queryKey[2] === tenantId &&
+                    query.queryKey[3] === qDebounced,
+                });
+                toast({ title: "Recreated", description: `${deleted.name} recreated.` });
+              } catch (recreateErr: any) {
+                console.error("[sources] recreate failed:", recreateErr);
+                toast({
+                  title: "Undo failed",
+                  description: recreateErr?.response?.data?.error ?? recreateErr?.message ?? "Could not restore/recreate.",
+                  variant: "destructive",
+                });
+              }
             }
-          }
-        }}
-        className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
-      >
-        Undo
-      </button>
-    );
+          }}
+          className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
+        >
+          Undo
+        </button>
+      );
 
-    toast({
-      title: "Source deleted",
-      description: "Undo available for a short time.",
-      action: undoButton,
-    });
-  },
-});
-
-
+      toast({
+        title: "Source deleted",
+        description: "Undo available for a short time.",
+        action: undoButton,
+      });
+    },
+  });
 
   const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
   const virtuosoRef = useRef<any>(null);
@@ -590,8 +596,10 @@ export default function SourceList(): JSX.Element {
     [setEditing, setOpen]
   );
 
+  // confirm BEFORE calling mutation (important)
   const onDelete = useCallback(
     (id: string) => {
+      if (!window.confirm("Delete source?")) return;
       deleteMut.mutate(id);
     },
     [deleteMut]
