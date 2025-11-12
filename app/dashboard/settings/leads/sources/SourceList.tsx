@@ -353,7 +353,16 @@ export default function SourceList(): JSX.Element {
       await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
     },
     onMutate: async (id: string) => {
-      await qc.cancelQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) });
+      // cancel queries for this tenant + current search (type-safe predicate)
+      await qc.cancelQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          query.queryKey[0] === "leads" &&
+          query.queryKey[1] === "sources" &&
+          query.queryKey[2] === tenantId &&
+          query.queryKey[3] === qDebounced,
+      });
+
       const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
       qc.setQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced), (old) => {
         if (!old?.pages) return old ?? { pages: [], pageParams: [] };
@@ -378,7 +387,16 @@ export default function SourceList(): JSX.Element {
         variant: "destructive",
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) }),
+    // invalidate by tenant (type-safe predicate) on settled
+    onSettled: async () => {
+      await qc.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          query.queryKey[0] === "leads" &&
+          query.queryKey[1] === "sources" &&
+          query.queryKey[2] === tenantId,
+      });
+    },
     onSuccess: (_data, _id, ctx: any) => {
       const deleted = ctx?.deletedItem ?? null;
 
@@ -387,7 +405,11 @@ export default function SourceList(): JSX.Element {
           onClick={async () => {
             if (!deleted) {
               await qc.invalidateQueries({
-                queryKey: sourcesQueryKey(tenantId, qDebounced),
+                predicate: (query) =>
+                  Array.isArray(query.queryKey) &&
+                  query.queryKey[0] === "leads" &&
+                  query.queryKey[1] === "sources" &&
+                  query.queryKey[2] === tenantId,
               });
               return;
             }
@@ -403,9 +425,17 @@ export default function SourceList(): JSX.Element {
                 delete (recreate as any).id;
                 await apiClient.post(`/leads/sources`, recreate, { headers: { "x-tenant-id": tenantId } });
               }
+
+              // Invalidate only the queries for this tenant + current search to refresh UI
               await qc.invalidateQueries({
-                queryKey: sourcesQueryKey(tenantId, qDebounced),
+                predicate: (query) =>
+                  Array.isArray(query.queryKey) &&
+                  query.queryKey[0] === "leads" &&
+                  query.queryKey[1] === "sources" &&
+                  query.queryKey[2] === tenantId &&
+                  query.queryKey[3] === qDebounced,
               });
+
               toast({
                 title: "Restored",
                 description: `${deleted.name} restored.`,
