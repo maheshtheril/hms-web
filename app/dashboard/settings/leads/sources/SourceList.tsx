@@ -363,7 +363,6 @@ export default function SourceList(): JSX.Element {
 
     const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
 
-    // Remove the item from cache immediately
     qc.setQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced), (old) => {
       if (!old?.pages) return old ?? { pages: [], pageParams: [] };
       const newPages = old.pages.map((pg) => ({
@@ -376,12 +375,10 @@ export default function SourceList(): JSX.Element {
       return { ...old, pages: newPages };
     });
 
-    // find the deleted item from the flattened (latest) snapshot
     const deletedItem = flattened.find((x) => x.id === id) ?? null;
     return { previous, deletedItem };
   },
   onError: (err: any, _id, ctx: any) => {
-    // rollback
     qc.setQueryData(sourcesQueryKey(tenantId, qDebounced), ctx?.previous);
     const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
     console.error("[sources] delete error:", err);
@@ -403,14 +400,12 @@ export default function SourceList(): JSX.Element {
   onSuccess: (_data, _id, ctx: any) => {
     const deleted = ctx?.deletedItem ?? null;
 
-    // Build an undo button that actually works when clicked.
     const undoButton = (
       <button
         type="button"
         onClick={async (e) => {
           e.stopPropagation();
           if (!deleted) {
-            // If we don't have the item, just refetch the queries
             await qc.invalidateQueries({
               predicate: (query) =>
                 Array.isArray(query.queryKey) &&
@@ -419,22 +414,12 @@ export default function SourceList(): JSX.Element {
                 query.queryKey[2] === tenantId &&
                 query.queryKey[3] === qDebounced,
             });
-            toast({
-              title: "Undo",
-              description: "Could not find deleted item locally — refreshed the list.",
-            });
+            toast({ title: "Undo", description: "Refreshed list." });
             return;
           }
 
           try {
-            // Try restore first
-            await apiClient.post(
-              `/leads/sources/${deleted.id}/restore`,
-              {},
-              { headers: { "x-tenant-id": tenantId } }
-            );
-
-            // refresh cache for current tenant + query
+            await apiClient.post(`/leads/sources/${deleted.id}/restore`, {}, { headers: { "x-tenant-id": tenantId } });
             await qc.invalidateQueries({
               predicate: (query) =>
                 Array.isArray(query.queryKey) &&
@@ -443,30 +428,19 @@ export default function SourceList(): JSX.Element {
                 query.queryKey[2] === tenantId &&
                 query.queryKey[3] === qDebounced,
             });
-
-            toast({
-              title: "Restored",
-              description: `${deleted.name} restored.`,
-            });
+            toast({ title: "Restored", description: `${deleted.name} restored.` });
           } catch (restoreErr: any) {
             console.warn("[sources] restore failed, attempting recreate:", restoreErr);
-
-            // If restore fails with 404, try recreate with minimal required fields.
-            // IMPORTANT: sources require `key` + `name` — ensure we have those.
             const recreatePayload: any = {
               name: deleted.name,
               description: deleted.description ?? null,
               is_active: !!deleted.is_active,
               tenant_id: deleted.tenant_id ?? tenantId,
             };
-
-            // include key if present (key is required for sources create)
             if ((deleted as any).key) recreatePayload.key = (deleted as any).key;
-            // include config if present
             if ((deleted as any).config) recreatePayload.config = (deleted as any).config;
 
             if (!recreatePayload.key) {
-              // can't recreate without `key` — notify user and refresh
               await qc.invalidateQueries({
                 predicate: (query) =>
                   Array.isArray(query.queryKey) &&
@@ -477,17 +451,14 @@ export default function SourceList(): JSX.Element {
               });
               toast({
                 title: "Undo failed",
-                description: "Item cannot be restored automatically (missing key). Refreshed list.",
+                description: "Item cannot be recreated automatically (missing key). Refreshed list.",
                 variant: "destructive",
               });
               return;
             }
 
             try {
-              await apiClient.post(`/leads/sources`, recreatePayload, {
-                headers: { "x-tenant-id": tenantId },
-              });
-
+              await apiClient.post(`/leads/sources`, recreatePayload, { headers: { "x-tenant-id": tenantId } });
               await qc.invalidateQueries({
                 predicate: (query) =>
                   Array.isArray(query.queryKey) &&
@@ -496,19 +467,12 @@ export default function SourceList(): JSX.Element {
                   query.queryKey[2] === tenantId &&
                   query.queryKey[3] === qDebounced,
               });
-
-              toast({
-                title: "Recreated",
-                description: `${deleted.name} recreated.`,
-              });
+              toast({ title: "Recreated", description: `${deleted.name} recreated.` });
             } catch (recreateErr: any) {
               console.error("[sources] recreate failed:", recreateErr);
               toast({
                 title: "Undo failed",
-                description:
-                  recreateErr?.response?.data?.error ??
-                  recreateErr?.message ??
-                  "Could not restore or recreate the item.",
+                description: recreateErr?.response?.data?.error ?? recreateErr?.message ?? "Could not restore/recreate.",
                 variant: "destructive",
               });
             }
@@ -520,7 +484,6 @@ export default function SourceList(): JSX.Element {
       </button>
     );
 
-    // show the toast with action
     toast({
       title: "Source deleted",
       description: "Undo available for a short time.",
@@ -528,6 +491,7 @@ export default function SourceList(): JSX.Element {
     });
   },
 });
+
 
 
   const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
