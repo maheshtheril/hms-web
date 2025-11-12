@@ -404,100 +404,102 @@ export default function SourceList(): JSX.Element {
           query.queryKey[2] === tenantId,
       });
     },
-    onSuccess: (_data, _id, ctx: any) => {
-      const deleted = ctx?.deletedItem ?? null;
+   onSuccess: (_data, _id, ctx: any) => {
+  const deleted = ctx?.deletedItem ?? null;
 
-      const undoButton = (
-        <button
-          type="button"
-          onClick={async (e) => {
-            e.stopPropagation();
-            if (!deleted) {
-              await qc.invalidateQueries({
-                predicate: (query) =>
-                  Array.isArray(query.queryKey) &&
-                  query.queryKey[0] === "leads" &&
-                  query.queryKey[1] === "sources" &&
-                  query.queryKey[2] === tenantId &&
-                  query.queryKey[3] === qDebounced,
-              });
-              toast({ title: "Undo", description: "Refreshed list." });
-              return;
-            }
+  const undoButton = (
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        if (!deleted) {
+          await qc.invalidateQueries({
+            predicate: (query) =>
+              Array.isArray(query.queryKey) &&
+              query.queryKey[0] === "leads" &&
+              query.queryKey[1] === "sources" &&
+              query.queryKey[2] === tenantId &&
+              query.queryKey[3] === qDebounced,
+          });
+          toast({ title: "Undo", description: "Refreshed list." });
+          return;
+        }
 
-            try {
-              // Try restore first
-              await apiClient.post(`/leads/sources/${deleted.id}/restore`, {}, { headers: { "x-tenant-id": tenantId } });
-              await qc.invalidateQueries({
-                predicate: (query) =>
-                  Array.isArray(query.queryKey) &&
-                  query.queryKey[0] === "leads" &&
-                  query.queryKey[1] === "sources" &&
-                  query.queryKey[2] === tenantId &&
-                  query.queryKey[3] === qDebounced,
-              });
-              toast({ title: "Restored", description: `${deleted.name} restored.` });
-            } catch (restoreErr: any) {
-              console.warn("[sources] restore failed, attempting recreate:", restoreErr);
-              const recreatePayload: any = {
-                name: deleted.name,
-                description: deleted.description ?? null,
-                is_active: !!deleted.is_active,
-                tenant_id: deleted.tenant_id ?? tenantId,
-              };
-              if ((deleted as any).key) recreatePayload.key = (deleted as any).key;
-              if ((deleted as any).config) recreatePayload.config = (deleted as any).config;
+        try {
+          // Try server restore first
+          await apiClient.post(
+            `/leads/sources/${deleted.id}/restore`,
+            {},
+            { headers: { "x-tenant-id": tenantId } }
+          );
 
-              if (!recreatePayload.key) {
-                await qc.invalidateQueries({
-                  predicate: (query) =>
-                    Array.isArray(query.queryKey) &&
-                    query.queryKey[0] === "leads" &&
-                    query.queryKey[1] === "sources" &&
-                    query.queryKey[2] === tenantId &&
-                    query.queryKey[3] === qDebounced,
-                });
-                toast({
-                  title: "Undo failed",
-                  description: "Item cannot be recreated automatically (missing key). Refreshed list.",
-                  variant: "destructive",
-                });
-                return;
-              }
+          // refresh tenant+query
+          await qc.invalidateQueries({
+            predicate: (query) =>
+              Array.isArray(query.queryKey) &&
+              query.queryKey[0] === "leads" &&
+              query.queryKey[1] === "sources" &&
+              query.queryKey[2] === tenantId &&
+              query.queryKey[3] === qDebounced,
+          });
 
-              try {
-                await apiClient.post(`/leads/sources`, recreatePayload, { headers: { "x-tenant-id": tenantId } });
-                await qc.invalidateQueries({
-                  predicate: (query) =>
-                    Array.isArray(query.queryKey) &&
-                    query.queryKey[0] === "leads" &&
-                    query.queryKey[1] === "sources" &&
-                    query.queryKey[2] === tenantId &&
-                    query.queryKey[3] === qDebounced,
-                });
-                toast({ title: "Recreated", description: `${deleted.name} recreated.` });
-              } catch (recreateErr: any) {
-                console.error("[sources] recreate failed:", recreateErr);
-                toast({
-                  title: "Undo failed",
-                  description: recreateErr?.response?.data?.error ?? recreateErr?.message ?? "Could not restore/recreate.",
-                  variant: "destructive",
-                });
-              }
-            }
-          }}
-          className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
-        >
-          Undo
-        </button>
-      );
+          toast({ title: "Restored", description: `${deleted.name} restored.` });
+          return;
+        } catch (restoreErr: any) {
+          // show server error & open editor so user can fix and recreate manually
+          console.error("[sources] restore failed:", restoreErr?.response ?? restoreErr);
+          const serverMsg =
+            restoreErr?.response?.data?.error ??
+            restoreErr?.response?.data?.message ??
+            restoreErr?.message ??
+            "Restore failed on server.";
 
-      toast({
-        title: "Source deleted",
-        description: "Undo available for a short time.",
-        action: undoButton,
-      });
-    },
+          toast({
+            title: "Undo failed",
+            description: serverMsg,
+            variant: "destructive",
+            action: (
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  // open the SourceForm prefilled for manual repair
+                  setEditing(deleted);
+                  setOpen(true);
+                }}
+                className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
+              >
+                Edit
+              </button>
+            ),
+          });
+
+          // refresh the list to reflect server state
+          await qc.invalidateQueries({
+            predicate: (query) =>
+              Array.isArray(query.queryKey) &&
+              query.queryKey[0] === "leads" &&
+              query.queryKey[1] === "sources" &&
+              query.queryKey[2] === tenantId &&
+              query.queryKey[3] === qDebounced,
+          });
+
+          return;
+        }
+      }}
+      className="px-3 py-1 rounded bg-white/5 hover:bg-white/8 text-sm"
+    >
+      Undo
+    </button>
+  );
+
+  toast({
+    title: "Source deleted",
+    description: "Undo available for a short time.",
+    action: undoButton,
+  });
+},
+
   });
 
   const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
