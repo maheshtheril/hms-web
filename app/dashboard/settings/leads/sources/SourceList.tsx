@@ -443,33 +443,33 @@ export default function SourceList(): JSX.Element {
 
   // ---------- robust refresh handler ----------
   const handleRefresh = useCallback(async () => {
-  console.log("🔥 Manual refresh clicked");
+  console.log("🔥 Manual refresh clicked (manualFetch)");
 
   const key = sourcesQueryKey(tenantId, qDebounced);
 
   try {
-    // Remove any cached query so we start fresh
-    await qc.removeQueries({ queryKey: key, exact: true });
-    console.log("Cache removed");
+    // hard network call (bypass react-query)
+    const res = await apiClient.get("/leads/sources", {
+      params: { page: 1, limit: PAGE_SIZE, q: qDebounced },
+      headers: { "x-tenant-id": tenantId },
+    });
 
-    // Explicitly fetch the infinite query and write it into the cache
-    await qc.fetchInfiniteQuery(
-      key,
-      async ({ pageParam = 1 }) => {
-        return fetchSourcesPage({ pageParam, q: qDebounced, tenantId });
-      },
-      {
-        // match whatever you used when creating the query (staleTime, etc.) if you want
-      }
-    );
-    console.log("fetchInfiniteQuery completed ✅");
+    const page = (res.data && Array.isArray(res.data.rows ? res.data.rows : res.data))
+      ? { data: { rows: res.data.rows ?? res.data, total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)) } }
+      : await fetchSourcesPage({ pageParam: 1, q: qDebounced, tenantId });
 
-    // Visible feedback: scroll to top
+    // write the primary page into react-query cache in the infinite-query shape
+    qc.setQueryData(key, {
+      pages: [page],
+      pageParams: [1],
+    });
+
+    console.log("Manual fetch + cache prime done ✅", page);
     virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
   } catch (err) {
-    console.error("❌ Refresh failed", err);
+    console.error("❌ Manual fetch failed", err);
   }
-}, [qc, qDebounced, tenantId]);
+}, [qDebounced, tenantId, qc]);
 
 
   return (
