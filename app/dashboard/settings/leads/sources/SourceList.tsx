@@ -442,29 +442,35 @@ export default function SourceList(): JSX.Element {
   const virtuosoRef = useRef<any>(null);
 
   // ---------- robust refresh handler ----------
-  const handleRefresh = useCallback(
-    async (e?: React.MouseEvent) => {
-      if (e) e.stopPropagation();
-      console.log("[Sources] refresh clicked — handler running", { refetch, qDebounced });
-      if (typeof refetch !== "function") {
-        console.warn("[Sources] refetch is not a function:", refetch);
-        try {
-          await qc.invalidateQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) });
-          console.log("[Sources] fallback invalidateQueries invoked");
-        } catch (err) {
-          console.error("[Sources] fallback invalidate failed", err);
-        }
-        return;
+  const handleRefresh = useCallback(async () => {
+  console.log("🔥 Manual refresh clicked");
+
+  const key = sourcesQueryKey(tenantId, qDebounced);
+
+  try {
+    // Remove any cached query so we start fresh
+    await qc.removeQueries({ queryKey: key, exact: true });
+    console.log("Cache removed");
+
+    // Explicitly fetch the infinite query and write it into the cache
+    await qc.fetchInfiniteQuery(
+      key,
+      async ({ pageParam = 1 }) => {
+        return fetchSourcesPage({ pageParam, q: qDebounced, tenantId });
+      },
+      {
+        // match whatever you used when creating the query (staleTime, etc.) if you want
       }
-      try {
-        await refetch();
-        console.log("[Sources] refetch completed");
-      } catch (err) {
-        console.error("[Sources] refetch error", err);
-      }
-    },
-    [refetch, qDebounced, qc, tenantId]
-  );
+    );
+    console.log("fetchInfiniteQuery completed ✅");
+
+    // Visible feedback: scroll to top
+    virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
+  } catch (err) {
+    console.error("❌ Refresh failed", err);
+  }
+}, [qc, qDebounced, tenantId]);
+
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 text-slate-100 border border-white/10 p-6 shadow-lg backdrop-blur-xl">
