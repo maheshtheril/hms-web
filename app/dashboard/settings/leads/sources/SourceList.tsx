@@ -12,13 +12,6 @@ import apiClient from "@/lib/api-client";
 import SourceForm from "./SourceForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  // kept for future re-enable; currently using fallback UI
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
 import { EllipsisVertical, RefreshCw } from "lucide-react";
 import { Virtuoso } from "react-virtuoso";
@@ -54,7 +47,6 @@ const LIST_HEIGHT = 640;
  * Tenant helper (adjust to your auth/session provider)
  * ------------------------ */
 const getTenantId = (): string => {
-  // adapt this helper to your app's tenant source (context, cookie, token, apiClient default header, etc.)
   if (typeof window !== "undefined" && (window as any).__TENANT_ID__) return (window as any).__TENANT_ID__;
   if ((apiClient as any)?.defaults?.headers?.["x-tenant-id"]) return (apiClient as any).defaults.headers["x-tenant-id"];
   return "default";
@@ -65,13 +57,6 @@ const sourcesQueryKey = (tenantId: string, q = "") => ["leads", "sources", tenan
 /* -------------------------
  * API
  * ------------------------ */
-/**
- * Resilient mapper for server shapes:
- * - { data: rows[] }
- * - { data: { rows: rows[], total: N } }
- * - { rows: rows[], total: N }
- * - rows[] (array directly)
- */
 const fetchSourcesPage = async ({
   pageParam = 1,
   q = "",
@@ -83,7 +68,6 @@ const fetchSourcesPage = async ({
 }): Promise<PagedResp<Source>> => {
   const res = await apiClient.get(`/leads/sources`, {
     params: { page: pageParam, limit: PAGE_SIZE, q },
-    // it's good practice to include tenant header, adjust as needed server-side
     headers: tenantId ? { "x-tenant-id": tenantId } : undefined,
   });
 
@@ -114,7 +98,7 @@ const fetchSourcesPage = async ({
 };
 
 /* -------------------------
- * Fallback Menu (improved basic keyboard + ARIA)
+ * Fallback Menu (improved keyboard + ARIA)
  * ------------------------ */
 function FallbackMenu({
   onEdit,
@@ -135,11 +119,30 @@ function FallbackMenu({
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        btnRef.current?.focus();
+      }
+      // basic arrow navigation
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const items = Array.from(menuRef.current?.querySelectorAll('[role="menuitem"]') ?? []) as HTMLElement[];
+        if (!items.length) return;
+        const active = document.activeElement as HTMLElement | null;
+        const idx = active ? items.indexOf(active) : -1;
+        const next = e.key === "ArrowDown" ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+        items[next]?.focus();
+      }
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
+    // focus first menuitem after open
+    const t = setTimeout(() => {
+      const first = menuRef.current?.querySelector('[role="menuitem"]') as HTMLElement | null;
+      first?.focus();
+    }, 0);
     return () => {
+      clearTimeout(t);
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
@@ -169,6 +172,7 @@ function FallbackMenu({
         >
           <button
             role="menuitem"
+            tabIndex={0}
             onClick={() => {
               setOpen(false);
               onEdit();
@@ -179,6 +183,7 @@ function FallbackMenu({
           </button>
           <button
             role="menuitem"
+            tabIndex={0}
             onClick={() => {
               setOpen(false);
               onDelete();
@@ -194,6 +199,63 @@ function FallbackMenu({
 }
 
 /* -------------------------
+ * Row component (stable, memoized)
+ * ------------------------ */
+type RowProps = {
+  item?: Source | null;
+  style: React.CSSProperties;
+  onEdit: (item: Source) => void;
+  onDelete: (id: string) => void;
+};
+
+function RowInnerStatic({ item, style, onEdit, onDelete }: RowProps) {
+  if (!item) {
+    return (
+      <div
+        style={style}
+        className="p-4 border border-white/8 bg-white/3 rounded-xl animate-pulse"
+      >
+        <div className="h-4 w-1/3 bg-slate-700 rounded mb-2" />
+        <div className="h-3 w-1/2 bg-slate-700 rounded mb-1" />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={style}
+      className="p-4 border border-white/10 bg-white/5 rounded-xl flex items-center justify-between gap-4"
+      data-source-id={item.id}
+    >
+      <div className="flex-1">
+        <div className="font-medium text-white tracking-tight">{item.name}</div>
+        <div className="text-xs text-slate-300">{item.description ?? "—"}</div>
+        {item.key && <div className="text-xs text-slate-400 mt-1">Key: {item.key}</div>}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span
+          className={`text-xs px-2 py-1 rounded-full ${
+            item.is_active
+              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/20"
+              : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
+          }`}
+        >
+          {item.is_active ? "Active" : "Inactive"}
+        </span>
+
+        <FallbackMenu
+          onEdit={() => onEdit(item)}
+          onDelete={() => onDelete(item.id)}
+        />
+      </div>
+    </div>
+  );
+}
+
+export const Row = React.memo(RowInnerStatic);
+
+/* -------------------------
  * Component
  * ------------------------ */
 export default function SourceList(): JSX.Element {
@@ -206,29 +268,6 @@ export default function SourceList(): JSX.Element {
 
   const qc = useQueryClient();
   const { toast } = useToast();
-
-  const [primitivesAvailable, setPrimitivesAvailable] = useState<boolean>(true);
-
-  // runtime check for dropdown primitives (kept but fallback used unconditionally)
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const mod = await import("@/components/ui/dropdown-menu");
-        const ok =
-          Boolean((mod as any)?.DropdownMenu) &&
-          Boolean((mod as any)?.DropdownMenuTrigger) &&
-          Boolean((mod as any)?.DropdownMenuContent) &&
-          Boolean((mod as any)?.DropdownMenuItem);
-        if (mounted) setPrimitivesAvailable(Boolean(ok));
-      } catch {
-        if (mounted) setPrimitivesAvailable(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   // debounce search
   useEffect(() => {
@@ -259,9 +298,8 @@ export default function SourceList(): JSX.Element {
     },
     staleTime: 30_000,
     initialPageParam: 1,
-    // Better UX for "live" dashboards:
     refetchOnWindowFocus: true,
-    refetchInterval: false, // set to a number (ms) if you want periodic polling
+    refetchInterval: false,
   };
 
   const {
@@ -292,21 +330,25 @@ export default function SourceList(): JSX.Element {
     return flattened.length;
   }, [data, flattened]);
 
+  type InfiniteCache = {
+    pages: PagedResp<Source>[];
+    pageParams: number[];
+  };
+
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
       await apiClient.delete(`/leads/sources/${id}`, { headers: { "x-tenant-id": tenantId } });
     },
     onMutate: async (id: string) => {
-      console.log("[Sources] optimistic delete", id);
       await qc.cancelQueries({ queryKey: sourcesQueryKey(tenantId, qDebounced) });
-      const previous = qc.getQueryData<any>(sourcesQueryKey(tenantId, qDebounced));
-      qc.setQueryData<any>(sourcesQueryKey(tenantId, qDebounced), (old: any) => {
-        if (!old?.pages) return old;
-        const newPages = old.pages.map((pg: any) => ({
+      const previous = qc.getQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced));
+      qc.setQueryData<InfiniteCache>(sourcesQueryKey(tenantId, qDebounced), (old) => {
+        if (!old?.pages) return old ?? { pages: [], pageParams: [] };
+        const newPages = old.pages.map((pg) => ({
           ...pg,
           data: {
             ...pg.data,
-            rows: pg.data.rows.filter((r: Source) => r.id !== id),
+            rows: pg.data.rows.filter((r) => r.id !== id),
           },
         }));
         return { ...old, pages: newPages };
@@ -315,7 +357,6 @@ export default function SourceList(): JSX.Element {
       return { previous, deletedItem };
     },
     onError: (err: any, _id, ctx: any) => {
-      console.error("[Sources] delete error", err);
       qc.setQueryData(sourcesQueryKey(tenantId, qDebounced), ctx?.previous);
       const msg = err?.response?.data?.error ?? err?.message ?? "Delete failed";
       toast({
@@ -378,99 +419,71 @@ export default function SourceList(): JSX.Element {
     },
   });
 
-  const RowInner = ({
-    index,
-    style,
-  }: {
-    index: number;
-    style: React.CSSProperties;
-  }) => {
-    const item = flattened[index];
-    if (!item) {
-      return (
-        <div
-          style={style}
-          className="p-4 border border-white/8 bg-white/3 rounded-xl animate-pulse"
-        >
-          <div className="h-4 w-1/3 bg-slate-700 rounded mb-2" />
-          <div className="h-3 w-1/2 bg-slate-700 rounded mb-1" />
-        </div>
-      );
-    }
-
-    const onEdit = () => {
-      setEditing(item);
-      setOpen(true);
-    };
-    const onDelete = () => deleteMut.mutate(item.id);
-
-    return (
-      <div
-        style={style}
-        className="p-4 border border-white/10 bg-white/5 rounded-xl flex items-center justify-between gap-4"
-        data-source-id={item.id}
-      >
-        <div className="flex-1">
-          <div className="font-medium text-white tracking-tight">{item.name}</div>
-          <div className="text-xs text-slate-300">{item.description ?? "—"}</div>
-          {item.key && <div className="text-xs text-slate-400 mt-1">Key: {item.key}</div>}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span
-            className={`text-xs px-2 py-1 rounded-full ${
-              item.is_active
-                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/20"
-                : "bg-slate-700/50 text-slate-400 border border-slate-600/40"
-            }`}
-          >
-            {item.is_active ? "Active" : "Inactive"}
-          </span>
-
-          {/* FORCE FallbackMenu for guaranteed visible edit/delete while debugging */}
-          <FallbackMenu onEdit={onEdit} onDelete={onDelete} />
-        </div>
-      </div>
-    );
-  };
-
-  // memoize row to avoid unnecessary re-renders
-  const Row = React.memo(RowInner);
-
   const itemCount = total > 0 ? total : flattened.length + (hasNextPage ? PAGE_SIZE : 0);
-
   const virtuosoRef = useRef<any>(null);
 
-  // ---------- robust refresh handler ----------
+  // local refreshing indicator (separate from react-query isFetching)
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ---------- robust refresh handler (manual fetch + prime cache) ----------
   const handleRefresh = useCallback(async () => {
-  console.log("🔥 Manual refresh clicked (manualFetch)");
+    setRefreshing(true);
+    console.log("🔥 Manual refresh clicked (manualFetch)");
 
-  const key = sourcesQueryKey(tenantId, qDebounced);
+    const key = sourcesQueryKey(tenantId, qDebounced);
 
-  try {
-    // hard network call (bypass react-query)
-    const res = await apiClient.get("/leads/sources", {
-      params: { page: 1, limit: PAGE_SIZE, q: qDebounced },
-      headers: { "x-tenant-id": tenantId },
-    });
+    try {
+      const res = await apiClient.get("/leads/sources", {
+        params: { page: 1, limit: PAGE_SIZE, q: qDebounced },
+        headers: { "x-tenant-id": tenantId },
+      });
 
-    const page = (res.data && Array.isArray(res.data.rows ? res.data.rows : res.data))
-      ? { data: { rows: res.data.rows ?? res.data, total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)) } }
-      : await fetchSourcesPage({ pageParam: 1, q: qDebounced, tenantId });
+      const page: PagedResp<Source> =
+        res.data && Array.isArray(res.data.rows ? res.data.rows : res.data)
+          ? {
+              data: {
+                rows: res.data.rows ?? res.data,
+                total: Number(res.data.total ?? (res.data.rows?.length ?? res.data.length ?? 0)),
+              },
+            }
+          : await fetchSourcesPage({ pageParam: 1, q: qDebounced, tenantId });
 
-    // write the primary page into react-query cache in the infinite-query shape
-    qc.setQueryData(key, {
-      pages: [page],
-      pageParams: [1],
-    });
+      // write into cache in the infinite-query shape (typed)
+      qc.setQueryData<InfiniteCache>(key, {
+        pages: [page],
+        pageParams: [1],
+      });
 
-    console.log("Manual fetch + cache prime done ✅", page);
-    virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
-  } catch (err) {
-    console.error("❌ Manual fetch failed", err);
-  }
-}, [qDebounced, tenantId, qc]);
+      console.log("Manual fetch + cache prime done ✅", page);
+      // visible feedback
+      virtuosoRef.current?.scrollToIndex?.({ index: 0, align: "start" });
+    } catch (err) {
+      console.error("❌ Manual fetch failed", err);
+      toast({
+        title: "Refresh failed",
+        description: "Could not refresh sources. Check network or server.",
+        variant: "destructive",
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [qDebounced, tenantId, qc, toast]);
 
+  // small helper stable callbacks passed to Row (avoid re-creating inline)
+  const onEdit = useCallback(
+    (item: Source) => {
+      setEditing(item);
+      setOpen(true);
+    },
+    [setEditing, setOpen]
+  );
+
+  const onDelete = useCallback(
+    (id: string) => {
+      deleteMut.mutate(id);
+    },
+    [deleteMut]
+  );
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900/80 to-slate-950/80 text-slate-100 border border-white/10 p-6 shadow-lg backdrop-blur-xl">
@@ -488,11 +501,12 @@ export default function SourceList(): JSX.Element {
             onClick={handleRefresh}
             variant="ghost"
             size="icon"
-            aria-label="Refresh sources"
+            aria-label={isFetching || refreshing ? "Refreshing sources" : "Refresh sources"}
             className="hover:bg-white/6"
-            title={isFetching ? "Refreshing…" : "Refresh"}
+            title={isFetching || refreshing ? "Refreshing…" : "Refresh"}
+            disabled={isFetching || refreshing}
           >
-            <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-4 h-4 ${isFetching || refreshing ? "animate-spin" : ""}`} />
           </Button>
 
           <Button
@@ -530,10 +544,10 @@ export default function SourceList(): JSX.Element {
           computeItemKey={(index) => flattened[index]?.id ?? `skeleton-${index}`}
           itemContent={(index) => {
             const style: React.CSSProperties = { height: ROW_HEIGHT };
-            const id = flattened[index]?.id ?? `skeleton-${index}`;
+            const item = flattened[index] ?? null;
             return (
-              <div key={id} style={style}>
-                <Row index={index} style={style} />
+              <div key={item?.id ?? `s-${index}`} style={style}>
+                <Row item={item} style={style} onEdit={onEdit} onDelete={onDelete} />
               </div>
             );
           }}
