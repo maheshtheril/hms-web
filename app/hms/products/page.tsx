@@ -1,3 +1,4 @@
+// app/hms/products/ProductsPage.tsx
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -10,12 +11,7 @@ import SellWithBarcode from "./SellWithBarcode";
 import { useRouter } from "next/navigation";
 import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
-import { Search, Plus, RefreshCw, Tag, Edit2, Eye, Trash2, Box, DollarSign } from "lucide-react";
-
-/**
- * ProductsPage — Neural Glass Design Language (TypeScript)
- * Best choice: fully typed, TS-safe, clear AbortController handling, and accessible controls.
- */
+import { Search, Plus, RefreshCw, Edit2, Eye, Trash2, Box, DollarSign } from "lucide-react";
 
 type Product = {
   id: string;
@@ -41,11 +37,9 @@ export default function ProductsPage(): JSX.Element {
   const [showReceiveModalFor, setShowReceiveModalFor] = useState<{ productId: string; companyId: string } | null>(null);
   const [showSellModalFor, setShowSellModalFor] = useState<{ productId?: string; companyId: string } | null>(null);
 
-  // <-- Correctly typed AbortController ref so TypeScript is happy
   const abortRef = useRef<AbortController | null>(null);
 
   const fetchProducts = useCallback(async () => {
-    // cancel previous
     try {
       setLoading(true);
       abortRef.current?.abort();
@@ -64,9 +58,7 @@ export default function ProductsPage(): JSX.Element {
       const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
       setProducts((res.data?.data ?? []) as Product[]);
     } catch (err: any) {
-      // axios uses 'CanceledError' or DOM AbortError depending on setup
-      if (err?.name === "CanceledError" || err?.message === "canceled" || err?.name === 'AbortError') {
-        // intentional cancellation — ignore
+      if (err?.name === "CanceledError" || err?.message === "canceled" || err?.name === "AbortError") {
         return;
       }
       console.error("fetchProducts", err);
@@ -81,7 +73,6 @@ export default function ProductsPage(): JSX.Element {
     return () => {
       abortRef.current?.abort();
     };
-    // fetchProducts is stable thanks to useCallback
   }, [fetchProducts]);
 
   const openCreate = () => {
@@ -122,7 +113,6 @@ export default function ProductsPage(): JSX.Element {
 
   return (
     <div className="relative min-h-screen p-6 lg:p-10 bg-gradient-to-br from-slate-100/70 via-white/60 to-slate-50/70 backdrop-blur-2xl overflow-hidden">
-      {/* Ambient glows */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-400/20 blur-3xl" />
         <div className="absolute bottom-[-10%] left-[-10%] w-[400px] h-[400px] rounded-full bg-violet-300/20 blur-3xl" />
@@ -134,10 +124,9 @@ export default function ProductsPage(): JSX.Element {
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 drop-shadow-sm">Products</h1>
             <p className="text-sm text-slate-600 mt-1">Your catalog — stock, SKU, and smart batch management</p>
           </div>
-          <div className="hidden md:block">
-            <div className="bg-white rounded-xl p-2 shadow-sm border z-40">
-              <CompanySelector />
-            </div>
+          {/* Always visible selector — mobile & desktop */}
+          <div className="bg-white rounded-xl p-2 shadow-sm border z-40">
+            <CompanySelector />
           </div>
         </div>
 
