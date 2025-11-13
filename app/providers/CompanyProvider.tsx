@@ -1,58 +1,74 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import apiClient from "@/lib/api-client";
+import { useToast } from "@/components/toast/ToastProvider";
 
-type Company = { id: string; name?: string } | null;
-
-type CompanyContextValue = {
-  company: Company;
-  setCompany: (c: Company) => void;
-  clearCompany: () => void;
+type CompanyCtx = {
+  company: { id: string } | null;
+  user: { id: string; email?: string; name?: string } | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+  switchCompany: (id: string) => Promise<void>;
 };
 
-const STORAGE_KEY = "hms:selected_company_v1";
+const CompanyContext = createContext<CompanyCtx>({
+  company: null,
+  user: null,
+  loading: true,
+  refresh: async () => {},
+  switchCompany: async () => {},
+});
 
-const CompanyContext = createContext<CompanyContextValue | undefined>(undefined);
+export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const toast = useToast();
+  const [company, setCompany] = useState<{ id: string } | null>(null);
+  const [user, setUser] = useState<{ id: string; email?: string; name?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export function CompanyProvider({ children }: { children: React.ReactNode }) {
-  const [company, setCompanyState] = useState<Company>(null);
-
-  useEffect(() => {
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.id) setCompanyState({ id: parsed.id, name: parsed.name });
-      }
-    } catch (e) {
-      console.warn("CompanyProvider: failed to read storage", e);
+      const res = await apiClient.get("/api/session", { withCredentials: true });
+      const s = res.data.session;
+      setCompany(s?.active_company_id ? { id: s.active_company_id } : null);
+      setUser({ id: s?.user_id, email: s?.email, name: s?.name });
+    } catch (err: any) {
+      console.error("CompanyProvider load error", err);
+      setCompany(null);
+      setUser(null);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const setCompany = (c: Company) => {
-    setCompanyState(c);
-    try {
-      if (c) localStorage.setItem(STORAGE_KEY, JSON.stringify(c));
-      else localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.warn("CompanyProvider: failed to write storage", e);
-    }
-  };
+  const switchCompany = useCallback(
+    async (id: string) => {
+      try {
+        await apiClient.post(
+          "/api/company/switch",
+          { company_id: id },
+          { withCredentials: true }
+        );
+        toast.success("Company switched", "Active company changed successfully");
+        await load();
+      } catch (err: any) {
+        console.error("switchCompany error", err);
+        toast.error(err?.message ?? "Failed to switch company");
+      }
+    },
+    [load, toast]
+  );
 
-  const clearCompany = () => {
-    setCompanyState(null);
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {}
-  };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const value = useMemo(() => ({ company, setCompany, clearCompany }), [company]);
+  return (
+    <CompanyContext.Provider value={{ company, user, loading, refresh: load, switchCompany }}>
+      {children}
+    </CompanyContext.Provider>
+  );
+};
 
-  return <CompanyContext.Provider value={value}>{children}</CompanyContext.Provider>;
-}
-
-export function useCompany() {
-  const ctx = useContext(CompanyContext);
-  if (!ctx) throw new Error("useCompany must be used within CompanyProvider");
-  return ctx;
-}
+export const useCompany = () => useContext(CompanyContext);
