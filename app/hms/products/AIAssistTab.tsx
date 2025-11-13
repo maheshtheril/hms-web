@@ -5,14 +5,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Sparkles, Type, Tag, CheckCircle, RefreshCw, Loader2, Zap } from "lucide-react";
-
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  description?: string;
-  metadata?: Record<string, any> | null;
-};
+import type { ProductDraft } from "./types";
 
 interface Props {
   draft: ProductDraft;

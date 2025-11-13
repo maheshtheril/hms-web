@@ -1,43 +1,13 @@
-// app/hms/products/product-editor/PricingTab.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast/ToastProvider";
 import apiClient from "@/lib/api-client";
-import { Loader2, Percent, Tag, Repeat, DollarSign, Settings } from "lucide-react";
+import { Loader2, Tag, Repeat, DollarSign, Settings } from "lucide-react";
+import type { ProductDraft, Tier, PriceRule, ProductPricing } from "./types";
 
-type Tier = {
-  id?: string;
-  min_qty: number;
-  price: number;
-  currency?: string;
-  note?: string;
-};
-
-type PriceRule = {
-  id?: string;
-  name: string;
-  active: boolean;
-  condition?: string; // small DSL or description
-  effect?: string; // description e.g. "-10% for B2B"
-};
-
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  price?: number | null;
-  currency?: string | null;
-  variants?: Array<any> | null;
-  pricing?: {
-    base_price?: number | null;
-    currency?: string | null;
-    tiers?: Tier[];
-    tax_percent?: number | null;
-    rules?: PriceRule[];
-  } | null;
-  metadata?: Record<string, any> | null;
-};
+type LocalTier = Tier;
+type LocalRule = PriceRule;
 
 interface Props {
   draft: ProductDraft;
@@ -50,21 +20,25 @@ export default function PricingTab({ draft, onChange }: Props) {
   const toast = useToast();
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Local editing state for tiers & rules
-  const pricing = draft.pricing ?? { base_price: draft.price ?? null, currency: draft.currency ?? "USD", tiers: [], tax_percent: 0, rules: [] };
+  // normalize incoming pricing (avoid nulls)
+  const pricing: ProductPricing = {
+    base_price: draft?.pricing?.base_price ?? draft?.price ?? undefined,
+    currency: draft?.pricing?.currency ?? draft?.currency ?? "USD",
+    tiers: draft?.pricing?.tiers ?? [],
+    tax_percent: draft?.pricing?.tax_percent ?? 0,
+    rules: draft?.pricing?.rules ?? [],
+  };
 
   const [basePrice, setBasePrice] = useState<number | "">(pricing.base_price ?? "");
   const [currency, setCurrency] = useState<string>(pricing.currency ?? "USD");
   const [taxPercent, setTaxPercent] = useState<number | "">(pricing.tax_percent ?? 0);
-  const [tiers, setTiers] = useState<Tier[]>(pricing.tiers ?? []);
-  const [rules, setRules] = useState<PriceRule[]>(pricing.rules ?? []);
+  const [tiers, setTiers] = useState<LocalTier[]>(pricing.tiers ?? []);
+  const [rules, setRules] = useState<LocalRule[]>(pricing.rules ?? []);
 
-  // selected tier for quick edit
   const [editingTierIndex, setEditingTierIndex] = useState<number | null>(null);
   const [tierMinQty, setTierMinQty] = useState<number>(1);
   const [tierPrice, setTierPrice] = useState<number | "">(0);
 
-  // selected rule edit
   const [editingRuleIndex, setEditingRuleIndex] = useState<number | null>(null);
   const [ruleName, setRuleName] = useState<string>("");
   const [ruleCond, setRuleCond] = useState<string>("");
@@ -80,7 +54,6 @@ export default function PricingTab({ draft, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id]);
 
-  // Derived helper: effective price preview (base + tax)
   const effectivePrice = useMemo(() => {
     const bp = typeof basePrice === "number" ? basePrice : Number(basePrice || 0);
     const tax = typeof taxPercent === "number" ? taxPercent : Number(taxPercent || 0);
@@ -93,8 +66,8 @@ export default function PricingTab({ draft, onChange }: Props) {
     const qty = Number(tierMinQty || 0);
     const p = Number(tierPrice || 0);
     if (!qty || qty < 1) return toast.error("Provide valid minimum quantity");
-    if (!p || p < 0) return toast.error("Provide valid tier price");
-    const next: Tier[] = [...tiers];
+    if (!Number.isFinite(p) || p < 0) return toast.error("Provide valid tier price");
+    const next: LocalTier[] = [...tiers];
     if (editingTierIndex === null) {
       next.push({ id: `local-${Date.now()}`, min_qty: qty, price: p, currency });
       toast.success("Tier added");
@@ -102,7 +75,7 @@ export default function PricingTab({ draft, onChange }: Props) {
       next[editingTierIndex] = { ...(next[editingTierIndex] ?? {}), min_qty: qty, price: p, currency };
       toast.success("Tier updated");
     }
-    setTiers(next.sort((a,b)=>a.min_qty-b.min_qty));
+    setTiers(next.sort((a, b) => a.min_qty - b.min_qty));
     setEditingTierIndex(null);
     setTierMinQty(1);
     setTierPrice(0);
@@ -125,7 +98,7 @@ export default function PricingTab({ draft, onChange }: Props) {
   // Rule helpers
   function addOrUpdateRule() {
     if (!ruleName.trim()) return toast.error("Rule name required");
-    const r: PriceRule = { id: `local-${Date.now()}`, name: ruleName.trim(), active: true, condition: ruleCond, effect: ruleEffect };
+    const r: LocalRule = { id: `local-${Date.now()}`, name: ruleName.trim(), active: true, condition: ruleCond, effect: ruleEffect };
     const next = [...rules];
     if (editingRuleIndex === null) {
       next.push(r);
@@ -154,15 +127,16 @@ export default function PricingTab({ draft, onChange }: Props) {
 
   // Apply local pricing into parent draft
   function applyPricingToDraft() {
+    const applied: ProductPricing = {
+      base_price: typeof basePrice === "number" ? basePrice : Number(basePrice || 0),
+      currency,
+      tax_percent: typeof taxPercent === "number" ? taxPercent : Number(taxPercent || 0),
+      tiers,
+      rules,
+    };
     onChange({
-      pricing: {
-        base_price: typeof basePrice === "number" ? basePrice : Number(basePrice || 0),
-        currency,
-        tax_percent: typeof taxPercent === "number" ? taxPercent : Number(taxPercent || 0),
-        tiers,
-        rules,
-      },
-      price: typeof basePrice === "number" ? basePrice : Number(basePrice || 0),
+      pricing: applied,
+      price: applied.base_price,
       currency,
     });
     toast.success("Pricing applied to draft");
@@ -182,7 +156,6 @@ export default function PricingTab({ draft, onChange }: Props) {
           rules,
         },
       };
-      // API: PATCH /hms/products/:id/pricing
       const res = await apiClient.patch(`/hms/products/${encodeURIComponent(draft.id)}/pricing`, body);
       const saved = res.data?.pricing ?? res.data?.data?.pricing;
       if (saved) {
@@ -199,12 +172,10 @@ export default function PricingTab({ draft, onChange }: Props) {
     }
   }
 
-  // Compute a sample price for a given quantity factoring in tiers and tax
   function computePriceForQty(qty: number) {
-    // find highest applicable tier with min_qty <= qty
-    const applicable = [...tiers].sort((a,b)=>b.min_qty-a.min_qty).find(t => qty >= t.min_qty);
+    const applicable = [...tiers].sort((a, b) => b.min_qty - a.min_qty).find(t => qty >= t.min_qty);
     const raw = (applicable ? applicable.price : (typeof basePrice === "number" ? basePrice : Number(basePrice || 0)));
-    const tax = raw * ((typeof taxPercent === "number" ? taxPercent : Number(taxPercent || 0))/100 || 0);
+    const tax = raw * ((typeof taxPercent === "number" ? taxPercent : Number(taxPercent || 0)) / 100 || 0);
     return { raw, withTax: raw + tax, currency };
   }
 
@@ -245,6 +216,7 @@ export default function PricingTab({ draft, onChange }: Props) {
             </div>
           </div>
 
+          {/* tiers and rules UI — unchanged semantics */}
           <div className="mt-4 rounded-2xl bg-white/30 border p-3">
             <div className="text-sm font-medium">Tiered pricing</div>
             <div className="mt-3 space-y-2">
@@ -339,7 +311,7 @@ export default function PricingTab({ draft, onChange }: Props) {
                 <div className="mt-2 grid grid-cols-2 gap-3">
                   <div>
                     <div className="text-xs text-slate-500">Cost price</div>
-                    <input type="number" step="0.01" placeholder="0.00" className="w-full rounded-2xl px-3 py-2 border bg-white/60" onChange={(e)=>{/* no-op, local calculator only */}} />
+                    <input type="number" step="0.01" placeholder="0.00" className="w-full rounded-2xl px-3 py-2 border bg-white/60" onChange={()=>{}} />
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Suggested margin</div>

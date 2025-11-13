@@ -5,38 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Loader2, BookOpen, Percent, Link2, RefreshCw } from "lucide-react";
-
-type Account = {
-  id: string;
-  code?: string;
-  name: string;
-  type?: string;
-};
-
-type TaxCode = {
-  id: string;
-  code: string;
-  name: string;
-  percent: number;
-};
-
-type AccountingMapping = {
-  sales_account?: string | null; // account id
-  expense_account?: string | null; // account id
-  stock_input_account?: string | null;
-  stock_output_account?: string | null;
-  tax_code_id?: string | null;
-};
-
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  currency?: string | null;
-  pricing?: any;
-  accounting?: AccountingMapping | null;
-  metadata?: Record<string, any> | null;
-};
+import type { ProductDraft, Account, TaxCode, AccountingMapping } from "./types";
 
 interface Props {
   draft: ProductDraft;
@@ -57,8 +26,8 @@ export default function AccountingTab({ draft, onChange }: Props) {
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [queryAccounts, setQueryAccounts] = useState<string>("");
 
-  // local copy to edit
-  const mapping = draft.accounting ?? {
+  // local copy to edit (ensure shape exists)
+  const mapping: AccountingMapping = draft.accounting ?? {
     sales_account: null,
     expense_account: null,
     stock_input_account: null,
@@ -71,7 +40,6 @@ export default function AccountingTab({ draft, onChange }: Props) {
     let mounted = true;
     (async () => {
       try {
-        // suggested endpoint: GET /hms/accounts (returns gl accounts the user can choose)
         const [accRes, taxRes] = await Promise.allSettled([
           apiClient.get("/hms/accounts"),
           apiClient.get("/hms/tax-codes"),
@@ -80,7 +48,6 @@ export default function AccountingTab({ draft, onChange }: Props) {
         if (accRes.status === "fulfilled") setAccounts(accRes.value.data?.data ?? accRes.value.data ?? []);
         if (taxRes.status === "fulfilled") setTaxCodes(taxRes.value.data?.data ?? taxRes.value.data ?? []);
       } catch (e) {
-        // silently ignore; toast if needed
         console.error("load accounting lists", e);
       }
     })();
@@ -90,22 +57,18 @@ export default function AccountingTab({ draft, onChange }: Props) {
   // derived friendly lookups
   const accountLookup = useMemo(() => {
     const map: Record<string, Account> = {};
-    for (const a of accounts) map[a.id] = a;
+    for (const a of accounts) if (a.id) map[a.id] = a;
     return map;
   }, [accounts]);
 
   const taxLookup = useMemo(() => {
     const map: Record<string, TaxCode> = {};
-    for (const t of taxCodes) map[t.id] = t;
+    for (const t of taxCodes) if (t.id) map[t.id] = t;
     return map;
   }, [taxCodes]);
 
   // Suggest accounts based on product metadata (simple heuristics)
   function suggestDefaults() {
-    // opinionated best default mapping:
-    // - sales_account => revenue account (type contains 'income' or code starts with 4/7 depending on your chart)
-    // - expense_account => COGS or expense (type contains 'expense' or 'cogs')
-    // - tax_code => choose a common VAT/GST if available (percent > 0)
     const rev = accounts.find(a => /income|revenue|sales/i.test(`${a.type ?? ""} ${a.name} ${a.code ?? ""}`)) ?? accounts[0];
     const exp = accounts.find(a => /expense|cogs|cost/i.test(`${a.type ?? ""} ${a.name} ${a.code ?? ""}`)) ?? accounts[1] ?? rev;
     const tax = taxCodes.find(t => t.percent > 0) ?? taxCodes[0] ?? null;

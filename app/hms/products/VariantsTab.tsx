@@ -5,34 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast/ToastProvider";
 import apiClient from "@/lib/api-client";
 import { Plus, Trash2, Layers, Zap, RefreshCw } from "lucide-react";
-
-type Variant = {
-  id?: string;
-  sku?: string;
-  attributes: Record<string, string>; // e.g. { Size: "M", Color: "Blue" }
-  price?: number | null;
-  active?: boolean;
-  inventory?: {
-    on_hand?: number;
-  } | null;
-};
-
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  attributes?: Array<{
-    name: string;
-    values: string[];
-  }>;
-  variants?: Variant[];
-  metadata?: Record<string, any> | null;
-};
-
-interface Props {
-  draft: ProductDraft;
-  onChange: (patch: Partial<ProductDraft>) => void;
-}
+import type { ProductDraft, Variant, ProductAttribute } from "./types";
 
 /**
  * Utilities
@@ -55,6 +28,11 @@ function slugify(s: string) {
     .replace(/(^-|-$)+/g, "");
 }
 
+interface Props {
+  draft: ProductDraft;
+  onChange: (patch: Partial<ProductDraft>) => void;
+}
+
 export default function VariantsTab({ draft, onChange }: Props) {
   const toast = useToast();
   const [localAttrName, setLocalAttrName] = useState<string>("");
@@ -64,7 +42,7 @@ export default function VariantsTab({ draft, onChange }: Props) {
   const [generating, setGenerating] = useState<boolean>(false);
 
   // ensure attributes array
-  const attributes = draft?.attributes ?? [];
+  const attributes: ProductAttribute[] = draft?.attributes ?? [];
 
   useEffect(() => {
     // init empty attributes if product is expected to support variants
@@ -127,7 +105,9 @@ export default function VariantsTab({ draft, onChange }: Props) {
   // Generate variants from attributes (cartesian product)
   async function generateVariants() {
     if (!attributes || attributes.length === 0) return toast.error("Add attributes first");
-    const valueArrays = attributes.map((a) => (a.values && a.values.length > 0 ? a.values.map((v) => ({ attr: a.name, val: v })) : [{ attr: a.name, val: "" }]));
+    const valueArrays = attributes.map((a) =>
+      a.values && a.values.length > 0 ? a.values.map((v) => ({ attr: a.name, val: v })) : [{ attr: a.name, val: "" }]
+    );
     const combos = cartesian(valueArrays);
     const variants: Variant[] = combos.map((combo) => {
       const attrs: Record<string, string> = {};
@@ -136,9 +116,14 @@ export default function VariantsTab({ draft, onChange }: Props) {
       });
       // SKU generation using pattern
       const parent = slugify(draft.name ?? draft.sku ?? "PRD");
-      const attrsSlug = Object.entries(attrs).map(([k, v]) => `${slugify(k)}_${slugify(v)}`).join("-");
+      const attrsSlug = Object.entries(attrs)
+        .map(([k, v]) => `${slugify(k)}_${slugify(v)}`)
+        .join("-");
       const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-      const rawSku = skuPattern.replace(/\[PARENT\]/g, parent).replace(/\{ATTRS\}/g, attrsSlug || "STD").replace(/\{RAND\}/g, rand);
+      const rawSku = skuPattern
+        .replace(/\[PARENT\]/g, parent)
+        .replace(/\{ATTRS\}/g, attrsSlug || "STD")
+        .replace(/\{RAND\}/g, rand);
       return {
         sku: rawSku,
         attributes: attrs,
@@ -158,8 +143,8 @@ export default function VariantsTab({ draft, onChange }: Props) {
     // If saved product, call backend endpoint to persist
     setGenerating(true);
     try {
-      // POST /hms/products/:id/variants { variants }
-      const res = await apiClient.post(`/hms/products/${encodeURIComponent(draft.id!)}/variants/generate`, { variants });
+      // POST /hms/products/:id/variants/generate { variants }
+      const res = await apiClient.post(`/hms/products/${encodeURIComponent(draft.id)}/variants/generate`, { variants });
       const savedVariants = res.data?.variants ?? res.data?.data?.variants ?? variants;
       onChange({ variants: savedVariants });
       toast.success(`${savedVariants.length} variants generated`);
@@ -191,8 +176,11 @@ export default function VariantsTab({ draft, onChange }: Props) {
         return;
       }
       // PATCH /hms/products/:id/variants/:variantId
-      const res = await apiClient.patch(`/hms/products/${encodeURIComponent(draft.id!)}/variants/${encodeURIComponent(variant.id)}`, patch);
-      const updated = res.data?.variant ?? res.data?.data?.variant;
+      const res = await apiClient.patch(
+        `/hms/products/${encodeURIComponent(draft.id)}/variants/${encodeURIComponent(variant.id)}`,
+        patch
+      );
+      const updated = res.data?.variant ?? res.data?.data?.variant ?? { ...variant, ...patch };
       const next = vs.map((v, i) => (i === index ? updated : v));
       onChange({ variants: next });
       toast.success("Variant updated");
@@ -215,7 +203,7 @@ export default function VariantsTab({ draft, onChange }: Props) {
     }
     try {
       // DELETE /hms/products/:id/variants/:variantId
-      await apiClient.delete(`/hms/products/${encodeURIComponent(draft.id!)}/variants/${encodeURIComponent(variant.id)}`);
+      await apiClient.delete(`/hms/products/${encodeURIComponent(draft.id)}/variants/${encodeURIComponent(variant.id)}`);
       const next = vs.filter((_, i) => i !== index);
       onChange({ variants: next });
       toast.success("Variant removed");
@@ -262,7 +250,7 @@ export default function VariantsTab({ draft, onChange }: Props) {
 
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(attr.values ?? []).map((v, vi) => (
-                        <div key={v} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 border">
+                        <div key={`${attr.name}-${v}`} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 border">
                           <span className="text-xs text-slate-700">{v}</span>
                           <button onClick={() => removeAttributeValue(ai, vi)} className="p-1 rounded-full text-rose-600">
                             ✕

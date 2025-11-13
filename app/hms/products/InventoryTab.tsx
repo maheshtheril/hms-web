@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Loader2, PlusCircle, MinusCircle, Archive, Clock } from "lucide-react";
+import type { ProductDraft } from "./types"; // <- use the canonical shared type
 
 type InventoryBatch = {
   id?: string;
@@ -23,22 +24,6 @@ type InventoryHistoryEntry = {
   when?: string | null;
 };
 
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  is_stockable?: boolean;
-  metadata?: Record<string, any> | null;
-  // optional local-only property used by inventory tab
-  inventory?: {
-    on_hand?: number;
-    reserved?: number;
-    incoming?: number;
-    batches?: InventoryBatch[];
-    history?: InventoryHistoryEntry[];
-  } | null;
-};
-
 interface Props {
   draft: ProductDraft;
   onChange: (patch: Partial<ProductDraft>) => void;
@@ -54,7 +39,7 @@ export default function InventoryTab({ draft, onChange }: Props) {
   const [adjustAmount, setAdjustAmount] = useState<number>(0);
   const [adjustNote, setAdjustNote] = useState<string>("");
 
-  // derived safe state
+  // derived safe state (ensure we always have usable defaults)
   const inventory = draft?.inventory ?? {
     on_hand: 0,
     reserved: 0,
@@ -171,7 +156,10 @@ export default function InventoryTab({ draft, onChange }: Props) {
     setLoading(true);
     try {
       // API: POST /hms/products/:id/adjust { change, note }
-      const res = await apiClient.post(`/hms/products/${encodeURIComponent(draft.id)}/adjust`, { change: Number(adjustAmount), note: adjustNote });
+      const res = await apiClient.post(
+        `/hms/products/${encodeURIComponent(draft.id)}/adjust`,
+        { change: Number(adjustAmount), note: adjustNote }
+      );
       const updatedInv = res.data?.inventory ?? res.data?.data?.inventory;
       onChange({ inventory: updatedInv });
       setAdjustAmount(0);
@@ -200,7 +188,9 @@ export default function InventoryTab({ draft, onChange }: Props) {
     setLoading(true);
     try {
       // API: DELETE /hms/products/:id/batches/:batchId
-      const res = await apiClient.delete(`/hms/products/${encodeURIComponent(draft.id)}/batches/${encodeURIComponent(batchId)}`);
+      const res = await apiClient.delete(
+        `/hms/products/${encodeURIComponent(draft.id)}/batches/${encodeURIComponent(batchId)}`
+      );
       const updatedInv = res.data?.inventory ?? res.data?.data?.inventory;
       onChange({ inventory: updatedInv });
       toast.success("Batch removed");
@@ -273,7 +263,10 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   />
                 </div>
 
-                <button onClick={() => receiveBatch(true)} className="px-3 py-2 rounded-2xl bg-emerald-600 text-white inline-flex items-center gap-2">
+                <button
+                  onClick={() => receiveBatch(true)}
+                  className="px-3 py-2 rounded-2xl bg-emerald-600 text-white inline-flex items-center gap-2"
+                >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlusCircle className="w-4 h-4" />} Receive
                 </button>
               </div>
@@ -304,7 +297,10 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   placeholder="Reason / note"
                   className="flex-1 rounded-2xl px-3 py-2 border bg-white/60 outline-none"
                 />
-                <button onClick={submitAdjustment} className="px-3 py-2 rounded-2xl bg-rose-500 text-white inline-flex items-center gap-2">
+                <button
+                  onClick={submitAdjustment}
+                  className="px-3 py-2 rounded-2xl bg-rose-500 text-white inline-flex items-center gap-2"
+                >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MinusCircle className="w-4 h-4" />} Apply
                 </button>
               </div>

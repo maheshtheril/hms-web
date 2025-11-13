@@ -8,25 +8,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Loader2, ImageIcon, Sparkles, RefreshCw } from "lucide-react";
+import type { ProductDraft } from "./types"; // shared canonical type
 
-type ProductDraft = {
-  id?: string;
-  name?: string;
-  sku?: string;
-  description?: string;
-  price?: number | null;
-  currency?: string | null;
-  is_stockable?: boolean;
-  metadata?: Record<string, any> | null;
-  images?: string[]; // URLs
-};
-
+// Zod schema - use optional() (no nullable) to match canonical ProductDraft
 const schema = z.object({
   name: z.string().min(2, "Name is required"),
   sku: z.string().min(1, "SKU required"),
   description: z.string().optional(),
-  price: z.number().nonnegative().optional().nullable(),
-  currency: z.string().optional().nullable(),
+  price: z.number().nonnegative().optional(),
+  currency: z.string().optional(),
   is_stockable: z.boolean().optional(),
 });
 
@@ -50,6 +40,7 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
     formState: { errors, isSubmitting, isDirty },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
+    // initialize with safe defaults (prefer undefined over null)
     defaultValues: {
       name: draft?.name ?? "",
       sku: draft?.sku ?? "",
@@ -60,7 +51,7 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
     },
   });
 
-  // keep local values synced when outer draft changes (e.g. load)
+  // Keep local values synced when parent draft changes (e.g. load)
   useEffect(() => {
     setValue("name", draft?.name ?? "");
     setValue("sku", draft?.sku ?? "");
@@ -69,24 +60,30 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
     setValue("currency", draft?.currency ?? "USD");
     setValue("is_stockable", draft?.is_stockable ?? true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id]);
+  }, [draft]);
 
   // push changes up to parent draft when fields change
   const watched = watch();
   useEffect(() => {
-    // minimal patch — only fields we care about
+    // coerce price — react-hook-form with valueAsNumber can yield NaN for empty string
+    const priceVal =
+      typeof watched.price === "number" && Number.isFinite(watched.price) ? watched.price : undefined;
+
+    // normalize currency — empty string -> undefined
+    const currencyVal = watched.currency === "" ? undefined : watched.currency ?? undefined;
+
     onChange({
       name: watched.name,
       sku: watched.sku,
       description: watched.description,
-      price: watched.price ?? null,
-      currency: watched.currency ?? "USD",
+      price: priceVal,
+      currency: currencyVal,
       is_stockable: watched.is_stockable ?? true,
     });
   }, [watched, onChange]);
 
-  async function onSubmit(values: FormValues) {
-    // parent handles save; optionally trigger parent save
+  async function onSubmit(_values: FormValues) {
+    // parent handles actual save (onRequestSave triggers it)
     try {
       onRequestSave?.();
       toast.info("Saving general info…");
@@ -108,7 +105,7 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
     const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
     const sku = `${base}-${suffix}`;
     setValue("sku", sku, { shouldDirty: true, shouldValidate: true });
-    toast.success("SKU generated", "Generated");
+    toast.success("SKU generated");
   }
 
   // AI description helper (calls backend API that proxies OpenAI or your AI service)
@@ -147,7 +144,6 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
       });
       const url = res.data?.url ?? res.data?.data?.url;
       if (!url) throw new Error("Upload failed");
-      // update draft images
       const existing = draft?.images ?? [];
       const next = [...existing, url];
       onChange({ images: next });
@@ -204,10 +200,21 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
             placeholder="Describe the product benefits..."
           />
           <div className="mt-2 flex items-center gap-2">
-            <button type="button" onClick={aiGenerateDescription} className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-600 text-white text-sm">
+            <button
+              type="button"
+              onClick={aiGenerateDescription}
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-br from-indigo-600 to-blue-600 text-white text-sm"
+            >
               <Sparkles className="w-4 h-4" /> AI Suggest
             </button>
-            <button type="button" onClick={() => { setValue("description", "", { shouldDirty: true }); onChange({ description: "" }); }} className="px-3 py-1 rounded-xl border text-sm">
+            <button
+              type="button"
+              onClick={() => {
+                setValue("description", "", { shouldDirty: true });
+                onChange({ description: "" });
+              }}
+              className="px-3 py-1 rounded-xl border text-sm"
+            >
               Clear
             </button>
           </div>
@@ -232,7 +239,10 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
               control={control}
               name="currency"
               render={({ field }) => (
-                <select {...field} className="w-full rounded-2xl border border-white/20 bg-white/60 px-3 py-2 outline-none">
+                <select
+                  {...field}
+                  className="w-full rounded-2xl border border-white/20 bg-white/60 px-3 py-2 outline-none"
+                >
                   <option value="USD">USD</option>
                   <option value="EUR">EUR</option>
                   <option value="INR">INR</option>
@@ -284,13 +294,24 @@ export default function GeneralTab({ draft, onChange, onRequestSave }: Props) {
         </div>
 
         <div className="flex items-center justify-end gap-3">
-          <button type="button" onClick={() => { setValue("name", draft?.name ?? ""); setValue("sku", draft?.sku ?? ""); }} className="px-4 py-2 rounded-xl border">
+          <button
+            type="button"
+            onClick={() => {
+              setValue("name", draft?.name ?? "");
+              setValue("sku", draft?.sku ?? "");
+            }}
+            className="px-4 py-2 rounded-xl border"
+          >
             Reset fields
           </button>
 
-          <button type="submit" disabled={isSubmitting} className="px-4 py-2 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white inline-flex items-center gap-2">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="px-4 py-2 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white inline-flex items-center gap-2"
+          >
             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {isSubmitting ? "Saving…" : (isDirty ? "Save" : "Save")}
+            {isSubmitting ? "Saving…" : isDirty ? "Save" : "Save"}
           </button>
         </div>
       </form>
