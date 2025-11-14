@@ -4,22 +4,20 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import apiClient from "@/lib/api-client";
 
 /**
- * Advanced SettingsForm (production-ready)
+ * Advanced SettingsForm (tenant + company aware)
  *
- * - Tabs: General | Billing | Defaults | Raw JSON | History
- * - Autosave debounce + optimistic update (version-based)
- * - Manual Save, Export JSON, Import JSON (validate)
- * - Reset to server, Revert to last server version
- * - History panel (calls /api/hms/settings/history)
+ * Props:
+ * - tenantId: string | null  (required for all saves)
+ * - companyId: string | null (optional, used for company-scoped settings)
  *
- * Backend endpoints expected (adjust names if needed):
- * GET  /api/hms/settings                 -> { data: { settings, version } }
- * POST /api/hms/settings                 -> { data: { settings, version } }  (create/update)
- * GET  /api/hms/settings/history         -> { data: [ { change_type, changed_at, changed_by, value, version } ] }
+ * Backend endpoints expected (tenant/company query params or body):
+ * GET  /api/hms/settings?tenant_id=&company_id=
+ * POST /api/hms/settings  body must include tenant_id and optional company_id and version
+ * GET  /api/hms/settings/history?tenant_id=&company_id=
  *
- * Notes:
- * - The component uses a local `version` returned from server for optimistic locking.
- * - On conflict (409), it reloads server version and surfaces an error.
+ * Important:
+ * - The component will reload when tenantId/companyId change.
+ * - Saving without tenantId will be blocked.
  */
 
 type SettingsShape = {
@@ -40,7 +38,22 @@ type HistoryRow = {
   version?: number;
 };
 
-export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | string) => void }) {
+function buildQs(params: Record<string, any>) {
+  return Object.entries(params)
+    .filter(([_, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join("&");
+}
+
+export default function HmsSettingsForm({
+  onSaved,
+  tenantId,
+  companyId,
+}: {
+  onSaved?: (at?: number | string) => void;
+  tenantId?: string | null;
+  companyId?: string | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [serverVersion, setServerVersion] = useState<number | null>(null);
@@ -60,16 +73,17 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     metadata: {},
   });
 
-  // load initial settings + history
+  // load initial settings (re-run when tenantId / companyId change)
   useEffect(() => {
     let mounted = true;
     (async () => {
       setLoading(true);
       try {
-        const res = await apiClient.get("/api/hms/settings", { withCredentials: true });
+        const qs = buildQs({ tenant_id: tenantId, company_id: companyId });
+        const res = await apiClient.get(`/api/hms/settings${qs ? "?" + qs : ""}`, { withCredentials: true });
         const payload = res?.data?.data ?? {};
         if (!mounted) return;
-        const serverSettings = {
+        const serverSettings: SettingsShape = {
           tenant_name: payload?.tenant_name ?? "",
           address: payload?.address ?? "",
           currency: payload?.currency ?? "USD",
@@ -77,10 +91,11 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
           timezone: payload?.timezone ?? "UTC",
           default_patient_type: payload?.default_patient_type ?? "CASH",
           metadata: payload?.metadata ?? {},
-        } as SettingsShape;
+        };
         setSettings(serverSettings);
         setRawJsonText(JSON.stringify(serverSettings, null, 2));
         setServerVersion(payload?.version ?? 1);
+        setError(null);
       } catch (err) {
         console.error("load settings", err);
         setError("Failed to load settings.");
@@ -91,56 +106,60 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [tenantId, companyId]);
 
-  // fetch history lazily when user selects history tab
+  // fetch history lazily
   useEffect(() => {
     if (tab !== "history") return;
     (async () => {
       try {
-        const res = await apiClient.get("/api/hms/settings/history", { withCredentials: true });
+        const qs = buildQs({ tenant_id: tenantId, company_id: companyId });
+        const res = await apiClient.get(`/api/hms/settings/history${qs ? "?" + qs : ""}`, { withCredentials: true });
         setHistory(res?.data?.data ?? []);
       } catch (err) {
         console.error("load history", err);
+        setError("Failed to load history");
       }
     })();
-  }, [tab]);
+  }, [tab, tenantId, companyId]);
 
-  // simple validation
+  // validation
   const validate = useCallback((s: SettingsShape) => {
     if (!s.tenant_name || s.tenant_name.trim().length < 1) return "Tenant name is required";
     if (!s.currency) return "Currency is required";
     if (isNaN(Number(s.tax_rate))) return "Tax rate must be a number";
-    // more rules can be added
     return null;
   }, []);
 
-  // optimistic save helper
+  // optimistic save helper (includes tenant/company in body)
   const doSave = useCallback(
     async (payload: SettingsShape, opts?: { force?: boolean }) => {
+      if (!tenantId) {
+        setError("Unable to save: tenant context not available.");
+        return { ok: false };
+      }
+
       setSaving(true);
       setError(null);
       try {
-        const body = { ...payload, version: serverVersion };
+        const body = { ...payload, version: serverVersion, tenant_id: tenantId, company_id: companyId ?? null };
         const res = await apiClient.post("/api/hms/settings", body, { withCredentials: true });
         const newVersion = res?.data?.data?.version ?? (serverVersion ?? 1) + 1;
         setServerVersion(newVersion);
         setSettings(res?.data?.data ?? payload);
         setRawJsonText(JSON.stringify(res?.data?.data ?? payload, null, 2));
-        // success hooks
         onSaved?.(Date.now());
         window.dispatchEvent(new CustomEvent("hms-settings-saved", { detail: { savedAt: Date.now() } }));
         return { ok: true };
       } catch (err: any) {
         console.error("save failed", err);
-        // handle conflict (assume 409)
         if (err?.response?.status === 409 && !opts?.force) {
           setError("Save conflict detected. Server version is newer. Reloaded server values.");
-          // reload server version
           try {
-            const reload = await apiClient.get("/api/hms/settings", { withCredentials: true });
+            const qs = buildQs({ tenant_id: tenantId, company_id: companyId });
+            const reload = await apiClient.get(`/api/hms/settings${qs ? "?" + qs : ""}`, { withCredentials: true });
             const payload = reload?.data?.data ?? {};
-            const serverSettings = {
+            const serverSettings: SettingsShape = {
               tenant_name: payload?.tenant_name ?? "",
               address: payload?.address ?? "",
               currency: payload?.currency ?? "USD",
@@ -148,7 +167,7 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
               timezone: payload?.timezone ?? "UTC",
               default_patient_type: payload?.default_patient_type ?? "CASH",
               metadata: payload?.metadata ?? {},
-            } as SettingsShape;
+            };
             setSettings(serverSettings);
             setRawJsonText(JSON.stringify(serverSettings, null, 2));
             setServerVersion(payload?.version ?? serverVersion);
@@ -164,18 +183,16 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
         setSaving(false);
       }
     },
-    [serverVersion, onSaved]
+    [serverVersion, tenantId, companyId, onSaved]
   );
 
-  // Autosave: debounce local edits then save
-  // simple debounce using setTimeout
+  // autosave debounce
   const autosaveTimeoutRef = React.useRef<number | null>(null);
   const scheduleAutosave = useCallback(
     (newSettings: SettingsShape) => {
       if (autosaveTimeoutRef.current) {
         window.clearTimeout(autosaveTimeoutRef.current);
       }
-      // autosave after 1.2s of idle
       autosaveTimeoutRef.current = window.setTimeout(async () => {
         const v = validate(newSettings);
         if (v) {
@@ -189,13 +206,12 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     [doSave, validate]
   );
 
-  useEffect(() => {
+  React.useEffect(() => {
     return () => {
       if (autosaveTimeoutRef.current) window.clearTimeout(autosaveTimeoutRef.current);
     };
   }, []);
 
-  // UI helpers
   const updateField = useCallback(
     (patch: Partial<SettingsShape>, doAutosave = true) => {
       setSettings((s) => {
@@ -208,18 +224,16 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     [scheduleAutosave]
   );
 
-  // Raw JSON editing
+  // Raw JSON apply
   const applyRawJson = useCallback(async () => {
     try {
       const parsed = JSON.parse(rawJsonText);
-      // simple shape merge: prefer parsed keys
       const merged = { ...settings, ...parsed } as SettingsShape;
       const v = validate(merged);
       if (v) {
         setError(v);
         return;
       }
-      // immediate optimistic update UI
       setSettings(merged);
       await doSave(merged);
       setTab("general");
@@ -228,20 +242,19 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     }
   }, [rawJsonText, settings, validate, doSave]);
 
-  // Export current settings as JSON file
   const exportJson = useCallback(() => {
-    const blob = new Blob([JSON.stringify({ settings, version: serverVersion }, null, 2)], { type: "application/json" });
+    const out = { meta: { tenant_id: tenantId, company_id: companyId, version: serverVersion }, settings };
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "hms-settings.json";
+    a.download = `hms-settings${tenantId ? `-${tenantId}` : ""}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [settings, serverVersion]);
+  }, [settings, serverVersion, tenantId, companyId]);
 
-  // Import JSON (file input)
   const importJson = useCallback((file: File | null) => {
     if (!file) return;
     const reader = new FileReader();
@@ -250,9 +263,10 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
         const text = String(ev.target?.result ?? "");
         setRawJsonText(text);
         const parsed = JSON.parse(text);
-        const merged = { ...settings, ...parsed } as SettingsShape;
+        // If file was exported with meta, allow applying settings only
+        const payload = parsed?.settings ? parsed.settings : parsed;
+        const merged = { ...settings, ...payload } as SettingsShape;
         setSettings(merged);
-        // schedule save immediately
         scheduleAutosave(merged);
         setTab("general");
       } catch (err: any) {
@@ -265,9 +279,10 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
   const resetToServer = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get("/api/hms/settings", { withCredentials: true });
+      const qs = buildQs({ tenant_id: tenantId, company_id: companyId });
+      const res = await apiClient.get(`/api/hms/settings${qs ? "?" + qs : ""}`, { withCredentials: true });
       const payload = res?.data?.data ?? {};
-      const serverSettings = {
+      const serverSettings: SettingsShape = {
         tenant_name: payload?.tenant_name ?? "",
         address: payload?.address ?? "",
         currency: payload?.currency ?? "USD",
@@ -275,7 +290,7 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
         timezone: payload?.timezone ?? "UTC",
         default_patient_type: payload?.default_patient_type ?? "CASH",
         metadata: payload?.metadata ?? {},
-      } as SettingsShape;
+      };
       setSettings(serverSettings);
       setRawJsonText(JSON.stringify(serverSettings, null, 2));
       setServerVersion(payload?.version ?? serverVersion);
@@ -286,9 +301,8 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     } finally {
       setLoading(false);
     }
-  }, [serverVersion]);
+  }, [serverVersion, tenantId, companyId]);
 
-  // history view helper
   const renderHistory = useMemo(() => {
     if (!history || history.length === 0) return <div className="text-sm text-white/60">No history yet.</div>;
     return (
@@ -306,7 +320,6 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
     );
   }, [history]);
 
-  // render
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -361,7 +374,6 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
 
       {error && <div className="text-sm text-rose-400">{error}</div>}
 
-      {/* Content panels */}
       <div className="bg-white/3 border border-white/8 rounded-xl p-6">
         {loading ? (
           <div className="text-white/60">Loading…</div>
@@ -433,9 +445,11 @@ export default function HmsSettingsForm({ onSaved }: { onSaved?: (at?: number | 
               <button onClick={applyRawJson} className="px-4 py-2 rounded-md bg-indigo-600 text-white">Apply JSON</button>
               <button onClick={() => { setRawJsonText(JSON.stringify(settings, null, 2)); }} className="px-4 py-2 rounded-md bg-white/5">Revert to UI</button>
             </div>
+            <div className="text-xs text-white/50 mt-2">
+              Raw JSON edits are powerful — they update the full settings object. The UI will validate common fields. Backend will still validate schema and may reject invalid shapes.
+            </div>
           </div>
         ) : (
-          // history
           <div>{renderHistory}</div>
         )}
       </div>

@@ -6,15 +6,17 @@ import HmsSettingsForm from "./admin/SettingsForm";
 import apiClient from "@/lib/api-client";
 
 /**
- * HmsSettingsPage (advanced)
- * - Reads /api/session non-blocking to show Tenant
+ * HmsSettingsPage (tenant & company aware)
+ * - Reads /api/session non-blocking to show tenant and active company
+ * - Passes tenantId + companyId to form so server-authoritative context is used
  * - Displays Last-saved timestamp (updated by onSaved)
- * - Neutral fallback if session endpoint isn't present
  */
 
 export default function HmsSettingsPage() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [tenantName, setTenantName] = useState<string | null>(null);
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [activeCompanyId, setActiveCompanyId] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const mountedRef = useRef(true);
 
@@ -25,9 +27,10 @@ export default function HmsSettingsPage() {
         const res = await apiClient.get("/api/session", { withCredentials: true });
         const s = res?.data?.session;
         if (!mountedRef.current) return;
-        if (s?.tenant_name) setTenantName(s.tenant_name);
+        setTenantName(s?.tenant_name ?? null);
+        setTenantId(s?.tenant_id ?? null);
+        setActiveCompanyId(s?.active_company_id ?? null);
       } catch (err) {
-        // non-fatal
         console.debug("HmsSettingsPage: session not available", err);
       }
     })();
@@ -162,7 +165,7 @@ export default function HmsSettingsPage() {
             </div>
 
             <div className="p-5 md:p-6">
-              <HmsSettingsForm onSaved={onFormSaved} />
+              <HmsSettingsForm onSaved={onFormSaved} tenantId={tenantId} companyId={activeCompanyId} />
             </div>
           </motion.div>
         </div>
