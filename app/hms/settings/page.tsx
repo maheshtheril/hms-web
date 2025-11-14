@@ -1,175 +1,368 @@
-// app/hms/settings/page.tsx  (client)
+// app/hms/admin/SettingsForm.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { motion, Variants } from "framer-motion";
-import HmsSettingsForm from "../admin/SettingsForm";
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
 
-/* ============================================================================
-   HMS Settings Page — Neural Glass Design (production-ready polish)
-   - Adds prefers-reduced-motion fallback
-   - Accessible headings, skip link, and focus styles
-   - Breadcrumb + tenant indicator placeholder (replace with real data)
-   - Keeps visual language, gradients, frosted panels, and subtle motion
-============================================================================ */
+/**
+ * HmsSettingsForm
+ * - GET /api/hms/settings  -> expects a JSON map of keys (billing.currency, billing.taxes, ...)
+ * - POST /api/hms/settings -> accepts { key: string, value: any } and requires admin auth
+ *
+ * Place at: app/hms/admin/SettingsForm.tsx
+ */
 
-export default function HmsSettingsPage() {
-  const [reducedMotion, setReducedMotion] = useState(false);
+/* -------------------------
+   Validation schemas
+   ------------------------- */
+const TaxLineSchema = z.object({
+  id: z.string().min(1, "ID is required"),
+  name: z.string().min(1, "Name is required"),
+  rate: z.number().min(0, "Rate must be >= 0"),
+  isCompound: z.boolean().optional(),
+});
+type TaxLine = z.infer<typeof TaxLineSchema>;
 
+const CurrencySchema = z.object({
+  code: z.string().min(3).max(3), // ISO 4217
+  symbol: z.string().min(1).max(4).optional(),
+  locale: z.string().min(2).optional(),
+});
+type Currency = z.infer<typeof CurrencySchema>;
+
+/* -------------------------
+   Defaults
+   ------------------------- */
+const DEFAULT_CURRENCY: Currency = { code: "INR", symbol: "₹", locale: "en-IN" };
+const DEFAULT_TAXES: TaxLine[] = [{ id: "gst", name: "GST", rate: 18, isCompound: false }];
+
+/* -------------------------
+   UI Component
+   ------------------------- */
+export default function HmsSettingsForm() {
+  const router = useRouter();
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
+  const [taxes, setTaxes] = useState<TaxLine[]>(DEFAULT_TAXES);
+
+  /* helper to set error safely as string | null */
+  const setErrorSafe = (maybe: unknown) => {
+    const msg = typeof maybe === "string" ? maybe : (maybe && (maybe as any).message ? (maybe as any).message : undefined);
+    setError(msg ?? null);
+  };
+
+  /* load settings on mount */
   useEffect(() => {
-    try {
-      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-      setReducedMotion(mq.matches);
-      const handler = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
-      if (mq.addEventListener) mq.addEventListener("change", handler);
-      else mq.addListener(handler);
-      return () => {
-        if (mq.removeEventListener) mq.removeEventListener("change", handler);
-        else mq.removeListener(handler);
-      };
-    } catch {
-      // ignore matchMedia if unavailable
-    }
+    let ignore = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/hms/settings", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Failed to fetch settings (${res.status})`);
+        const map = await res.json();
+        if (ignore) return;
+        const c = map["billing.currency"];
+        const t = map["billing.taxes"];
+        try {
+          // safe parse with zod; fall back to defaults on invalid
+          if (c) {
+            const parsed = CurrencySchema.safeParse(c);
+            if (parsed.success) setCurrency(parsed.data);
+            else setCurrency(DEFAULT_CURRENCY);
+          } else {
+            setCurrency(DEFAULT_CURRENCY);
+          }
+          if (t && Array.isArray(t)) {
+            const ok = t.every((x: any) => TaxLineSchema.safeParse(x).success);
+            setTaxes(ok ? (t as TaxLine[]) : DEFAULT_TAXES);
+          } else {
+            setTaxes(DEFAULT_TAXES);
+          }
+        } catch {
+          setCurrency(DEFAULT_CURRENCY);
+          setTaxes(DEFAULT_TAXES);
+        }
+      } catch (err: any) {
+        console.warn("[HmsSettingsForm] load error:", err);
+        setErrorSafe("Failed to load settings. Try again later.");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  const orbVariant: Variants = reducedMotion
-    ? { hidden: { opacity: 0.35, scale: 1 }, visible: { opacity: 0.35, scale: 1 } }
-    : {
-        hidden: { opacity: 0 },
-        visible: (custom: any) => ({
-          opacity: custom.opacity,
-          scale: custom.scale,
-          transition: { repeat: Infinity, duration: custom.duration, ease: "easeInOut" },
-        }),
-      };
+  /* helpers for editing tax lines */
+  const addTaxLine = () => {
+    setTaxes((s) => [...s, { id: `tax-${uuidv4().slice(0, 6)}`, name: "", rate: 0, isCompound: false }]);
+  };
+  const updateTaxLine = (index: number, patch: Partial<TaxLine>) => {
+    setTaxes((s) => s.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  };
+  const removeTaxLine = (index: number) => {
+    setTaxes((s) => s.filter((_, i) => i !== index));
+  };
 
+  /* validation before saving */
+  const validateAll = (): { ok: true } | { ok: false; message: string } => {
+    const c = CurrencySchema.safeParse(currency);
+    if (!c.success) {
+      return { ok: false, message: "Currency is invalid (code must be 3 letters)." };
+    }
+    if (!Array.isArray(taxes) || taxes.length === 0) {
+      return { ok: false, message: "At least one tax line is required." };
+    }
+    for (const t of taxes) {
+      const r = TaxLineSchema.safeParse(t);
+      if (!r.success) {
+        // safe access to the first Zod issue
+        const issue = r.error.issues && r.error.issues.length ? r.error.issues[0] : undefined;
+        const path = issue ? issue.path.join(".") : "tax";
+        const msg = issue ? issue.message : "Invalid tax line";
+        return { ok: false, message: `Tax line invalid: ${path} — ${msg}` };
+      }
+    }
+    return { ok: true };
+  };
+
+  /* upsert helper */
+  const upsertKey = async (key: string, value: any) => {
+    const res = await fetch("/api/hms/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body && (body as any).error) || `Request failed (${res.status})`);
+    }
+    return await res.json();
+  };
+
+  /* save handler: saves currency and taxes sequentially (atomicity handled server-side) */
+  const handleSave = async () => {
+    setError(null);
+    setSuccessMsg(null);
+    const v = validateAll();
+    if (!v.ok) {
+      setError(v.message ?? "Validation failed. Please review the form.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Save currency
+      await upsertKey("billing.currency", currency);
+      // Save taxes
+      await upsertKey("billing.taxes", taxes);
+      setSuccessMsg("Settings saved. Changes take effect immediately.");
+      // prompt other parts of the app to refresh server components / fetch new values:
+      // Next.js app router: router.refresh() will re-fetch server components
+      router.refresh();
+      // clear success after a bit
+      window.setTimeout(() => setSuccessMsg(null), 3000);
+      // clear any previous error
+      setError(null);
+    } catch (err: any) {
+      console.error("[HmsSettingsForm] save error:", err);
+      setErrorSafe((err as any)?.message ?? String(err) ?? "Failed to save settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canSave = useMemo(() => !loading && !saving, [loading, saving]);
+
+  /* ---------- Render ---------- */
   return (
-    <main
-      className="relative min-h-screen overflow-x-hidden bg-gradient-to-br from-[#0b0f1a] via-[#111625] to-[#090c14] text-white"
-      aria-labelledby="hms-settings-title"
-    >
-      {/* Skip link for keyboard users */}
-      <a href="#hms-settings-panel" className="sr-only focus:not-sr-only focus:inline-block p-2 m-2 rounded-md bg-white/5">
-        Skip to settings
-      </a>
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold text-white/90">Billing settings</h3>
+          <p className="text-sm text-white/60 mt-1">Configure currency and tax rules for this tenant.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-white/40">{loading ? "Loading…" : saving ? "Saving…" : ""}</div>
+        </div>
+      </header>
 
-      {/* ========== Animated Gradient Orbs Background ========== */}
-      <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <motion.div
-          custom={{ opacity: [0.25, 0.45, 0.25], scale: [1, 1.2, 1], duration: 18 }}
-          initial="hidden"
-          animate="visible"
-          variants={orbVariant}
-          className="absolute top-[-150px] left-[-100px] w-[420px] h-[420px] bg-indigo-500/25 rounded-full blur-[140px]"
-        />
-        <motion.div
-          custom={{ opacity: [0.2, 0.5, 0.2], scale: [1, 1.3, 1], duration: 20 }}
-          initial="hidden"
-          animate="visible"
-          variants={orbVariant}
-          className="absolute bottom-[-120px] right-[-120px] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[160px]"
-        />
-        <motion.div
-          custom={{ opacity: [0.15, 0.4, 0.15], scale: [1, 1.15, 1], duration: 22 }}
-          initial="hidden"
-          animate="visible"
-          variants={orbVariant}
-          className="absolute bottom-[30%] left-[40%] w-[340px] h-[340px] bg-blue-500/10 rounded-full blur-[100px]"
-        />
+      {error && (
+        <div role="alert" className="rounded-md bg-red-800/40 border border-red-700 p-3 text-sm text-red-100">
+          {error}
+        </div>
+      )}
+
+      {successMsg && (
+        <div role="status" className="rounded-md bg-emerald-800/30 border border-emerald-700 p-3 text-sm text-emerald-100">
+          {successMsg}
+        </div>
+      )}
+
+      {/* Currency card */}
+      <div className="bg-white/[0.02] border border-white/8 p-4 rounded-2xl">
+        <h4 className="text-sm font-medium text-white/90 mb-2">Currency</h4>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="flex flex-col">
+            <span className="text-xs text-white/60 mb-1">ISO Code</span>
+            <input
+              className="rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+              value={currency.code}
+              onChange={(e) => setCurrency((c) => ({ ...c, code: e.target.value.toUpperCase().slice(0, 3) }))}
+              placeholder="INR"
+              aria-label="Currency code (ISO 4217)"
+            />
+          </label>
+
+          <label className="flex flex-col">
+            <span className="text-xs text-white/60 mb-1">Symbol</span>
+            <input
+              className="rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+              value={currency.symbol ?? ""}
+              onChange={(e) => setCurrency((c) => ({ ...c, symbol: e.target.value }))}
+              placeholder="₹"
+              aria-label="Currency symbol"
+            />
+          </label>
+
+          <label className="flex flex-col">
+            <span className="text-xs text-white/60 mb-1">Locale</span>
+            <input
+              className="rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+              value={currency.locale ?? ""}
+              onChange={(e) => setCurrency((c) => ({ ...c, locale: e.target.value }))}
+              placeholder="en-IN"
+              aria-label="Locale (eg. en-IN)"
+            />
+          </label>
+        </div>
       </div>
 
-      {/* ========== Page Header ========== */}
-      <section className="px-6 md:px-10 pt-8 pb-4">
-        <div className="max-w-6xl mx-auto">
-          <nav aria-label="Breadcrumb" className="mb-3">
-            <ol className="flex items-center gap-2 text-sm text-white/50">
-              <li>HMS</li>
-              <li aria-hidden>›</li>
-              <li className="text-white/80">Settings</li>
-            </ol>
-          </nav>
-
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <h1 id="hms-settings-title" className="text-3xl md:text-4xl font-semibold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 to-purple-300">
-                HMS Settings
-              </h1>
-              <p className="text-white/60 mt-2 max-w-2xl">
-                Configure your hospital identity, billing preferences, and global HMS parameters. Changes propagate across the tenant immediately.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3 text-sm text-white/50">
-              {/* Tenant indicator — swap with real tenant data */}
-              <div className="hidden sm:inline-flex items-center gap-3 bg-white/3 border border-white/6 px-3 py-2 rounded-2xl">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400" aria-hidden />
-                <span className="font-medium text-white/90">Tenant:</span>
-                <span className="text-xs text-white/70">Acme Hospitals (demo)</span>
-              </div>
-              <div className="text-xs text-white/40">Last saved: —</div>
-            </div>
+      {/* Taxes card */}
+      <div className="bg-white/[0.02] border border-white/8 p-4 rounded-2xl">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-sm font-medium text-white/90">Tax lines</h4>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={addTaxLine}
+              className="rounded-md bg-white/4 px-3 py-1 text-sm font-medium border border-white/6 hover:bg-white/6"
+            >
+              + Add tax
+            </button>
           </div>
         </div>
-      </section>
 
-      {/* ========== Main Content Container ========== */}
-      <section id="hms-settings-panel" className="px-4 md:px-6 pb-20">
-        <div className="mx-auto max-w-5xl">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.55, delay: 0.12 }}
-            className="backdrop-blur-2xl bg-white/[0.04] border border-white/10 rounded-3xl shadow-[0_12px_60px_-12px_rgba(0,0,0,0.65)] hover:shadow-[0_14px_80px_-12px_rgba(0,0,0,0.7)] transition-shadow duration-700"
-            role="region"
-            aria-labelledby="global-configuration-heading"
-          >
-            {/* Panel Header */}
-            <div className="p-5 md:p-6 border-b border-white/10 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-              <div>
-                <h2 id="global-configuration-heading" className="text-lg font-semibold text-white/90">
-                  Global Configuration
-                </h2>
-                <p className="text-sm text-white/50 mt-1">
-                  Central settings for your tenant's HMS environment.
-                </p>
+        <div className="space-y-3">
+          {taxes.map((t, i) => (
+            <div key={t.id} className="grid grid-cols-12 gap-2 items-center">
+              <div className="col-span-12 md:col-span-4">
+                <label className="text-xs text-white/60">ID</label>
+                <input
+                  value={t.id}
+                  onChange={(e) => updateTaxLine(i, { id: e.target.value })}
+                  className="w-full rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+                  aria-label={`Tax ${i + 1} id`}
+                />
               </div>
 
-              <div className="flex items-center gap-3 w-full md:w-auto">
-                {/* Example action area (non-functional — form handles actions) */}
-                <div className="hidden md:flex items-center gap-3 text-xs text-white/40">
-                  <span className="px-2 py-1 rounded-md bg-white/3 border border-white/6">Auto-backup: On</span>
-                  <span className="px-2 py-1 rounded-md bg-white/3 border border-white/6">Version: 1.2</span>
-                </div>
+              <div className="col-span-12 md:col-span-4">
+                <label className="text-xs text-white/60">Name</label>
+                <input
+                  value={t.name}
+                  onChange={(e) => updateTaxLine(i, { name: e.target.value })}
+                  className="w-full rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+                  aria-label={`Tax ${i + 1} name`}
+                />
+              </div>
+
+              <div className="col-span-8 md:col-span-3">
+                <label className="text-xs text-white/60">Rate (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={String(t.rate ?? 0)}
+                  onChange={(e) => updateTaxLine(i, { rate: Math.max(0, Number(e.target.value || 0)) })}
+                  className="w-full rounded-md border border-white/6 bg-transparent p-2 text-white/90"
+                  aria-label={`Tax ${i + 1} rate percent`}
+                />
+              </div>
+
+              <div className="col-span-4 md:col-span-1 flex items-center gap-2">
+                <label className="text-xs text-white/60">Compound</label>
+                <input
+                  type="checkbox"
+                  checked={!!t.isCompound}
+                  onChange={(e) => updateTaxLine(i, { isCompound: e.target.checked })}
+                  className="h-4 w-4 rounded border-white/6 bg-transparent"
+                  aria-label={`Tax ${i + 1} compound flag`}
+                />
+              </div>
+
+              <div className="col-span-12 flex justify-end md:col-span-12">
+                <button
+                  type="button"
+                  onClick={() => removeTaxLine(i)}
+                  className="text-xs text-red-300 hover:text-red-100"
+                  aria-label={`Remove tax ${i + 1}`}
+                >
+                  Remove
+                </button>
               </div>
             </div>
+          ))}
 
-            {/* Panel Body */}
-            <div className="p-5 md:p-6">
-              <HmsSettingsForm />
-            </div>
-          </motion.div>
-
-          {/* Optional: Additional Panels (Billing, API Keys, etc.) */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.55, delay: 0.26 }}
-            className="mt-8 backdrop-blur-2xl bg-white/[0.03] border border-white/10 rounded-3xl shadow-[0_12px_60px_-12px_rgba(0,0,0,0.65)]"
-            aria-hidden
-          >
-            <div className="p-5 md:p-6 border-b border-white/10">
-              <h3 className="text-lg font-semibold text-white/90">Billing & Modules</h3>
-              <p className="text-sm text-white/50 mt-1">Toggle module visibility, pricing models, integrations and more.</p>
-            </div>
-            <div className="p-5 md:p-6 text-white/60 text-sm italic">Coming soon — intelligent module control with AI suggestions.</div>
-          </motion.div>
+          {taxes.length === 0 && <div className="text-sm text-white/50 italic">No tax lines configured.</div>}
         </div>
-      </section>
+      </div>
 
-      {/* ========== Footer ========== */}
-      <footer className="text-center text-xs text-white/30 py-6">
-        Neural Glass Design Language © 2025 — GG SaaS ERP HMS Settings
-      </footer>
-    </main>
+      {/* Actions */}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!canSave}
+          className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 font-medium shadow-[0_8px_30px_-12px_rgba(0,0,0,0.6)] transition ${
+            canSave ? "bg-gradient-to-r from-indigo-500 to-purple-500 hover:brightness-105" : "bg-white/6 cursor-not-allowed opacity-60"
+          }`}
+        >
+          {saving ? "Saving…" : "Save settings"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            // reset to last loaded values by reloading settings
+            setLoading(true);
+            setError(null);
+            setSuccessMsg(null);
+            (async () => {
+              try {
+                const res = await fetch("/api/hms/settings", { cache: "no-store" });
+                if (!res.ok) throw new Error("Failed to reload");
+                const map = await res.json();
+                setCurrency(map["billing.currency"] ?? DEFAULT_CURRENCY);
+                setTaxes(map["billing.taxes"] ?? DEFAULT_TAXES);
+              } catch (err) {
+                setErrorSafe("Failed to reload settings.");
+              } finally {
+                setLoading(false);
+              }
+            })();
+          }}
+          className="rounded-2xl px-3 py-2 text-sm bg-white/4 border border-white/6"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
   );
 }

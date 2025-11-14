@@ -11,7 +11,7 @@ import { ArrowLeft, Save, Zap, Layers, Truck, DollarSign, CreditCard } from "luc
 import apiClient from "@/lib/api-client";
 import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
-import type { ProductDraft } from "./types"; // <- centralized shared type
+import type { ProductDraft } from "./types"; // centralized shared type
 
 // Helper: ensure editor state never contains `null` for string fields.
 // Accepts raw object (API may return nulls) and returns a ProductDraft
@@ -30,15 +30,14 @@ function normalizeDraftForEditor(raw: Record<string, any> | undefined | null): P
     if (out[k] === null) out[k] = undefined;
   }
 
-  // boolean/number fields: preserve null -> keep as null so backend can detect empty if needed
-  // but for common editor usage prefer undefined instead of null for optional fields
+  // boolean/number fields: prefer undefined for editor state
   if (out.price === null) out.price = undefined;
   if (out.is_stockable === null) out.is_stockable = undefined;
 
   return out as ProductDraft;
 }
 
-// --- Lazy tabs
+// --- Lazy tabs (correct relative paths)
 const GeneralTab = React.lazy(() => import("./GeneralTab"));
 const InventoryTab = React.lazy(() => import("./InventoryTab"));
 const VariantsTab = React.lazy(() => import("./VariantsTab"));
@@ -63,6 +62,14 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const [loading, setLoading] = useState(false);
   const [dirty, setDirty] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // --- Defaults derived from company settings (currency, tax_inclusive)
+  const defaults = useMemo(() => {
+    return {
+      currency: company?.settings?.default_currency ?? "USD",
+      tax_inclusive: company?.settings?.tax_inclusive_by_default ?? false,
+    };
+  }, [company]);
 
   // Load product if editing
   useEffect(() => {
@@ -189,29 +196,36 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   );
 
   return (
-    <div className="fixed inset-0 z-[2000] flex items-start justify-center p-6 overflow-auto bg-slate-900/55 backdrop-blur-lg">
+    <div className="fixed inset-0 z-[2000] flex items-start justify-center p-6 overflow-auto" style={{ background: "rgba(15,23,42,0.55)" }}>
       <style>{`
+        :root {
+          --glass-surface: rgba(255,255,255,0.9);
+          --glass-accent: rgba(79,70,229,1); /* indigo-600 */
+          --glass-muted: rgba(15,23,42,0.45);
+          --glass-border: rgba(15,23,42,0.06);
+        }
         .product-editor * { color: #0f172a; }
         .product-editor input,
         .product-editor textarea,
         .product-editor select,
         .product-editor .react-select__control {
           color: #0f172a !important;
-          background-color: rgba(255,255,255,0.92) !important;
-          border: 1px solid rgba(15,23,42,0.06) !important;
+          background-color: var(--glass-surface) !important;
+          border: 1px solid var(--glass-border) !important;
         }
         .product-editor input::placeholder,
         .product-editor textarea::placeholder {
-          color: rgba(15,23,42,0.45) !important;
+          color: var(--glass-muted) !important;
         }
       `}</style>
 
       <motion.div
         layout
-        className="product-editor w-full max-w-6xl rounded-3xl border border-white/20 bg-white/90 backdrop-blur-xl shadow-2xl p-6"
+        className="product-editor w-full max-w-6xl rounded-3xl border shadow-2xl p-6"
         initial={{ y: -8, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 8, opacity: 0 }}
+        style={{ background: "var(--glass-surface)", borderColor: "rgba(255,255,255,0.12)" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between gap-4">
@@ -312,7 +326,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
             </aside>
 
             <section className="col-span-9">
-              <div className="rounded-2xl bg-white/95 border p-4 shadow-sm text-slate-900">
+              <div className="rounded-2xl border p-4 shadow-sm text-slate-900" style={{ background: "var(--glass-surface)" }}>
                 <Tab.Panels>
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading General…</div>}>
@@ -320,13 +334,14 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                         draft={draft}
                         onChange={(update) => updateDraft(update)}
                         onRequestSave={() => onManualSave()}
+                        defaults={defaults}
                       />
                     </Suspense>
                   </Tab.Panel>
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Inventory…</div>}>
-                      <InventoryTab draft={draft} onChange={(update) => updateDraft(update)} />
+                      <InventoryTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
                     </Suspense>
                   </Tab.Panel>
 
@@ -338,13 +353,13 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Pricing…</div>}>
-                      <PricingTab draft={draft} onChange={(update) => updateDraft(update)} />
+                      <PricingTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
                     </Suspense>
                   </Tab.Panel>
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Accounting…</div>}>
-                      <AccountingTab draft={draft} onChange={(update) => updateDraft(update)} />
+                      <AccountingTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
                     </Suspense>
                   </Tab.Panel>
 
