@@ -1,56 +1,68 @@
-// web/app/dashboard/settings/settings-list.tsx
 "use client";
 
-import { useEffect, useState } from "react";
-import SettingEditor from "./setting-editor";
+import { useState } from "react";
+import { SettingsAPI } from "./services/settings.api";
 
-export default function SettingsList() {
-  const [items, setItems] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function SettingEditor({
+  original,
+  onSaved,
+}: {
+  original: any;
+  onSaved: () => void;
+}) {
+  const [text, setText] = useState(JSON.stringify(original.value, null, 2));
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  async function load() {
-    setLoading(true);
+  async function save() {
     try {
-      const res = await fetch("/api/settings", {
-        credentials: "include",
-        headers: {
-          "x-tenant-id": (window as any).__TENANT_ID__ || "",
-          "x-user-id": (window as any).__USER_ID__ || "",
-        },
+      // Validate JSON first
+      const parsed = JSON.parse(text);
+
+      setError("");
+      setSaving(true);
+
+      // Use the unified SettingsAPI update method
+      await SettingsAPI.update({
+        key: original.key,
+        value: parsed,
+        tenant_id: original.tenant_id,
+        company_id: original.company_id,
       });
-      const data = await res.json();
-      setItems(data);
-    } finally {
-      setLoading(false);
+
+      setSaving(false);
+      onSaved(); // only fire on success
+    } catch (e: any) {
+      // Determine whether it's a JSON error or backend error
+      const msg = e?.message || "Unknown error";
+
+      if (msg.includes("Unexpected token") || msg.includes("JSON")) {
+        setError("Invalid JSON: " + msg);
+      } else {
+        setError("Server error: " + msg);
+      }
+
+      setSaving(false);
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
-
-  if (loading) return <div>Loading...</div>;
-
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {items.map((item: any) => (
-        <div
-          key={item.id}
-          className="p-6 rounded-xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-lg"
-        >
-          <h2 className="text-xl font-semibold mb-2">{item.key}</h2>
-          <p className="text-sm text-gray-300 mb-3">
-            Scope: {item.scope} • v{item.version}
-          </p>
+    <div>
+      <textarea
+        className="w-full h-40 p-3 bg-black/30 text-white rounded-lg border border-white/20"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
 
-          <SettingEditor
-            original={item}
-            onSaved={() => {
-              load();
-            }}
-          />
-        </div>
-      ))}
+      {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="mt-3 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg disabled:opacity-50"
+      >
+        {saving ? "Saving..." : "Save"}
+      </button>
     </div>
   );
 }

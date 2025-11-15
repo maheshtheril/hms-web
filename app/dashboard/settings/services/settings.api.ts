@@ -1,36 +1,102 @@
 // web/app/dashboard/settings/services/settings.api.ts
-/* Simple client API. Exposes:
-   - list(): returns array of settings rows
-   - update(payload): { key, value, tenant_id?, company_id? }
-   - effective(key, companyId?): returns { key, value }
-   - categorize(settings): helper to group into categories
-   - localSchemas: simple local schemas for friendly forms
+/* Client API for settings (list / update / effective + helpers)
+   - Uses the app's session surface (window.__SESSION__, meta tags)
+   - Falls back to calling GET /api/session (should read from your session table)
+   - No localStorage access anymore (server/session table is the source of truth)
 */
 
-function getHeaders(): Record<string, string> {
+type SessionInfo = {
+  // camelCase (preferred)
+  tenantId?: string | null;
+  userId?: string | null;
+
+  // snake_case (backend DB / legacy APIs)
+  tenant_id?: string | null;
+  user_id?: string | null;
+};
+
+async function fetchSessionFromServer(): Promise<SessionInfo> {
+  try {
+    const res = await fetch("/api/session", {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) return {};
+    return (await res.json()) as SessionInfo;
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Build headers from multiple trusted sources (in-preference order):
+ * 1) window.__SESSION__ (recommended, server-injected on page render)
+ * 2) window.__TENANT_ID__ / window.__USER_ID__ (legacy)
+ * 3) meta tags: <meta name="tenant-id" content="...">
+ * 4) GET /api/session (server endpoint that reads your session table)
+ *
+ * Important: this function is async because of the server fallback.
+ */
+async function getHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
-    "Accept": "application/json",
+    Accept: "application/json",
     "Content-Type": "application/json",
   };
 
   try {
-    // preferred small-surface ways your app might expose session
-    const tenant = (window as any).__TENANT_ID__ || (window as any).__SESSION?.tenantId || localStorage.getItem("tenant_id") || localStorage.getItem("tenantId") || "";
-    const user = (window as any).__USER_ID__ || (window as any).__SESSION?.userId || localStorage.getItem("user_id") || localStorage.getItem("userId") || "";
+    // Attempt to read session from global window surface
+    const win = typeof window !== "undefined" ? (window as any) : undefined;
+    let tenant: string | undefined | null = undefined;
+    let user: string | undefined | null = undefined;
+
+    if (win) {
+      const session: any = win.__SESSION__ ?? null;
+      if (session) {
+        tenant = session.tenantId ?? session.tenant_id ?? session.tenant ?? tenant;
+        user = session.userId ?? session.user_id ?? session.user ?? user;
+      }
+
+      // legacy top-level globals
+      if (!tenant && (win.__TENANT_ID__ || win.__TENANT__)) {
+        tenant = win.__TENANT_ID__ || win.__TENANT__;
+      }
+      if (!user && (win.__USER_ID__ || win.__USER__)) {
+        user = win.__USER_ID__ || win.__USER__;
+      }
+    }
+
+    // meta tag fallback (server-rendered HTML)
+    if ((!tenant || !user) && typeof document !== "undefined") {
+      try {
+        if (!tenant) {
+          const m = document.querySelector('meta[name="tenant-id"]');
+          if (m && m.getAttribute) tenant = m.getAttribute("content") || undefined;
+        }
+        if (!user) {
+          const m = document.querySelector('meta[name="user-id"]');
+          if (m && m.getAttribute) user = m.getAttribute("content") || undefined;
+        }
+      } catch (e) {
+        // ignore DOM access problems
+      }
+    }
+
+    // server session fallback (only if we still don't have ids)
+    if ((!tenant || !user) && typeof window !== "undefined") {
+      const s = await fetchSessionFromServer();
+      tenant = tenant ?? s.tenantId ?? s.tenant_id ?? undefined;
+      user = user ?? s.userId ?? s.user_id ?? undefined;
+    }
 
     if (tenant) headers["x-tenant-id"] = String(tenant);
     if (user) headers["x-user-id"] = String(user);
 
-    // optional: meta tag fallback
-    if (!headers["x-tenant-id"] && typeof document !== "undefined") {
-      const meta = document.querySelector('meta[name="tenant-id"]');
-      if (meta && meta.getAttribute) {
-        const v = meta.getAttribute("content");
-        if (v) headers["x-tenant-id"] = v;
-      }
-    }
+    // NOTE: intentionally no localStorage reads here.
   } catch (e) {
-    // ignore header-building errors
+    // best-effort; keep base headers
   }
 
   return headers;
@@ -40,7 +106,7 @@ export const SettingsAPI = {
   async list(): Promise<any[]> {
     const res = await fetch("/api/settings", {
       credentials: "include",
-      headers: getHeaders(),
+      headers: await getHeaders(),
     });
     if (!res.ok) throw new Error("Failed to load settings");
     return res.json();
@@ -50,11 +116,11 @@ export const SettingsAPI = {
     const res = await fetch("/api/settings", {
       method: "POST",
       credentials: "include",
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const t = await res.text();
+      const t = await res.text().catch(() => "");
       throw new Error(t || "Failed to save");
     }
     return res.json();
@@ -73,7 +139,7 @@ export const SettingsAPI = {
     const res = await fetch(url, {
       method: "GET",
       credentials: "include",
-      headers: getHeaders(),
+      headers: await getHeaders(),
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
@@ -86,7 +152,6 @@ export const SettingsAPI = {
 /**
  * Very small local schema registry used to render friendly forms.
  * Expand as you add more keys.
- * Schema shape is minimal: properties: { k: { type, title } }, required: []
  */
 export const localSchemas: Record<string, any> = {
   "billing.currency": {
@@ -147,7 +212,6 @@ export function categorize(settings: any[]) {
     else groups.Other.push(s);
   }
 
-  // remove empty categories for UI
   for (const k of Object.keys(groups)) if (groups[k].length === 0) delete groups[k];
   return groups;
 }

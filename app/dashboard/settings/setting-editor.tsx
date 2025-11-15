@@ -1,7 +1,7 @@
-// web/app/dashboard/settings/setting-editor.tsx
 "use client";
 
 import { useState } from "react";
+import { SettingsAPI } from "./services/settings.api";
 
 export default function SettingEditor({
   original,
@@ -20,20 +20,11 @@ export default function SettingEditor({
       setError("");
       setSaving(true);
 
-      await fetch("/api/settings", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-tenant-id": (window as any).__TENANT_ID__ || "",
-          "x-user-id": (window as any).__USER_ID__ || "",
-        },
-        body: JSON.stringify({
-          key: original.key,
-          value: parsed,
-          tenant_id: original.tenant_id,
-          company_id: original.company_id,
-        }),
+      await SettingsAPI.update({
+        key: original.key,
+        value: parsed,
+        tenant_id: original.tenant_id,
+        company_id: original.company_id,
       });
 
       setSaving(false);
