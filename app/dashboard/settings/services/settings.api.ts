@@ -2,18 +2,45 @@
 /* Simple client API. Exposes:
    - list(): returns array of settings rows
    - update(payload): { key, value, tenant_id?, company_id? }
+   - effective(key, companyId?): returns { key, value }
    - categorize(settings): helper to group into categories
    - localSchemas: simple local schemas for friendly forms
 */
+
+function getHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+  };
+
+  try {
+    // preferred small-surface ways your app might expose session
+    const tenant = (window as any).__TENANT_ID__ || (window as any).__SESSION?.tenantId || localStorage.getItem("tenant_id") || localStorage.getItem("tenantId") || "";
+    const user = (window as any).__USER_ID__ || (window as any).__SESSION?.userId || localStorage.getItem("user_id") || localStorage.getItem("userId") || "";
+
+    if (tenant) headers["x-tenant-id"] = String(tenant);
+    if (user) headers["x-user-id"] = String(user);
+
+    // optional: meta tag fallback
+    if (!headers["x-tenant-id"] && typeof document !== "undefined") {
+      const meta = document.querySelector('meta[name="tenant-id"]');
+      if (meta && meta.getAttribute) {
+        const v = meta.getAttribute("content");
+        if (v) headers["x-tenant-id"] = v;
+      }
+    }
+  } catch (e) {
+    // ignore header-building errors
+  }
+
+  return headers;
+}
 
 export const SettingsAPI = {
   async list(): Promise<any[]> {
     const res = await fetch("/api/settings", {
       credentials: "include",
-      headers: {
-        "x-tenant-id": (window as any).__TENANT_ID__ || "",
-        "x-user-id": (window as any).__USER_ID__ || "",
-      },
+      headers: getHeaders(),
     });
     if (!res.ok) throw new Error("Failed to load settings");
     return res.json();
@@ -23,16 +50,34 @@ export const SettingsAPI = {
     const res = await fetch("/api/settings", {
       method: "POST",
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        "x-tenant-id": (window as any).__TENANT_ID__ || "",
-        "x-user-id": (window as any).__USER_ID__ || "",
-      },
+      headers: getHeaders(),
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const t = await res.text();
       throw new Error(t || "Failed to save");
+    }
+    return res.json();
+  },
+
+  /**
+   * GET /api/settings/effective?key=...&companyId=...
+   * Returns e.g. { key: "...", value: {...} }
+   */
+  async effective(key: string, companyId?: string | undefined) {
+    const params = new URLSearchParams();
+    params.set("key", key);
+    if (companyId) params.set("companyId", companyId);
+
+    const url = `/api/settings/effective?${params.toString()}`;
+    const res = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Failed to fetch effective setting: ${res.status} ${res.statusText} ${txt}`);
     }
     return res.json();
   },
