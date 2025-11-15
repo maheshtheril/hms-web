@@ -2,9 +2,9 @@
 import { z } from "zod";
 
 export const TaxRateInput = z.object({
-  name: z.string().min(1),
-  rate: z.number().min(0),
-  type: z.string().default("vat"),
+  name: z.string().min(1, "Name is required"),
+  rate: z.number().min(0, "Rate must be >= 0"),
+  type: z.string().min(1).default("gst"),
   country: z.string().nullable().optional(),
   state: z.string().nullable().optional(),
   city: z.string().nullable().optional(),

@@ -4,8 +4,8 @@ export type TaxRateRow = {
   tenant_id?: string | null;
   company_id?: string | null;
   name: string;
-  rate: number;
-  type: string;
+  rate: number; // decimal like 0.18
+  type: string; // e.g. "gst", "service", "city", "custom"
   country?: string | null;
   state?: string | null;
   city?: string | null;
