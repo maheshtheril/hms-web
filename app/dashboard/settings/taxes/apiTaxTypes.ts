@@ -5,7 +5,7 @@ export const TaxTypesAPI = {
   async list(tenantId?: string) {
     const res = await fetch("/api/tenant/tax-types", {
       headers: tenantId ? { "x-tenant-id": tenantId } : {},
-      credentials: "include"
+      credentials: "include",
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
@@ -14,7 +14,10 @@ export const TaxTypesAPI = {
   async create(payload: any, tenantId?: string) {
     const res = await fetch("/api/tenant/tax-types", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(tenantId ? { "x-tenant-id": tenantId } : {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(tenantId ? { "x-tenant-id": tenantId } : {}),
+      },
       credentials: "include",
       body: JSON.stringify(payload),
     });
@@ -25,7 +28,10 @@ export const TaxTypesAPI = {
   async update(id: string, payload: any, tenantId?: string) {
     const res = await fetch(`/api/tenant/tax-types/${id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", ...(tenantId ? { "x-tenant-id": tenantId } : {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(tenantId ? { "x-tenant-id": tenantId } : {}),
+      },
       credentials: "include",
       body: JSON.stringify(payload),
     });
