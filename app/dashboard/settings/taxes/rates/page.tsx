@@ -35,7 +35,14 @@ function TaxRateModal({ mode, data, taxTypes, onClose, onSave }: TaxRateModalPro
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const valid = Boolean(form.tax_type_id && form.name && form.rate !== undefined && !Number.isNaN(Number(form.rate)));
+
   const save = async () => {
+    if (!valid) {
+      setError("Please select a tax type, enter a name and a valid rate.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -48,7 +55,7 @@ function TaxRateModal({ mode, data, taxTypes, onClose, onSave }: TaxRateModalPro
       await onSave();
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error || "save_failed");
+      setError(err?.response?.data?.error || err?.response?.data?.message || "Save failed");
       console.error(err);
     } finally {
       setSaving(false);
@@ -63,41 +70,54 @@ function TaxRateModal({ mode, data, taxTypes, onClose, onSave }: TaxRateModalPro
         </h3>
 
         <div className="space-y-4">
-          <select
-            value={form.tax_type_id}
-            onChange={(e) => setForm({ ...form, tax_type_id: e.target.value })}
-            className="glass-input"
-          >
-            <option value="">Select Tax Type</option>
-            {taxTypes.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+          {taxTypes.length === 0 ? (
+            <div className="text-yellow-300 text-sm">
+              No tax types available. Create a tax type first.
+            </div>
+          ) : (
+            <select
+              value={form.tax_type_id}
+              onChange={(e) => setForm({ ...form, tax_type_id: e.target.value })}
+              className="glass-input"
+            >
+              <option value="">Select Tax Type</option>
+              {taxTypes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          )}
 
           <input
             className="glass-input"
             placeholder="Rate Name (ex: GST 18%)"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
+            autoFocus={true}
           />
 
           <input
             className="glass-input"
             placeholder="Rate (%)"
             type="number"
-            value={String(form.rate)}
-            onChange={(e) => setForm({ ...form, rate: Number(e.target.value) })}
+            step="0.001"
+            min="0"
+            value={String(form.rate ?? "")}
+            onChange={(e) => setForm({ ...form, rate: e.target.value === "" ? undefined : Number(e.target.value) })}
           />
 
           {error && <div className="text-red-400 text-sm">{error}</div>}
 
           <div className="flex justify-end gap-4 pt-4">
-            <button onClick={onClose} className="px-4 py-2 bg-white/10 rounded-xl">
+            <button onClick={onClose} className="px-4 py-2 bg-white/10 rounded-xl" disabled={saving}>
               Cancel
             </button>
-            <button onClick={save} disabled={saving} className="px-4 py-2 bg-blue-500/80 rounded-xl text-white">
+            <button
+              onClick={save}
+              disabled={saving || !valid}
+              className={`px-4 py-2 rounded-xl text-white ${saving || !valid ? "bg-blue-300/60" : "bg-blue-500/80"}`}
+            >
               {saving ? "Saving..." : "Save"}
             </button>
           </div>
@@ -116,8 +136,7 @@ export default function TaxRatesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const t = await apiClient.get("/api/global/tax-types");
-      const r = await apiClient.get("/api/global/tax-rates");
+      const [t, r] = await Promise.all([apiClient.get("/api/global/tax-types"), apiClient.get("/api/global/tax-rates")]);
       setTypes(t.data?.data || []);
       setRates(r.data?.data || []);
     } catch (err) {
@@ -148,7 +167,15 @@ export default function TaxRatesPage() {
       <div className="flex justify-between">
         <h2 className="text-2xl font-semibold glass-text">Tax Rates</h2>
         <button
-          onClick={() => setModal({ mode: "create", data: {}, taxTypes: types, onClose: () => setModal(null), onSave: load })}
+          onClick={() =>
+            setModal({
+              mode: "create",
+              data: {} as TaxRate,
+              taxTypes: types,
+              onClose: () => setModal(null),
+              onSave: load,
+            })
+          }
           className="px-4 py-2 glass border border-white/20 rounded-xl"
         >
           <Plus />
@@ -173,7 +200,18 @@ export default function TaxRatesPage() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setModal({ mode: "edit", data: r, taxTypes: types, onClose: () => setModal(null), onSave: load })} className="p-2">
+              <button
+                onClick={() =>
+                  setModal({
+                    mode: "edit",
+                    data: r,
+                    taxTypes: types,
+                    onClose: () => setModal(null),
+                    onSave: load,
+                  })
+                }
+                className="p-2"
+              >
                 <Edit2 />
               </button>
               <button onClick={() => remove(r.id)} className="p-2 hover:bg-red-500/20 rounded-xl">

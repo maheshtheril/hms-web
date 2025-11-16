@@ -30,18 +30,37 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
     symbol: data?.symbol ?? "",
     precision: data?.precision ?? 2,
   });
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Basic required validation
+  const valid =
+    Boolean(form.code && form.code.length === 3 && form.name && form.precision !== undefined);
+
   const save = async () => {
+    if (!valid) {
+      setError("Enter valid code, name and precision.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
+
     try {
+      const payload = {
+        code: String(form.code).trim().toUpperCase(),
+        name: String(form.name).trim(),
+        symbol: form.symbol === "" ? null : String(form.symbol),
+        precision: Number(form.precision) || 2,
+      };
+
       if (mode === "create") {
-        await apiClient.post("/api/global/currencies", form);
+        await apiClient.post("/api/global/currencies", payload);
       } else {
-        await apiClient.put(`/api/global/currencies/${data.id}`, form);
+        await apiClient.put(`/api/global/currencies/${data.id}`, payload);
       }
+
       await onSave();
       onClose();
     } catch (err: any) {
@@ -57,13 +76,14 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-black/40 rounded-3xl p-6 w-full max-w-lg border border-white/20 glass"
+        className="glass rounded-3xl p-6 w-full max-w-lg border border-white/20"
       >
         <h2 className="text-xl font-semibold mb-4 glass-text">
           {mode === "create" ? "Create Currency" : "Edit Currency"}
         </h2>
 
         <div className="space-y-4">
+          {/* Code */}
           <input
             value={form.code}
             maxLength={3}
@@ -71,22 +91,35 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
             placeholder="Code (USD)"
             className="glass-input"
           />
+
+          {/* Name */}
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             placeholder="Name (US Dollar)"
             className="glass-input"
           />
+
+          {/* Symbol */}
           <input
             value={form.symbol ?? ""}
             onChange={(e) => setForm({ ...form, symbol: e.target.value })}
             placeholder="Symbol ($)"
             className="glass-input"
           />
+
+          {/* Precision */}
           <input
-            value={String(form.precision ?? 2)}
             type="number"
-            onChange={(e) => setForm({ ...form, precision: Number(e.target.value) })}
+            min={0}
+            step={1}
+            value={String(form.precision ?? 2)}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                precision: Math.max(0, Number(e.target.value) || 0),
+              })
+            }
             placeholder="Precision (2)"
             className="glass-input"
           />
@@ -94,13 +127,20 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
           {error && <div className="text-red-400 text-sm">{error}</div>}
 
           <div className="flex justify-end gap-4 pt-4">
-            <button onClick={onClose} className="px-4 py-2 bg-white/10 rounded-xl">
+            <button
+              onClick={onClose}
+              disabled={saving}
+              className="px-4 py-2 bg-white/10 rounded-xl"
+            >
               Cancel
             </button>
+
             <button
-              disabled={saving}
+              disabled={saving || !valid}
               onClick={save}
-              className="px-4 py-2 bg-blue-500/80 rounded-xl text-white"
+              className={`px-4 py-2 rounded-xl text-white ${
+                saving || !valid ? "bg-blue-300/60" : "bg-blue-500/80"
+              }`}
             >
               {saving ? "Saving..." : "Save"}
             </button>
@@ -137,7 +177,8 @@ export default function CurrenciesPage() {
 
   const remove = async (id?: string) => {
     if (!id) return;
-    if (!confirm("Delete this currency? (soft-delete)")) return;
+    if (!confirm("Delete this currency?")) return;
+
     try {
       await apiClient.delete(`/api/global/currencies/${id}`);
       fetchData();
@@ -151,8 +192,16 @@ export default function CurrenciesPage() {
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold glass-text">Currencies</h1>
+
         <button
-          onClick={() => setModal({ mode: "create", data: {}, onClose: () => setModal(null), onSave: fetchData })}
+          onClick={() =>
+            setModal({
+              mode: "create",
+              data: {} as Currency,
+              onClose: () => setModal(null),
+              onSave: fetchData,
+            })
+          }
           className="px-4 py-2 rounded-xl bg-white/10 backdrop-blur-lg border border-white/20 hover:bg-white/20 glass"
         >
           <Plus size={18} />
@@ -173,7 +222,9 @@ export default function CurrenciesPage() {
             >
               <div>
                 <div className="text-lg font-medium glass-text">{c.name}</div>
-                <div className="text-sm text-gray-300">{c.code} · {c.symbol || "-"}</div>
+                <div className="text-sm text-gray-300">
+                  {c.code} · {c.symbol || "-"}
+                </div>
               </div>
 
               <div className="flex gap-3">
@@ -190,7 +241,11 @@ export default function CurrenciesPage() {
                 >
                   <Edit2 size={18} />
                 </button>
-                <button onClick={() => remove(c.id)} className="p-2 rounded-xl hover:bg-red-500/30">
+
+                <button
+                  onClick={() => remove(c.id)}
+                  className="p-2 rounded-xl hover:bg-red-500/30"
+                >
                   <Trash2 size={18} />
                 </button>
               </div>

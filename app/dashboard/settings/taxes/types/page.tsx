@@ -1,17 +1,12 @@
-"use client";
+// Replace your existing TaxTypeModal with this exact block
 
-import React, { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { Plus, Edit2, Trash2 } from "lucide-react";
+import React, { useState } from "react";
 import apiClient from "@/lib/api-client";
 
 type TaxType = {
   id?: string;
   name?: string;
   description?: string;
-  is_active?: boolean;
-  created_at?: string;
-  updated_at?: string;
 };
 
 type TaxTypeModalProps = {
@@ -21,7 +16,7 @@ type TaxTypeModalProps = {
   onClose: () => void;
 };
 
-function TaxTypeModal({ mode, data, onSave, onClose }: TaxTypeModalProps) {
+export function TaxTypeModal({ mode, data, onSave, onClose }: TaxTypeModalProps) {
   const [form, setForm] = useState<TaxType>({
     name: data?.name || "",
     description: data?.description || "",
@@ -29,7 +24,7 @@ function TaxTypeModal({ mode, data, onSave, onClose }: TaxTypeModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
+  const save = async () => {
     setSaving(true);
     setError(null);
     try {
@@ -41,124 +36,132 @@ function TaxTypeModal({ mode, data, onSave, onClose }: TaxTypeModalProps) {
       await onSave();
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error || "save_failed");
-      console.error(err);
+      // user-friendly error extract
+      const msg = err?.response?.data?.error || err?.response?.data?.message || "Save failed";
+      setError(String(msg));
+      console.error("TaxTypeModal save error:", err);
     } finally {
       setSaving(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-      <div className="glass border border-white/20 rounded-3xl p-6 w-full max-w-lg">
-        <h3 className="text-xl font-semibold glass-text mb-4">
-          {mode === "create" ? "Create Tax Type" : "Edit Tax Type"}
-        </h3>
+  const wrapperStyle: React.CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+    padding: "16px",
+  };
 
-        <div className="space-y-4">
+  const boxStyle: React.CSSProperties = {
+    width: "100%",
+    maxWidth: 720,
+    borderRadius: 18,
+    padding: 20,
+    background: "linear-gradient(180deg, rgba(20,20,20,0.95), rgba(10,10,10,0.92))",
+    border: "1px solid rgba(255,255,255,0.06)",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+    color: "#fff",
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.02)",
+    color: "#fff",
+    outline: "none",
+    boxSizing: "border-box",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.85)",
+    marginBottom: 6,
+    display: "block",
+  };
+
+  const footerBtnStyle: React.CSSProperties = {
+    padding: "8px 14px",
+    borderRadius: 10,
+    border: "none",
+    cursor: "pointer",
+  };
+
+  return (
+    <div style={wrapperStyle} role="dialog" aria-modal="true">
+      <div style={boxStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
+            {mode === "create" ? "Create Tax Type" : "Edit Tax Type"}
+          </h3>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "rgba(255,255,255,0.7)",
+              cursor: "pointer",
+              fontSize: 18,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Name</label>
           <input
-            className="glass-input"
-            placeholder="Name"
+            style={inputStyle}
+            placeholder="Ex: GST"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
+            maxLength={150}
+            autoFocus
           />
+        </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Description</label>
           <textarea
-            className="glass-input min-h-[120px]"
-            placeholder="Description"
+            style={{ ...inputStyle, minHeight: 100, resize: "vertical" }}
+            placeholder="Optional description"
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
+        </div>
 
-          {error && <div className="text-red-400 text-sm">{error}</div>}
-
-          <div className="flex justify-end gap-4 pt-4">
-            <button onClick={onClose} className="px-4 py-2 bg-white/10 rounded-xl">
-              Cancel
-            </button>
-            <button onClick={submit} disabled={saving} className="px-4 py-2 bg-blue-500/80 rounded-xl text-white">
-              {saving ? "Saving..." : "Save"}
-            </button>
+        {error && (
+          <div style={{ color: "#ffb4b4", marginBottom: 10, fontSize: 13 }}>
+            {error}
           </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button
+            onClick={onClose}
+            style={{ ...footerBtnStyle, background: "rgba(255,255,255,0.06)", color: "#fff" }}
+            type="button"
+            disabled={saving}
+          >
+            Cancel
+          </button>
+
+          <button
+            onClick={save}
+            style={{ ...footerBtnStyle, background: "#0ea5ff", color: "#042a38" }}
+            type="button"
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-export default function TaxTypesPage() {
-  const [items, setItems] = useState<TaxType[]>([]);
-  const [modal, setModal] = useState<TaxTypeModalProps | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res = await apiClient.get("/api/global/tax-types");
-      setItems(res.data?.data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const remove = async (id?: string) => {
-    if (!id) return;
-    if (!confirm("Delete tax type?")) return;
-    try {
-      await apiClient.delete(`/api/global/tax-types/${id}`);
-      load();
-    } catch (err) {
-      console.error(err);
-      alert("Delete failed");
-    }
-  };
-
-  return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold glass-text">Tax Types</h2>
-        <button
-          onClick={() => setModal({ mode: "create", data: {}, onSave: load, onClose: () => setModal(null) })}
-          className="px-4 py-2 glass border border-white/20 rounded-xl"
-        >
-          <Plus size={18} />
-        </button>
-      </div>
-
-      {loading && <div className="text-gray-300">Loading...</div>}
-
-      <div className="space-y-3">
-        {items.map((t) => (
-          <motion.div
-            key={t.id}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="p-4 glass rounded-2xl border border-white/20 flex justify-between"
-          >
-            <div>
-              <div className="text-lg glass-text">{t.name}</div>
-              <div className="text-gray-300 text-sm">{t.description}</div>
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => setModal({ mode: "edit", data: t, onSave: load, onClose: () => setModal(null) })} className="p-2">
-                <Edit2 />
-              </button>
-              <button onClick={() => remove(t.id)} className="p-2 hover:bg-red-400/20 rounded-xl">
-                <Trash2 />
-              </button>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-
-      {modal && <TaxTypeModal {...modal} />}
     </div>
   );
 }
