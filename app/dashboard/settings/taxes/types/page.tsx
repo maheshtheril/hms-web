@@ -1,5 +1,5 @@
 // Replace your existing TaxTypeModal with this exact block
-
+"use client";
 import React, { useState } from "react";
 import apiClient from "@/lib/api-client";
 
