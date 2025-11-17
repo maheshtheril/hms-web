@@ -6,8 +6,8 @@ import React, { useEffect, useRef, useState } from "react";
 export interface Country {
   id: string;
   name: string;
-  iso2?: string;
-  flag?: string | null; // optional DB-provided emoji string
+  iso2?: string | null;
+  flag?: string | null; // DB emoji or null
 }
 
 type Props = {
@@ -15,12 +15,11 @@ type Props = {
   value: string | "";
   onChange: (id: string) => void;
   placeholder?: string;
-  // optional: limit how many items to render (for very large lists)
   maxItems?: number;
   className?: string;
 };
 
-function iso2ToFlag(iso2?: string): string {
+function iso2ToFlag(iso2?: string | null): string {
   if (!iso2) return "";
   const s = iso2.toUpperCase().trim();
   if (s.length !== 2) return "";
@@ -34,24 +33,19 @@ function iso2ToFlag(iso2?: string): string {
   }
 }
 
-/**
- * Returns:
- * - DB-provided flag (cleaned) if present,
- * - emoji from iso2 if supported,
- * - otherwise null (caller will render final img fallback).
- */
 function preferredFlag(c: Country): string | null {
+  // normalize DB flag and return emoji or null
   const dbFlag = (c.flag || "").toString().trim();
-  if (dbFlag) return dbFlag;
+  if (dbFlag) {
+    // sometimes DB has trailing whitespace — trim it
+    return dbFlag;
+  }
   const emoji = iso2ToFlag(c.iso2);
   if (emoji) return emoji;
   return null;
 }
 
-/**
- * Final guaranteed SVG fallback url (FlagCDN small size)
- */
-function flagSvgUrl(iso2?: string) {
+function flagSvgUrl(iso2?: string | null) {
   if (!iso2) return "";
   return `https://flagcdn.com/w20/${iso2.toLowerCase()}.png`;
 }
@@ -66,7 +60,7 @@ export default function CountrySelect({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -74,32 +68,33 @@ export default function CountrySelect({
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // filtered list based on query
-  const filtered = countries.filter((c) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (c.name || "").toLowerCase().includes(q) ||
-      (c.iso2 || "").toLowerCase().includes(q)
-    );
-  });
+  const q = query.trim().toLowerCase();
+  const filtered = countries.filter((c) =>
+    !q
+      ? true
+      : (c.name || "").toLowerCase().includes(q) ||
+        (c.iso2 || "").toLowerCase().includes(q)
+  );
 
-  // limit results for performance
   const display = filtered.slice(0, maxItems);
-
   const selected = countries.find((c) => c.id === value) ?? null;
 
-  // keyboard handling on trigger
+  function handleSelect(c: Country) {
+    onChange(c.id);
+    setOpen(false);
+    setQuery("");
+    buttonRef.current?.focus();
+  }
+
+  // small accessibility keyboard handling
   function onTriggerKey(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       setOpen(true);
       setTimeout(() => {
@@ -107,20 +102,11 @@ export default function CountrySelect({
         const first = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
         first?.focus();
       }, 0);
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      setOpen((v) => !v);
-      setTimeout(() => {
-        if (!open) {
-          setActiveIndex(0);
-          const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
-          el?.focus();
-        }
-      }, 0);
+    } else if (e.key === "Escape") {
+      setOpen(false);
     }
   }
 
-  // keyboard handling inside list (roving)
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -136,55 +122,24 @@ export default function CountrySelect({
         const el = listRef.current?.querySelector(`[data-index='${Math.max(activeIndex - 1, 0)}']`) as HTMLButtonElement | null;
         el?.focus();
       }, 0);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      buttonRef.current?.focus();
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       const c = display[activeIndex];
-      if (c) {
-        onChange(c.id);
-        setOpen(false);
-        buttonRef.current?.focus();
-      }
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      setActiveIndex(0);
-      const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
-      el?.focus();
-    } else if (e.key === "End") {
-      e.preventDefault();
-      setActiveIndex(display.length - 1);
-      const el = listRef.current?.querySelector(`[data-index='${display.length - 1}']`) as HTMLButtonElement | null;
-      el?.focus();
+      if (c) handleSelect(c);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      buttonRef.current?.focus();
     }
   }
 
-  function handleSelect(c: Country) {
-    onChange(c.id);
-    setOpen(false);
-    buttonRef.current?.focus();
-  }
-
   return (
-    <div ref={containerRef} className={`relative z-20 w-full ${className}`}>
-      {/* Trigger */}
+    <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
       <button
         ref={buttonRef}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => {
-          setOpen((v) => !v);
-          setTimeout(() => {
-            if (!open) {
-              // open -> focus input
-              const input = containerRef.current?.querySelector<HTMLInputElement>("input[data-role='country-search']");
-              input?.focus();
-            }
-          }, 0);
-        }}
+        onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKey}
         className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-white/3 backdrop-blur-sm shadow-lg"
         aria-label="Choose country"
@@ -192,19 +147,9 @@ export default function CountrySelect({
         <div className="flex items-center gap-3">
           {selected ? (
             <>
-              <span className="text-lg leading-none" aria-hidden>
-                {preferredFlag(selected) ?? (
-                  selected.iso2 ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={flagSvgUrl(selected.iso2)}
-                      alt=""
-                      className="inline-block w-5 h-4 rounded-sm object-cover"
-                    />
-                  ) : null
-                )}
+              <span className="text-lg leading-none mr-2" aria-hidden style={{ lineHeight: 1 }}>
+                {preferredFlag(selected) ?? (selected.iso2 ? <img src={flagSvgUrl(selected.iso2)} alt="" className="inline-block w-5 h-4 rounded-sm object-cover" /> : null)}
               </span>
-
               <span className="text-sm font-medium text-white/95">{selected.name}</span>
             </>
           ) : (
@@ -215,28 +160,14 @@ export default function CountrySelect({
         <div className="ml-auto text-white/50 text-xs">{open ? "⌃" : "⌄"}</div>
       </button>
 
-      {/* Dropdown */}
       {open && (
-        <div
-          role="dialog"
-          aria-modal="false"
-          className="absolute mt-2 w-full rounded-2xl bg-gradient-to-b from-white/4 to-white/3 border border-white/10 shadow-2xl backdrop-blur-md max-h-64 overflow-hidden"
-        >
+        <div className="absolute mt-2 w-full rounded-2xl bg-gradient-to-b from-white/6 to-white/4 border border-white/8 shadow-2xl backdrop-blur-md max-h-64 overflow-hidden">
           <div className="p-2">
             <input
               data-role="country-search"
               value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setActiveIndex(0);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
-                  el?.focus();
-                }
-              }}
+              onChange={(e) => { setQuery(e.target.value); setActiveIndex(0); }}
+              onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null; el?.focus(); } }}
               placeholder="Search country..."
               aria-label="Search countries"
               className="w-full rounded-xl px-3 py-2 bg-transparent border border-white/6 placeholder:text-white/40 text-white/90 outline-none"
@@ -264,21 +195,10 @@ export default function CountrySelect({
                       onClick={() => handleSelect(c)}
                       onFocus={() => setActiveIndex(i)}
                       aria-selected={c.id === value}
-                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/6 transition ${
-                        c.id === value ? "bg-white/6" : ""
-                      }`}
+                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/6 transition ${c.id === value ? "bg-white/6" : ""}`}
                     >
-                      <span className="w-6 text-lg leading-none" aria-hidden>
-                        {f ?? (c.iso2 ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={flagSvgUrl(c.iso2)}
-                            alt={`${c.name} flag`}
-                            className="inline-block w-5 h-4 rounded-sm object-cover"
-                          />
-                        ) : (
-                          <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>
-                        ))}
+                      <span className="w-6 text-lg leading-none" aria-hidden style={{ lineHeight: 1 }}>
+                        {f ?? (c.iso2 ? <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" /> : <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>)}
                       </span>
 
                       <span className="text-sm text-white/90">{c.name}</span>
@@ -288,9 +208,7 @@ export default function CountrySelect({
                 );
               })
             )}
-            {filtered.length > maxItems && (
-              <li className="px-3 py-2 text-xs text-white/50">Showing first {maxItems} results...</li>
-            )}
+            {filtered.length > maxItems && <li className="px-3 py-2 text-xs text-white/50">Showing first {maxItems} results...</li>}
           </ul>
         </div>
       )}

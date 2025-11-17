@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { motion } from "framer-motion";
@@ -243,9 +243,10 @@ export default function SignupPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-black text-white overflow-hidden px-6">
-      <div className="absolute inset-0 bg-gradient-to-b from-black via-zinc-950 to-black" />
+      {/* softened backdrop gradient so the signup card reads clearly */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/90 via-zinc-950/90 to-black/95" />
       <div className="absolute -top-36 left-1/2 -translate-x-1/2 pointer-events-none z-0">
-        <NeuralGlow size={680} intensity={0.8} colorA="#7dd3fc" colorB="#6366f1" colorC="#a78bfa" />
+        <NeuralGlow size={680} intensity={0.65} colorA="#7dd3fc" colorB="#6366f1" colorC="#a78bfa" />
       </div>
 
       <div className="relative z-10 flex flex-col items-center px-6 w-full max-w-[980px]">
@@ -256,7 +257,7 @@ export default function SignupPage() {
         </div>
 
         <AuthCard className="w-full max-w-xl">
-          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
             <div className="text-center mb-6">
               <div className="flex justify-center items-center gap-2">
                 <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300">
