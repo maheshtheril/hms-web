@@ -77,7 +77,7 @@ function PasswordStrength({ value }: { value: string }) {
    ----------------------- */
 function useDebouncedValue<T>(value: T, ms = 400) {
   const [deb, setDeb] = useState(value);
-  useEffect(() => {
+  React.useEffect(() => {
     const id = setTimeout(() => setDeb(value), ms);
     return () => clearTimeout(id);
   }, [value, ms]);
@@ -86,119 +86,157 @@ function useDebouncedValue<T>(value: T, ms = 400) {
 
 /* -----------------------
    small helper: ISO2 -> emoji flag
-   returns fallback "🌐" when flag can't be produced
+   returns empty string if iso2 missing / invalid
    ----------------------- */
 function iso2ToFlag(iso2?: string) {
-  if (!iso2 || typeof iso2 !== "string") return "🌐";
+  if (!iso2) return "";
   const s = iso2.toUpperCase().trim();
-  if (s.length !== 2) return "🌐";
-
-  // Ensure characters A-Z
-  if (!/^[A-Z]{2}$/.test(s)) return "🌐";
-
-  try {
-    return s
-      .split("")
-      .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-      .join("");
-  } catch {
-    return "🌐";
-  }
+  if (s.length !== 2) return "";
+  // regional indicator symbols
+  return s
+    .split("")
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
 }
 
 /* -----------------------
-   Custom dropdown (for countries)
-   Accessible-ish, simple, dark-themed
+   Types
    ----------------------- */
 interface Country {
   id: string;
   name: string;
-  iso2?: string;
+  iso2?: string | null;
+  flag?: string | null; // backend may provide emoji + spaces
 }
 
-function CountryDropdown({
+/* -----------------------
+   Searchable country dropdown (dark themed)
+   - Uses a small listbox pattern with search
+   - Ensures emoji font-family applied so flags render properly
+   ----------------------- */
+function SearchableCountrySelect({
   countries,
   value,
   onChange,
-  loading,
+  placeholder = "Select country (optional)",
+  loading = false,
 }: {
   countries: Country[];
   value: string | "";
   onChange: (id: string) => void;
-  loading: boolean;
+  placeholder?: string;
+  loading?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
-  const selected = countries.find((c) => c.id === value) ?? null;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!ref.current) return;
       if (!ref.current.contains(e.target as Node)) setOpen(false);
     }
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // keyboard: open/close and select first/next (basic)
-  function onKey(e: React.KeyboardEvent) {
-    if (e.key === "Escape") setOpen(false);
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setOpen(true);
+  useEffect(() => {
+    if (open) {
+      // focus search input when opening
+      inputRef.current?.focus();
     }
-  }
+  }, [open]);
+
+  const filtered = countries.filter((c) =>
+    `${c.name} ${(c.iso2 || "")}`.toLowerCase().includes(filter.toLowerCase())
+  );
+
+  const selected = countries.find((c) => c.id === value) ?? null;
+
+  // emoji font stack to improve rendering on different OS
+  const emojiFontFamily =
+    '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Android Emoji", "EmojiSymbols", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
 
   return (
-    <div ref={ref} className="relative">
-      <label htmlFor="country" className="text-xs font-medium text-white/70 block mb-2">Country</label>
-      <div>
-        <button
-          type="button"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          onClick={() => setOpen((s) => !s)}
-          onKeyDown={onKey}
-          className="w-full text-left rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40 flex items-center justify-between gap-3"
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-lg leading-none">{selected ? iso2ToFlag(selected.iso2) : "🌐"}</span>
-            <span className="truncate">
-              {selected ? selected.name : (loading ? "Loading countries…" : "Select country (optional)")}
-            </span>
-          </div>
-          <span className="text-xs text-white/50">{open ? "▲" : "▼"}</span>
-        </button>
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="w-full text-left rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40 flex items-center justify-between"
+        style={{ color: "white" }}
+      >
+        <span className="flex items-center gap-2 overflow-hidden">
+          <span style={{ fontFamily: emojiFontFamily }} aria-hidden>
+            {selected ? (selected.flag?.trim() || iso2ToFlag(selected.iso2 || undefined)) : ""}
+          </span>
+          <span className="truncate" style={{ minWidth: 0 }}>
+            {selected ? selected.name : placeholder}
+          </span>
+        </span>
+        <span className="text-white/60 text-xs">{open ? "▴" : "▾"}</span>
+      </button>
 
-        {open && (
-          <ul
-            role="listbox"
-            aria-label="Country selector"
-            tabIndex={-1}
-            className="absolute z-50 mt-2 max-h-64 w-full overflow-auto rounded-xl bg-zinc-900/95 border border-white/6 p-1 shadow-2xl"
-          >
-            {countries.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-white/50">No countries available</li>
-            ) : (
-              countries.map((c) => (
-                <li
-                  key={c.id}
-                  role="option"
-                  aria-selected={c.id === value}
-                  onClick={() => { onChange(c.id); setOpen(false); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { onChange(c.id); setOpen(false); } }}
-                  className={`flex items-center gap-3 px-3 py-2 rounded cursor-pointer select-none
-                              ${c.id === value ? "bg-white/6" : "hover:bg-white/4"}`}
-                >
-                  <span className="text-lg leading-none">{iso2ToFlag(c.iso2)}</span>
-                  <span className="text-sm truncate">{c.name}</span>
-                </li>
-              ))
-            )}
-          </ul>
-        )}
-      </div>
-      <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
+      {open && (
+        <div className="absolute z-50 mt-2 w-full rounded-xl bg-zinc-900 border border-white/6 shadow-lg">
+          <div className="p-2">
+            <input
+              ref={inputRef}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search country..."
+              className="w-full rounded-md bg-white/3 px-3 py-2 text-sm outline-none placeholder:text-white/50"
+              style={{ color: "white" }}
+              aria-label="Search countries"
+            />
+          </div>
+
+          <div style={{ maxHeight: 240, overflow: "auto" }}>
+            <ul
+              role="listbox"
+              tabIndex={-1}
+              ref={listRef}
+              className="divide-y divide-white/5"
+              aria-label="Country list"
+            >
+              {loading && (
+                <li className="px-3 py-2 text-sm text-white/60">Loading countries…</li>
+              )}
+
+              {!loading && filtered.length === 0 && (
+                <li className="px-3 py-2 text-sm text-white/60">No countries found</li>
+              )}
+
+              {!loading &&
+                filtered.map((c) => {
+                  const flagStr = c.flag?.trim() || iso2ToFlag(c.iso2 || undefined);
+                  const isSelected = c.id === value;
+                  return (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange(c.id);
+                          setOpen(false);
+                          setFilter("");
+                        }}
+                        className={`w-full text-left px-3 py-2 flex items-center gap-3 text-sm ${isSelected ? "bg-white/6" : "hover:bg-white/5"}`}
+                        style={{ color: "white", fontFamily: emojiFontFamily }}
+                      >
+                        <span style={{ width: 28, textAlign: "left" }}>{flagStr}</span>
+                        <span className="truncate">{c.name} <span className="text-white/50 text-xs"> {c.iso2 ? `(${c.iso2})` : ""}</span></span>
+                        {isSelected && <span className="ml-auto text-emerald-300 text-xs">Selected</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -269,12 +307,17 @@ export default function SignupPage() {
         const res = await api.get("/api/global/countries", { params: { active: "true" } });
         if (cancelled) return;
         const list = Array.isArray(res.data?.data) ? res.data.data : [];
-        // normalize minimal fields
-        const norm = list.map((c: any) => ({ id: String(c.id), name: String(c.name || c.label || ""), iso2: c.iso2 || c.iso || undefined }));
-        setCountries(norm);
+        // normalize: trim iso2 and flag fields
+        const normalized: Country[] = list.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          iso2: c.iso2 ? String(c.iso2).trim() : undefined,
+          flag: c.flag ? String(c.flag).trim() : undefined,
+        }));
+        setCountries(normalized);
         // default to India if present, otherwise first
-        const india = norm.find((c) => (c.iso2 || "").toUpperCase() === "IN");
-        setCountryId(india ? india.id : (norm[0]?.id ?? ""));
+        const india = normalized.find((c) => (c.iso2 || "").toUpperCase() === "IN");
+        setCountryId(india ? india.id : (normalized[0]?.id ?? ""));
       } catch (e) {
         console.warn("failed to load countries", e);
       } finally {
@@ -404,14 +447,16 @@ export default function SignupPage() {
                 <input id="org" name="org" placeholder="Organization / Company" className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40" value={form.org} onChange={onChange("org")} required />
               </div>
 
-              {/* Country selector (custom) */}
+              {/* Country selector */}
               <div>
-                <CountryDropdown
+                <label htmlFor="country" className="text-xs font-medium text-white/70">Country</label>
+                <SearchableCountrySelect
                   countries={countries}
                   value={countryId}
                   onChange={(id) => setCountryId(id)}
                   loading={loadingCountries}
                 />
+                <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
               </div>
 
               {/* Apply country defaults */}
