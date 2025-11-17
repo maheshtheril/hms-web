@@ -1,7 +1,7 @@
 // app/signup/page.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { motion } from "framer-motion";
@@ -86,28 +86,126 @@ function useDebouncedValue<T>(value: T, ms = 400) {
 
 /* -----------------------
    small helper: ISO2 -> emoji flag
-   returns empty string if iso2 missing / invalid
+   returns fallback "🌐" when flag can't be produced
    ----------------------- */
 function iso2ToFlag(iso2?: string) {
-  if (!iso2) return "";
-  const s = iso2.toUpperCase();
-  if (s.length !== 2) return "";
-  return s
-    .split("")
-    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-    .join("");
+  if (!iso2 || typeof iso2 !== "string") return "🌐";
+  const s = iso2.toUpperCase().trim();
+  if (s.length !== 2) return "🌐";
+
+  // Ensure characters A-Z
+  if (!/^[A-Z]{2}$/.test(s)) return "🌐";
+
+  try {
+    return s
+      .split("")
+      .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+      .join("");
+  } catch {
+    return "🌐";
+  }
 }
 
 /* -----------------------
-   Signup page
+   Custom dropdown (for countries)
+   Accessible-ish, simple, dark-themed
    ----------------------- */
 interface Country {
   id: string;
   name: string;
   iso2?: string;
-  flag?: string; // optional DB-provided emoji string if available
 }
 
+function CountryDropdown({
+  countries,
+  value,
+  onChange,
+  loading,
+}: {
+  countries: Country[];
+  value: string | "";
+  onChange: (id: string) => void;
+  loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const selected = countries.find((c) => c.id === value) ?? null;
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, []);
+
+  // keyboard: open/close and select first/next (basic)
+  function onKey(e: React.KeyboardEvent) {
+    if (e.key === "Escape") setOpen(false);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+    }
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <label htmlFor="country" className="text-xs font-medium text-white/70 block mb-2">Country</label>
+      <div>
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          onClick={() => setOpen((s) => !s)}
+          onKeyDown={onKey}
+          className="w-full text-left rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40 flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-lg leading-none">{selected ? iso2ToFlag(selected.iso2) : "🌐"}</span>
+            <span className="truncate">
+              {selected ? selected.name : (loading ? "Loading countries…" : "Select country (optional)")}
+            </span>
+          </div>
+          <span className="text-xs text-white/50">{open ? "▲" : "▼"}</span>
+        </button>
+
+        {open && (
+          <ul
+            role="listbox"
+            aria-label="Country selector"
+            tabIndex={-1}
+            className="absolute z-50 mt-2 max-h-64 w-full overflow-auto rounded-xl bg-zinc-900/95 border border-white/6 p-1 shadow-2xl"
+          >
+            {countries.length === 0 ? (
+              <li className="px-3 py-2 text-xs text-white/50">No countries available</li>
+            ) : (
+              countries.map((c) => (
+                <li
+                  key={c.id}
+                  role="option"
+                  aria-selected={c.id === value}
+                  onClick={() => { onChange(c.id); setOpen(false); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { onChange(c.id); setOpen(false); } }}
+                  className={`flex items-center gap-3 px-3 py-2 rounded cursor-pointer select-none
+                              ${c.id === value ? "bg-white/6" : "hover:bg-white/4"}`}
+                >
+                  <span className="text-lg leading-none">{iso2ToFlag(c.iso2)}</span>
+                  <span className="text-sm truncate">{c.name}</span>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+      </div>
+      <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
+    </div>
+  );
+}
+
+/* -----------------------
+   Signup page
+   ----------------------- */
 export default function SignupPage() {
   const router = useRouter();
   const [form, setForm] = useState({ org: "", name: "", email: "", password: "" });
@@ -171,10 +269,12 @@ export default function SignupPage() {
         const res = await api.get("/api/global/countries", { params: { active: "true" } });
         if (cancelled) return;
         const list = Array.isArray(res.data?.data) ? res.data.data : [];
-        setCountries(list);
+        // normalize minimal fields
+        const norm = list.map((c: any) => ({ id: String(c.id), name: String(c.name || c.label || ""), iso2: c.iso2 || c.iso || undefined }));
+        setCountries(norm);
         // default to India if present, otherwise first
-        const india = list.find((c: any) => (c.iso2 || "").toUpperCase() === "IN");
-        setCountryId(india ? india.id : (list[0]?.id ?? ""));
+        const india = norm.find((c) => (c.iso2 || "").toUpperCase() === "IN");
+        setCountryId(india ? india.id : (norm[0]?.id ?? ""));
       } catch (e) {
         console.warn("failed to load countries", e);
       } finally {
@@ -191,10 +291,6 @@ export default function SignupPage() {
     (k: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  const onCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setCountryId(e.target.value || "");
-  };
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
@@ -308,34 +404,14 @@ export default function SignupPage() {
                 <input id="org" name="org" placeholder="Organization / Company" className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40" value={form.org} onChange={onChange("org")} required />
               </div>
 
-              {/* Country selector */}
+              {/* Country selector (custom) */}
               <div>
-                <label htmlFor="country" className="text-xs font-medium text-white/70">Country</label>
-
-                {/* Important: add text-black so option text is visible on white dropdown backgrounds.
-                    Also add explicit className to each <option> to increase compatibility. */}
-                <select
-                  id="country"
-                  name="country"
+                <CountryDropdown
+                  countries={countries}
                   value={countryId}
-                  onChange={onCountryChange}
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40 text-black"
-                >
-                  <option value="" className="text-black">
-                    {loadingCountries ? "Loading countries…" : "Select country (optional)"}
-                  </option>
-                  {countries.map((c) => {
-                    // prefer DB-provided flag emoji if present, otherwise derive from iso2
-                    const flag = c.flag || iso2ToFlag(c.iso2);
-                    // show flag + name in <option>. note: emoji rendering depends on the user's platform/font.
-                    return (
-                      <option key={c.id} value={c.id} className="text-black">
-                        {flag ? `${flag} ` : ""}{c.name}
-                      </option>
-                    );
-                  })}
-                </select>
-                <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
+                  onChange={(id) => setCountryId(id)}
+                  loading={loadingCountries}
+                />
               </div>
 
               {/* Apply country defaults */}
