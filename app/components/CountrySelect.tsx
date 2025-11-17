@@ -1,7 +1,7 @@
 // app/components/CountrySelect.tsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface Country {
   id: string;
@@ -12,12 +12,14 @@ export interface Country {
 
 type Props = {
   countries: Country[];
-  value: string | "";
+  value?: string | null;
   onChange: (id: string) => void;
   placeholder?: string;
   maxItems?: number;
   className?: string;
 };
+
+/* ---------- Utilities ---------- */
 
 function iso2ToFlag(iso2?: string | null): string {
   if (!iso2) return "";
@@ -58,7 +60,7 @@ function extractFlagEmoji(raw?: string | null): string | null {
     return String.fromCodePoint(indicators[0], indicators[1]);
   }
 
-  // if cleaned itself looks like a short emoji (1 or 2 codepoints) return it
+  // if cleaned itself looks like a short emoji (1-2 visible glyphs) return it
   if (cleaned.length > 0 && cleaned.length <= 4) {
     return cleaned;
   }
@@ -83,6 +85,18 @@ function flagSvgUrl(iso2?: string | null) {
   return `https://flagcdn.com/w20/${iso2.toLowerCase()}.png`;
 }
 
+/* ---------- Debounce hook (small, safe) ---------- */
+function useDebounced<T>(value: T, delay = 180) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+}
+
+/* ---------- Component ---------- */
+
 export default function CountrySelect({
   countries,
   value,
@@ -98,6 +112,7 @@ export default function CountrySelect({
   const listRef = useRef<HTMLUListElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
+  // Close on outside click
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!containerRef.current) return;
@@ -107,13 +122,19 @@ export default function CountrySelect({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const q = query.trim().toLowerCase();
-  const filtered = countries.filter((c) =>
-    !q
-      ? true
-      : (c.name || "").toLowerCase().includes(q) ||
-        (c.iso2 || "").toLowerCase().includes(q)
-  );
+  // Debounce query so rapid typing doesn't trigger heavy filtering renders
+  const debouncedQuery = useDebounced(query, 160);
+  const q = debouncedQuery.trim().toLowerCase();
+
+  // Memoize filtered list — avoids recompute on unrelated renders
+  const filtered = useMemo(() => {
+    if (!q) return countries;
+    return countries.filter((c) => {
+      const name = (c.name || "").toLowerCase();
+      const iso = (c.iso2 || "").toLowerCase();
+      return name.includes(q) || iso.includes(q);
+    });
+  }, [countries, q]);
 
   const display = filtered.slice(0, maxItems);
   const selected = countries.find((c) => c.id === value) ?? null;
@@ -122,8 +143,20 @@ export default function CountrySelect({
     onChange(c.id);
     setOpen(false);
     setQuery("");
+    setActiveIndex(-1);
     buttonRef.current?.focus();
   }
+
+  // helper to move focus to an index reliably (avoids stale-closure race)
+  const moveFocus = useCallback((toIndex: number) => {
+    const safeIndex = Math.max(0, Math.min(toIndex, display.length - 1));
+    setActiveIndex(safeIndex);
+    // focus after DOM update
+    requestAnimationFrame(() => {
+      const el = listRef.current?.querySelector(`[data-index='${safeIndex}']`) as HTMLButtonElement | null;
+      el?.focus();
+    });
+  }, [display.length]);
 
   // keyboard handling for trigger
   function onTriggerKey(e: React.KeyboardEvent) {
@@ -131,9 +164,8 @@ export default function CountrySelect({
       e.preventDefault();
       setOpen(true);
       setTimeout(() => {
-        setActiveIndex(0);
-        const first = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
-        first?.focus();
+        // focus first item when opened
+        if (display.length > 0) moveFocus(0);
       }, 0);
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -143,18 +175,10 @@ export default function CountrySelect({
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, display.length - 1));
-      setTimeout(() => {
-        const el = listRef.current?.querySelector(`[data-index='${Math.min(activeIndex + 1, display.length - 1)}']`) as HTMLButtonElement | null;
-        el?.focus();
-      }, 0);
+      moveFocus((activeIndex < 0 ? 0 : activeIndex + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, 0));
-      setTimeout(() => {
-        const el = listRef.current?.querySelector(`[data-index='${Math.max(activeIndex - 1, 0)}']`) as HTMLButtonElement | null;
-        el?.focus();
-      }, 0);
+      moveFocus((activeIndex <= 0 ? 0 : activeIndex - 1));
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       const c = display[activeIndex];
@@ -165,6 +189,13 @@ export default function CountrySelect({
     }
   }
 
+  // fallback handler: hide broken imgs and rely on iso2 text
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const img = e.currentTarget;
+    img.style.display = "none";
+    img.setAttribute("aria-hidden", "true");
+  };
+
   return (
     <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
       <button
@@ -172,7 +203,16 @@ export default function CountrySelect({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        aria-controls="country-listbox"
+        role="combobox"
+        onClick={() => {
+          setOpen((v) => !v);
+          if (!open) {
+            setTimeout(() => {
+              if (display.length > 0) moveFocus(0);
+            }, 0);
+          }
+        }}
         onKeyDown={onTriggerKey}
         className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-zinc-800 shadow-lg"
         aria-label="Choose country"
@@ -181,7 +221,9 @@ export default function CountrySelect({
           {selected ? (
             <>
               <span className="text-lg leading-none mr-2" aria-hidden style={{ lineHeight: 1 }}>
-                {preferredFlag(selected) ?? (selected.iso2 ? <img src={flagSvgUrl(selected.iso2)} alt="" className="inline-block w-5 h-4 rounded-sm object-cover" /> : null)}
+                {preferredFlag(selected) ?? (selected.iso2 ? (
+                  <img src={flagSvgUrl(selected.iso2)} alt="" className="inline-block w-5 h-4 rounded-sm object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                ) : null)}
               </span>
               <span className="text-sm font-medium text-white/95">{selected.name}</span>
             </>
@@ -192,6 +234,11 @@ export default function CountrySelect({
 
         <div className="ml-auto text-white/50 text-xs">{open ? "⌃" : "⌄"}</div>
       </button>
+
+      {/* a11y live region to announce selection changes */}
+      <div aria-live="polite" className="sr-only">
+        {selected ? `${selected.name} selected` : "No country selected"}
+      </div>
 
       {open && (
         <div className="absolute mt-2 w-full rounded-2xl bg-zinc-900 border border-white/8 shadow-2xl max-h-64 overflow-hidden">
@@ -208,6 +255,7 @@ export default function CountrySelect({
           </div>
 
           <ul
+            id="country-listbox"
             role="listbox"
             ref={listRef}
             tabIndex={-1}
@@ -223,6 +271,7 @@ export default function CountrySelect({
                 return (
                   <li key={c.id} id={`country-${c.id}`} className="px-2">
                     <button
+                      role="option"
                       data-index={i}
                       type="button"
                       onClick={() => handleSelect(c)}
@@ -231,7 +280,13 @@ export default function CountrySelect({
                       className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/6 transition ${c.id === value ? "bg-white/6" : ""}`}
                     >
                       <span className="w-6 text-lg leading-none" aria-hidden style={{ lineHeight: 1 }}>
-                        {f ?? (c.iso2 ? <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" /> : <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>)}
+                        {/* show emoji if available, else try CDN img, else ISO2 letters */}
+                        {f ?? (c.iso2 ? (
+                          <>
+                            <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" onError={handleImgError} />
+                            <span className="sr-only">{c.name} flag</span>
+                          </>
+                        ) : <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>)}
                       </span>
 
                       <span className="text-sm text-white/90">{c.name}</span>
