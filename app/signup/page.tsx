@@ -85,8 +85,28 @@ function useDebouncedValue<T>(value: T, ms = 400) {
 }
 
 /* -----------------------
+   small helper: ISO2 -> emoji flag
+   returns empty string if iso2 missing / invalid
+   ----------------------- */
+function iso2ToFlag(iso2?: string) {
+  if (!iso2) return "";
+  const s = iso2.toUpperCase();
+  if (s.length !== 2) return "";
+  return s
+    .split("")
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
+/* -----------------------
    Signup page
    ----------------------- */
+interface Country {
+  id: string;
+  name: string;
+  iso2?: string;
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const [form, setForm] = useState({ org: "", name: "", email: "", password: "" });
@@ -105,6 +125,12 @@ export default function SignupPage() {
 
   // local password strength check
   const { passed: passwordPassed } = usePasswordStrength(form.password);
+
+  // countries state for signup country selector
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [countryId, setCountryId] = useState<string | "">("");
+  const [applyCountryDefaults, setApplyCountryDefaults] = useState<boolean>(true);
+  const [loadingCountries, setLoadingCountries] = useState(false);
 
   // check email availability (debounced)
   useEffect(() => {
@@ -135,10 +161,39 @@ export default function SignupPage() {
     };
   }, [debouncedEmail]);
 
+  // fetch countries for selector on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoadingCountries(true);
+      try {
+        const res = await api.get("/api/global/countries", { params: { active: "true" } });
+        if (cancelled) return;
+        const list = Array.isArray(res.data?.data) ? res.data.data : [];
+        setCountries(list);
+        // default to India if present, otherwise first
+        const india = list.find((c: any) => (c.iso2 || "").toUpperCase() === "IN");
+        setCountryId(india ? india.id : (list[0]?.id ?? ""));
+      } catch (e) {
+        console.warn("failed to load countries", e);
+      } finally {
+        if (!cancelled) setLoadingCountries(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const onChange =
     (k: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const onCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setCountryId(e.target.value || "");
+  };
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
@@ -162,35 +217,33 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      const res = await api.post("/api/tenant-signup", form);
+      const payload = {
+        ...form,
+        country_id: countryId || undefined,
+        apply_country_tax_defaults: Boolean(applyCountryDefaults),
+      };
+      const res = await api.post("/api/tenant-signup", payload);
       if (res.status === 201 || res.data?.ok) {
         setOk(true);
 
-        // ====== MINIMAL FIX: ensure session is established before redirecting ======
-        // This forces the browser to receive and commit the session cookie
-        // (prevents mobile race where signup redirects before cookie is usable).
+        // ensure session is established before redirecting
         try {
           await api.get("/api/auth/me");
         } catch (e) {
-          // ignore errors — we still redirect; this just increases reliability on mobile
           console.warn("post-signup session check failed", e);
         }
 
         // small delay to show success then navigate
         setTimeout(() => router.push("/dashboard"), 800);
-        // ========================================================================
       } else {
-        // server responded 2xx but not created — show message if present
         setErr(res.data?.error || "Signup failed");
       }
     } catch (err: any) {
-      // axios error handling
       if (err.response) {
         const data = err.response.data || {};
         const status = err.response.status;
 
         if (status === 400 && data?.error === "weak_password" && Array.isArray(data.reasons)) {
-          // show reasons as list and a summary error
           setPwServerReasons(data.reasons);
           setErr("Password does not meet requirements.");
         } else if (status === 409 && data?.error === "email_exists") {
@@ -204,11 +257,9 @@ export default function SignupPage() {
         } else if (status === 409 && data?.error === "unique_violation") {
           setErr("Signup conflict (unique constraint). Try different values.");
         } else {
-          // fallback to server-provided string or status
           setErr(typeof data?.error === "string" ? data.error : `Signup failed (${status}).`);
         }
       } else if (err.request) {
-        // request made but no response
         setErr("No response from server. Check your network or try again later.");
       } else {
         setErr("Unexpected error. Try again.");
@@ -218,7 +269,10 @@ export default function SignupPage() {
     }
   }
 
-  const canSubmit = Boolean(form.org && form.name && form.email && form.password) && passwordPassed === passwordRules.length && emailAvailable !== false;
+  const canSubmit =
+    Boolean(form.org && form.name && form.email && form.password) &&
+    passwordPassed === passwordRules.length &&
+    emailAvailable !== false;
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-black text-white overflow-hidden px-6">
@@ -251,6 +305,38 @@ export default function SignupPage() {
               <div>
                 <label htmlFor="org" className="text-xs font-medium text-white/70">Organization / Company</label>
                 <input id="org" name="org" placeholder="Organization / Company" className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40" value={form.org} onChange={onChange("org")} required />
+              </div>
+
+              {/* Country selector */}
+              <div>
+                <label htmlFor="country" className="text-xs font-medium text-white/70">Country</label>
+                <select
+                  id="country"
+                  name="country"
+                  value={countryId}
+                  onChange={onCountryChange}
+                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
+                >
+                  <option value="">{loadingCountries ? "Loading countries…" : "Select country (optional)"}</option>
+                  {countries.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {iso2ToFlag(c.iso2)} {c.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
+              </div>
+
+              {/* Apply country defaults */}
+              <div className="flex items-center gap-3">
+                <input
+                  id="applyCountryDefaults"
+                  type="checkbox"
+                  checked={applyCountryDefaults}
+                  onChange={(e) => setApplyCountryDefaults(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="applyCountryDefaults" className="text-xs text-white/70">Apply country tax defaults to this company</label>
               </div>
 
               {/* Name */}

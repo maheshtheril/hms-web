@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Edit2, Trash2 } from "lucide-react";
+import { Plus, Edit2, Trash2, Search } from "lucide-react";
 import apiClient from "@/lib/api-client";
 
 type Currency = {
@@ -34,7 +34,6 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Basic required validation
   const valid =
     Boolean(form.code && form.code.length === 3 && form.name && form.precision !== undefined);
 
@@ -43,7 +42,6 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
       setError("Enter valid code, name and precision.");
       return;
     }
-
     setSaving(true);
     setError(null);
 
@@ -64,8 +62,7 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
       await onSave();
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error || "save_failed");
-      console.error(err);
+      setError(err?.response?.data?.message || err?.response?.data?.error || "save_failed");
     } finally {
       setSaving(false);
     }
@@ -76,14 +73,19 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="glass rounded-3xl p-6 w-full max-w-lg border border-white/20"
+        className="glass rounded-3xl p-6 w-full max-w-lg border border-white/20 relative"
       >
+        {saving && (
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center rounded-3xl">
+            <div className="text-white">Saving…</div>
+          </div>
+        )}
+
         <h2 className="text-xl font-semibold mb-4 glass-text">
           {mode === "create" ? "Create Currency" : "Edit Currency"}
         </h2>
 
         <div className="space-y-4">
-          {/* Code */}
           <input
             value={form.code}
             maxLength={3}
@@ -92,7 +94,6 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
             className="glass-input"
           />
 
-          {/* Name */}
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -100,7 +101,6 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
             className="glass-input"
           />
 
-          {/* Symbol */}
           <input
             value={form.symbol ?? ""}
             onChange={(e) => setForm({ ...form, symbol: e.target.value })}
@@ -108,7 +108,6 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
             className="glass-input"
           />
 
-          {/* Precision */}
           <input
             type="number"
             min={0}
@@ -127,11 +126,7 @@ function CurrencyModal({ mode, data, onClose, onSave }: CurrencyModalProps) {
           {error && <div className="text-red-400 text-sm">{error}</div>}
 
           <div className="flex justify-end gap-4 pt-4">
-            <button
-              onClick={onClose}
-              disabled={saving}
-              className="px-4 py-2 bg-white/10 rounded-xl"
-            >
+            <button onClick={onClose} disabled={saving} className="px-4 py-2 bg-white/10 rounded-xl">
               Cancel
             </button>
 
@@ -157,6 +152,8 @@ export default function CurrenciesPage() {
   const [modal, setModal] = useState<CurrencyModalProps | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [search, setSearch] = useState("");
+
   const fetchData = async () => {
     setLoading(true);
     setError(null);
@@ -165,7 +162,6 @@ export default function CurrenciesPage() {
       setItems(res.data?.data || []);
     } catch (err: any) {
       setError("failed_to_load");
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -178,15 +174,23 @@ export default function CurrenciesPage() {
   const remove = async (id?: string) => {
     if (!id) return;
     if (!confirm("Delete this currency?")) return;
-
     try {
       await apiClient.delete(`/api/global/currencies/${id}`);
       fetchData();
     } catch (err) {
-      console.error(err);
       alert("Delete failed");
     }
   };
+
+  // SEARCH FILTER
+  const filtered = items.filter((c) => {
+    const q = search.toLowerCase();
+    return (
+      c.name?.toLowerCase().includes(q) ||
+      c.code?.toLowerCase().includes(q) ||
+      c.symbol?.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="p-6 space-y-6">
@@ -208,12 +212,23 @@ export default function CurrenciesPage() {
         </button>
       </div>
 
+      {/* SEARCH BAR */}
+      <div className="flex items-center gap-2 bg-white/10 border border-white/20 rounded-xl p-2 glass">
+        <Search size={18} className="text-gray-300" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search currency…"
+          className="bg-transparent flex-1 outline-none text-white"
+        />
+      </div>
+
       {loading && <div className="text-gray-300">Loading...</div>}
       {error && <div className="text-red-400">{error}</div>}
 
       <div className="grid gap-3">
         {!loading &&
-          items.map((c) => (
+          filtered.map((c) => (
             <motion.div
               key={c.id}
               initial={{ opacity: 0, y: 8 }}
