@@ -105,6 +105,7 @@ interface Country {
   id: string;
   name: string;
   iso2?: string;
+  flag?: string; // optional DB-provided emoji string if available
 }
 
 export default function SignupPage() {
@@ -310,19 +311,29 @@ export default function SignupPage() {
               {/* Country selector */}
               <div>
                 <label htmlFor="country" className="text-xs font-medium text-white/70">Country</label>
+
+                {/* Important: add text-black so option text is visible on white dropdown backgrounds.
+                    Also add explicit className to each <option> to increase compatibility. */}
                 <select
                   id="country"
                   name="country"
                   value={countryId}
                   onChange={onCountryChange}
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
+                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40 text-black"
                 >
-                  <option value="">{loadingCountries ? "Loading countries…" : "Select country (optional)"}</option>
-                  {countries.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {iso2ToFlag(c.iso2)} {c.name}
-                    </option>
-                  ))}
+                  <option value="" className="text-black">
+                    {loadingCountries ? "Loading countries…" : "Select country (optional)"}
+                  </option>
+                  {countries.map((c) => {
+                    // prefer DB-provided flag emoji if present, otherwise derive from iso2
+                    const flag = c.flag || iso2ToFlag(c.iso2);
+                    // show flag + name in <option>. note: emoji rendering depends on the user's platform/font.
+                    return (
+                      <option key={c.id} value={c.id} className="text-black">
+                        {flag ? `${flag} ` : ""}{c.name}
+                      </option>
+                    );
+                  })}
                 </select>
                 <div className="mt-2 text-xs text-white/50">Selecting a country lets us preapply local tax defaults for your company.</div>
               </div>
