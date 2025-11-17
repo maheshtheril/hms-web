@@ -1,4 +1,4 @@
-// components/CountrySelect.tsx
+// app/components/CountrySelect.tsx
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
@@ -33,15 +33,48 @@ function iso2ToFlag(iso2?: string | null): string {
   }
 }
 
-function preferredFlag(c: Country): string | null {
-  // normalize DB flag and return emoji or null
-  const dbFlag = (c.flag || "").toString().trim();
-  if (dbFlag) {
-    // sometimes DB has trailing whitespace — trim it
-    return dbFlag;
+/**
+ * Try to pull a clean flag emoji from DB-provided string.
+ * DB sometimes stores "🇮🇳  " (with trailing spaces) or other tags.
+ * We scan for regional-indicator codepoints and return the first pair.
+ */
+function extractFlagEmoji(raw?: string | null): string | null {
+  if (!raw) return null;
+  // remove common invisible whitespace
+  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "");
+  if (!cleaned) return null;
+
+  // collect regional indicator codepoints (flag emojis use two regional indicators)
+  const indicators: number[] = [];
+  for (const ch of cleaned) {
+    const cp = ch.codePointAt(0) ?? 0;
+    // Regional Indicator Symbols range 0x1F1E6..0x1F1FF
+    if (cp >= 0x1f1e6 && cp <= 0x1f1ff) {
+      indicators.push(cp);
+      if (indicators.length === 2) break;
+    }
   }
-  const emoji = iso2ToFlag(c.iso2);
-  if (emoji) return emoji;
+  if (indicators.length === 2) {
+    return String.fromCodePoint(indicators[0], indicators[1]);
+  }
+
+  // if cleaned itself looks like a short emoji (1 or 2 codepoints) return it
+  if (cleaned.length > 0 && cleaned.length <= 4) {
+    return cleaned;
+  }
+
+  return null;
+}
+
+function preferredFlag(c: Country): string | null {
+  // first, try to extract a clean emoji from DB flag
+  const fromDb = extractFlagEmoji(c.flag ?? null);
+  if (fromDb) return fromDb;
+
+  // next, try to compute from iso2
+  const isoEmoji = iso2ToFlag(c.iso2 ?? null);
+  if (isoEmoji) return isoEmoji;
+
   return null;
 }
 
@@ -92,7 +125,7 @@ export default function CountrySelect({
     buttonRef.current?.focus();
   }
 
-  // small accessibility keyboard handling
+  // keyboard handling for trigger
   function onTriggerKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -141,7 +174,7 @@ export default function CountrySelect({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKey}
-        className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-white/3 backdrop-blur-sm shadow-lg"
+        className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-zinc-800 shadow-lg"
         aria-label="Choose country"
       >
         <div className="flex items-center gap-3">
@@ -161,7 +194,7 @@ export default function CountrySelect({
       </button>
 
       {open && (
-        <div className="absolute mt-2 w-full rounded-2xl bg-gradient-to-b from-white/6 to-white/4 border border-white/8 shadow-2xl backdrop-blur-md max-h-64 overflow-hidden">
+        <div className="absolute mt-2 w-full rounded-2xl bg-zinc-900 border border-white/8 shadow-2xl max-h-64 overflow-hidden">
           <div className="p-2">
             <input
               data-role="country-search"
