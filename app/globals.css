@@ -259,3 +259,67 @@ body[data-page="lead-detailed"] [data-create-lead] {
 [data-side="top"][data-state="open"]   { animation: ng-slide-in-from-top-2 170ms cubic-bezier(.2,.9,.2,1); }
 [data-side="bottom"][data-state="open"]{ animation: ng-slide-in-from-bottom-2 170ms cubic-bezier(.2,.9,.2,1); }
 
+#country-panel.neural-glass {
+  background: color-mix(in oklab, var(--panel) 55%, transparent);
+  border-color: rgba(255,255,255,0.12);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+/* dark mode */
+.dark #country-panel.neural-glass {
+  background: color-mix(in oklab, #0c0c0c 60%, transparent);
+  border-color: rgba(255,255,255,0.08);
+}
+#country-panel {
+  background: rgba(255,255,255,0.08) !important;
+  border-color: rgba(255,255,255,0.18) !important;
+  backdrop-filter: blur(16px) !important;
+}
+/* TEMP: force Neural Glass on country panel (paste at BOTTOM of globals.css) */
+#country-panel {
+  background-image: none !important;
+  background-color: rgba(255,255,255,0.08) !important;
+  background-blend-mode: normal !important;
+  border-color: rgba(255,255,255,0.18) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow: 0 6px 30px rgba(6, 8, 15, 0.45) !important;
+  z-index: 99999 !important;
+  isolation: isolate !important;
+  mix-blend-mode: normal !important;
+  opacity: 1 !important;
+  pointer-events: auto;
+}
+/* FORCE Neural Glass for country panel (temporary / immediate fix) */
+#country-panel {
+  background-image: none !important;
+  background-color: rgba(255,255,255,0.08) !important;
+  border-color: rgba(255,255,255,0.14) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow: 0 10px 30px rgba(2,6,23,0.45) !important;
+  mix-blend-mode: normal !important;
+  z-index: 99999 !important;
+  isolation: isolate !important;
+}
+.dark #country-panel {
+  /* slightly different tint in dark, still glass (adjust alpha if you want) */
+  background-color: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+/* add to app/globals.css (or an imported CSS module) */
+.country-panel--opaque {
+  background: linear-gradient(180deg, #2b6cb0 0%, #60a5fa 100%) !important;
+  background-color: #2b6cb0 !important;
+  border: 1px solid rgba(255,255,255,0.95) !important;
+  box-shadow: 0 18px 48px rgba(10,30,80,0.6) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  mix-blend-mode: normal !important;
+  isolation: isolate !important;
+  opacity: 1 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  z-index: 1050 !important; /* sane value — change if needed */
+}
