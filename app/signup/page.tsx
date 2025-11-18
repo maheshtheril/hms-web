@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { motion } from "framer-motion";
@@ -14,7 +20,7 @@ import NeuralGlow from "@/components/NeuralGlow";
 const api = axios.create({ baseURL: "", withCredentials: true });
 
 /* -----------------------
-   CountrySelect (inlined)
+   Types + Utilities
    ----------------------- */
 
 export interface Country {
@@ -33,6 +39,7 @@ type CountrySelectProps = {
   className?: string;
 };
 
+// normalize iso2 and strip weird chars
 function normIso2(i?: string | null): string {
   return (i ?? "")
     .toString()
@@ -42,6 +49,7 @@ function normIso2(i?: string | null): string {
     .toUpperCase();
 }
 
+// ISO -> regional indicator emoji
 function iso2ToFlag(iso2?: string | null): string {
   const s = normIso2(iso2);
   if (s.length !== 2) return "";
@@ -50,6 +58,7 @@ function iso2ToFlag(iso2?: string | null): string {
     .join("");
 }
 
+// Try extract emoji from DB value (regional indicators or short emoji)
 function extractFlagEmoji(raw?: string | null): string | null {
   if (!raw) return null;
   const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "").trim();
@@ -76,6 +85,10 @@ function flagSvgUrl(iso2?: string | null) {
   return `https://flagcdn.com/w20/${s.toLowerCase()}.png`;
 }
 
+/* -----------------------
+   Debounce helper
+   ----------------------- */
+
 function useDebounced<T>(value: T, delay = 160) {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -85,177 +98,234 @@ function useDebounced<T>(value: T, delay = 160) {
   return v;
 }
 
-function CountrySelect({ countries, value, onChange }: any) {
+/* -----------------------
+   CountrySelect (fully typed)
+   ----------------------- */
+
+function CountrySelect({
+  countries,
+  value,
+  onChange,
+  placeholder = "Select country (optional)",
+  maxItems = 200,
+  className = "",
+}: CountrySelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(-1);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
-  const buttonRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
+  // close when click outside
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
 
-  const normIso2 = (i?: string | null) =>
-    (i ?? "")
-      .toString()
-      .replace(/[^A-Za-z]/g, "")
-      .trim()
-      .slice(0, 2)
-      .toUpperCase();
+  const debouncedQuery = useDebounced(query, 160);
+  const q = debouncedQuery.trim().toLowerCase();
 
-  const iso2ToFlag = (iso?: string | null) => {
-    const s = normIso2(iso);
-    if (s.length !== 2) return "";
-    return Array.from(s)
-      .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-      .join("");
-  };
+  const filtered = useMemo(() => {
+    if (!q) return countries;
+    return countries.filter((c) => {
+      const name = (c.name || "").toLowerCase();
+      const iso = (c.iso2 || "").toLowerCase();
+      return name.includes(q) || iso.includes(q);
+    });
+  }, [countries, q]);
 
-  const preferredFlag = (c: any) => {
-    const raw = c.flag?.replace(/[\u200B-\u200F\uFEFF\s]+/g, "") || "";
-    if (raw.length <= 4) return raw;
-    const emoji = iso2ToFlag(c.iso2);
-    return emoji || null;
-  };
+  const display = filtered.slice(0, maxItems);
+  const selected = countries.find((c) => c.id === value) ?? null;
 
-  const flagUrl = (iso: string) =>
-    `https://flagcdn.com/w20/${iso.toLowerCase()}.png`;
+  const moveFocus = useCallback(
+    (idx: number) => {
+      const safe = Math.max(0, Math.min(idx, display.length - 1));
+      setActiveIndex(safe);
 
-  const filtered = countries.filter((c: any) => {
-    const n = c.name.toLowerCase();
-    const i = (c.iso2 || "").toLowerCase();
-    return n.includes(query.toLowerCase()) || i.includes(query.toLowerCase());
-  });
+      // focus the underlying button
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(
+          `[data-index='${safe}']`
+        ) as HTMLButtonElement | null;
+        el?.focus();
+      });
+    },
+    [display.length]
+  );
 
-  const selected = countries.find((c: any) => c.id === value);
+  function handleSelect(c: Country) {
+    onChange(c.id);
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(-1);
+    buttonRef.current?.focus();
+  }
 
-  const moveFocus = (i: number) => {
-    const idx = Math.max(0, Math.min(i, filtered.length - 1));
-    setActive(idx);
-    setTimeout(() => {
-     const el = listRef.current?.querySelector(
-  `[data-i="${idx}"]`
-) as HTMLButtonElement | null;
-
-el?.focus();
-
-    }, 0);
-  };
-
+  // when opening, focus the list for keyboard control
   const openDropdown = () => {
     setOpen(true);
-    setActive(0);
     setTimeout(() => {
       listRef.current?.focus();
       moveFocus(0);
     }, 0);
   };
 
+  function onTriggerKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDropdown();
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  function onListKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveFocus(activeIndex < 0 ? 0 : activeIndex + 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus(activeIndex <= 0 ? 0 : activeIndex - 1);
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      e.preventDefault();
+      const c = display[activeIndex];
+      if (c) handleSelect(c);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      buttonRef.current?.focus();
+    }
+  }
+
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    e.currentTarget.style.display = "none";
+    e.currentTarget.setAttribute("aria-hidden", "true");
+  };
+
+  useEffect(() => {
+    if (!open) setActiveIndex(-1);
+    else setTimeout(() => display.length > 0 && setActiveIndex(0), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   return (
-    <div className="relative w-full">
+    <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
       <button
         ref={buttonRef}
-        onClick={() => (open ? setOpen(false) : openDropdown())}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            openDropdown();
-          }
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => {
+          setOpen((s) => !s);
+          if (!open && display.length > 0) setTimeout(() => moveFocus(0), 0);
         }}
-        className="w-full rounded-2xl px-3 py-2 flex items-center gap-3 
-                   bg-white/10 backdrop-blur-xl border border-white/10 shadow-lg"
+        onKeyDown={onTriggerKey}
+        className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-white/6 backdrop-blur-sm shadow-lg"
+        aria-label={selected ? `Country: ${selected.name}` : "Select country"}
       >
-        {selected ? (
-          <span className="flex items-center gap-2">
-            <span className="text-lg">
-              {preferredFlag(selected) || (
-                <img
-                  src={flagUrl(normIso2(selected.iso2))}
-                  className="w-5 h-4 rounded-sm object-cover"
-                />
-              )}
-            </span>
-            <span>{selected.name}</span>
-          </span>
-        ) : (
-          <span className="text-white/60 text-sm">Select country</span>
-        )}
-        <span className="ml-auto text-xs text-white/50">
-          {open ? "⌃" : "⌄"}
-        </span>
+        <div className="flex items-center gap-3">
+          {selected ? (
+            <>
+              <span className="text-lg mr-2 leading-none" aria-hidden>
+                {preferredFlag(selected) ?? (
+                  selected.iso2 ? (
+                    <img
+                      src={flagSvgUrl(selected.iso2)}
+                      alt={`${selected.name} flag`}
+                      className="inline-block w-5 h-4 rounded-sm object-cover"
+                      onError={handleImgError}
+                    />
+                  ) : null
+                )}
+              </span>
+              <span className="text-sm font-medium text-white/95">
+                {selected.name}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm text-white/60">{placeholder}</span>
+          )}
+        </div>
+        <div className="ml-auto text-white/50 text-xs">{open ? "⌃" : "⌄"}</div>
       </button>
 
       {open && (
-        <div
-          className="absolute mt-2 w-full rounded-2xl bg-white/10 backdrop-blur-xl 
-                     border border-white/10 shadow-2xl max-h-64 overflow-hidden"
-        >
+        <div className="absolute mt-2 w-full rounded-2xl bg-[#0f172a]/75 backdrop-blur-xl border border-white/10 shadow-2xl max-h-64 overflow-hidden">
           <div className="p-2">
             <input
-              className="w-full px-3 py-2 bg-white/5 border border-white/10 
-                         rounded-xl text-sm outline-none placeholder:text-white/40"
-              placeholder="Search country..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActiveIndex(0);
+              }}
+              placeholder="Search country..."
+              className="w-full rounded-xl px-3 py-2 bg-white/5 border border-white/20 placeholder:text-white/40 text-white/90 outline-none"
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
                   moveFocus(0);
                 }
               }}
+              aria-label="Search countries"
             />
           </div>
 
           <ul
-            tabIndex={0}
+            role="listbox"
             ref={listRef}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                moveFocus(active + 1);
-              }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                moveFocus(active - 1);
-              }
-              if (e.key === "Enter") {
-                e.preventDefault();
-                const c = filtered[active];
-                if (c) {
-                  onChange(c.id);
-                  setOpen(false);
-                }
-              }
-            }}
-            className="max-h-48 overflow-auto"
+            tabIndex={-1}
+            onKeyDown={onListKey}
+            className="overflow-auto max-h-48 p-1 space-y-1"
           >
-            {filtered.map((c: any, i: number) => (
-              <li key={c.id}>
-                <button
-                  data-i={i}
-                  className={`w-full text-left px-3 py-2 flex items-center gap-3 
-                              rounded-lg ${
-                                c.id === value ? "bg-white/10" : ""
-                              } hover:bg-white/10`}
-                  onClick={() => {
-                    onChange(c.id);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="text-lg">
-                    {preferredFlag(c) || (
-                      <img
-                        src={flagUrl(normIso2(c.iso2))}
-                        className="w-5 h-4 rounded-sm object-cover"
-                      />
-                    )}
-                  </span>
-                  <span>{c.name}</span>
-                  <span className="ml-auto text-xs opacity-50">
-                    {normIso2(c.iso2)}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {display.length === 0 ? (
+              <li className="px-3 py-2 text-xs text-white/50">No countries match.</li>
+            ) : (
+              display.map((c, i) => {
+                const f = preferredFlag(c);
+                const iso = normIso2(c.iso2);
+                return (
+                  <li key={c.id} className="px-2">
+                    <button
+                      data-index={i}
+                      role="option"
+                      type="button"
+                      onClick={() => handleSelect(c)}
+                      onFocus={() => setActiveIndex(i)}
+                      aria-selected={c.id === value}
+                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg transition ${
+                        c.id === value ? "bg-white/10" : "hover:bg-white/10"
+                      }`}
+                    >
+                      <span className="w-6 text-lg leading-none" aria-hidden>
+                        {f ?? (iso ? (
+                          <img
+                            src={flagSvgUrl(iso)}
+                            alt={`${c.name} flag`}
+                            className="inline-block w-5 h-4 rounded-sm object-cover"
+                            onError={handleImgError}
+                          />
+                        ) : (
+                          <span className="text-white/40 text-sm">{iso || ""}</span>
+                        ))}
+                      </span>
+
+                      <span className="text-sm text-white/90">{c.name}</span>
+                      <span className="ml-auto text-xs text-white/50">{iso}</span>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+
+            {filtered.length > maxItems && (
+              <li className="px-3 py-2 text-xs text-white/50">Showing first {maxItems} results…</li>
+            )}
           </ul>
         </div>
       )}
@@ -263,10 +333,10 @@ el?.focus();
   );
 }
 
-
 /* -----------------------
    Password strength helper
    ----------------------- */
+
 const PASSWORD_POLICY = {
   minLength: 12,
   requireUpper: true,
@@ -315,10 +385,7 @@ function PasswordStrength({ value }: { value: string }) {
 
       <div className="flex gap-1 h-2 mb-2">
         {passwordRules.map((_, i) => (
-          <div
-            key={i}
-            className={`flex-1 rounded ${passedRules[i] ? "bg-emerald-400" : "bg-white/10"}`}
-          />
+          <div key={i} className={`flex-1 rounded ${passedRules[i] ? "bg-emerald-400" : "bg-white/10"}`} />
         ))}
       </div>
 
@@ -336,6 +403,7 @@ function PasswordStrength({ value }: { value: string }) {
 /* -----------------------
    Debounce helper
    ----------------------- */
+
 function useDebouncedValue<T>(value: T, ms = 400) {
   const [deb, setDeb] = useState(value);
   useEffect(() => {
@@ -348,6 +416,7 @@ function useDebouncedValue<T>(value: T, ms = 400) {
 /* -----------------------
    Signup page
    ----------------------- */
+
 export default function SignupPage() {
   const router = useRouter();
 
@@ -552,6 +621,7 @@ export default function SignupPage() {
   /* -----------------------
      Render
      ----------------------- */
+
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-linear-to-b from-sky-900/8 via-indigo-900/8 to-sky-900/8 text-white overflow-hidden px-6">
       <div className="absolute inset-0 bg-linear-to-b from-white/4 via-white/6 to-white/4 pointer-events-none" />
