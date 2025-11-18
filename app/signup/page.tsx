@@ -59,39 +59,31 @@ function iso2ToFlag(iso2?: string | null): string {
 }
 
 // Try extract emoji from DB value (regional indicators or short emoji)
-// This function strips zero-width/invisible chars and returns a short emoji
 function extractFlagEmoji(raw?: string | null): string | null {
   if (!raw) return null;
-  // Remove common invisible characters and whitespace
-  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\u2060\s]+/g, "").trim();
+  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "").trim();
   if (!cleaned) return null;
-
-  // Try detecting regional indicator pair (two regional indicator symbols)
-  // Unicode surrogate pair range for regional indicators: \uD83C[\uDDE6-\uDDFF]
+  // regional indicator pair
   const reg = /(\uD83C[\uDDE6-\uDDFF]){2}/u;
   const match = cleaned.match(reg);
   if (match) return match[0];
-
-  // If cleaned string is short (likely an emoji or short code), return it
   if ([...cleaned].length <= 4) return cleaned;
-
   return null;
 }
 
-// Safe wrapper for usage in rendering — returns DB emoji or ISO-derived emoji
-function resolveFlagEmoji(c?: Country | null): string | null {
-  if (!c) return null;
+function preferredFlagEmoji(c: Country): string | null {
   const db = extractFlagEmoji(c.flag ?? null);
   if (db) return db;
-  const iso = iso2ToFlag(c.iso2 ?? null);
-  if (iso) return iso;
+  const isoEmoji = iso2ToFlag(c.iso2 ?? null);
+  if (isoEmoji) return isoEmoji;
   return null;
 }
 
 function flagSvgUrl(iso2?: string | null) {
   const s = normIso2(iso2);
   if (!s) return "";
-  return `https://flagcdn.com/w20/${s.toLowerCase()}.png`;
+  // FlagCDN small png (w20) — use 40 for slightly larger visuals
+  return `https://flagcdn.com/w40/${s.toLowerCase()}.png`;
 }
 
 /* -----------------------
@@ -108,7 +100,7 @@ function useDebounced<T>(value: T, delay = 160) {
 }
 
 /* -----------------------
-   CountrySelect (fully typed)
+   CountrySelect (fully typed) - uses SVG first, emoji fallback
    ----------------------- */
 
 function CountrySelect({
@@ -126,6 +118,9 @@ function CountrySelect({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  // track images that failed to load by country id
+  const [imgFailed, setImgFailed] = useState<Record<string, boolean>>({});
 
   // close when click outside
   useEffect(() => {
@@ -211,10 +206,8 @@ function CountrySelect({
     }
   }
 
-  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    // hide the PNG fallback on error; we already attempt emoji fallback
-    e.currentTarget.style.display = "none";
-    e.currentTarget.setAttribute("aria-hidden", "true");
+  const handleImgError = (id: string) => {
+    setImgFailed((p) => ({ ...p, [id]: true }));
   };
 
   useEffect(() => {
@@ -242,19 +235,19 @@ function CountrySelect({
         <div className="flex items-center gap-3">
           {selected ? (
             <>
-              {/* IMPORTANT: use larger text size & normal line-height so emoji is visible */}
-              <span className="text-2xl leading-normal w-8 select-none" aria-hidden>
-                {resolveFlagEmoji(selected) ?? (
-                  selected.iso2 ? (
-                    <img
-                      src={flagSvgUrl(selected.iso2)}
-                      alt={`${selected.name} flag`}
-                      className="inline-block w-5 h-4 rounded-sm object-cover"
-                      onError={handleImgError}
-                    />
-                  ) : (
-                    "🌐"
-                  )
+              <span className="text-lg mr-2 leading-none" aria-hidden>
+                {/* Prefer SVG flag; if it fails, show emoji fallback */}
+                {!imgFailed[selected.id] && selected.iso2 ? (
+                  <img
+                    src={flagSvgUrl(selected.iso2)}
+                    alt={`${selected.name} flag`}
+                    className="inline-block w-5 h-4 rounded-sm object-cover"
+                    onError={() => handleImgError(selected.id)}
+                  />
+                ) : (
+                  <span className="inline-block text-lg leading-none select-none">
+                    {preferredFlagEmoji(selected) ?? normIso2(selected.iso2)}
+                  </span>
                 )}
               </span>
               <span className="text-sm font-medium text-white/95">
@@ -300,8 +293,9 @@ function CountrySelect({
               <li className="px-3 py-2 text-xs text-white/50">No countries match.</li>
             ) : (
               display.map((c, i) => {
-                const f = resolveFlagEmoji(c);
                 const iso = normIso2(c.iso2);
+                const emoji = preferredFlagEmoji(c);
+                const failed = !!imgFailed[c.id];
                 return (
                   <li key={c.id} className="px-2">
                     <button
@@ -315,17 +309,19 @@ function CountrySelect({
                         c.id === value ? "bg-white/10" : "hover:bg-white/10"
                       }`}
                     >
-                      <span className="text-2xl leading-normal w-8 select-none" aria-hidden>
-                        {f ?? (iso ? (
+                      <span className="w-6 text-lg leading-none" aria-hidden>
+                        {!failed && iso ? (
                           <img
                             src={flagSvgUrl(iso)}
                             alt={`${c.name} flag`}
                             className="inline-block w-5 h-4 rounded-sm object-cover"
-                            onError={handleImgError}
+                            onError={() => handleImgError(c.id)}
                           />
                         ) : (
-                          <span className="text-white/40 text-sm">{iso || ""}</span>
-                        ))}
+                          <span className="inline-block select-none text-lg leading-none">
+                            {emoji ?? iso ?? ""}
+                          </span>
+                        )}
                       </span>
 
                       <span className="text-sm text-white/90">{c.name}</span>
