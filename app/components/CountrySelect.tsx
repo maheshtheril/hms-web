@@ -1,4 +1,3 @@
-// app/components/CountrySelect.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,36 +20,36 @@ type Props = {
 
 /* ---------- Utilities ---------- */
 
-function iso2ToFlag(iso2?: string | null): string {
-  if (!iso2) return "";
+/**
+ * Compute flag emoji from ISO2 (returns null on error or invalid input).
+ */
+function iso2ToFlagEmoji(iso2?: string | null): string | null {
+  if (!iso2) return null;
   const s = iso2.toUpperCase().trim();
-  if (s.length !== 2) return "";
+  if (s.length !== 2) return null;
   try {
-    return s
-      .split("")
-      .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-      .join("");
+    const cps = Array.from(s).map((c) => 127397 + c.charCodeAt(0));
+    return String.fromCodePoint(...cps);
   } catch {
-    return "";
+    return null;
   }
 }
 
 /**
  * Try to pull a clean flag emoji from DB-provided string.
- * DB sometimes stores "🇮🇳  " (with trailing spaces) or other tags.
- * We scan for regional-indicator codepoints and return the first pair.
+ * Removes invisible whitespace and scans for regional indicator codepoints.
  */
 function extractFlagEmoji(raw?: string | null): string | null {
   if (!raw) return null;
-  // remove common invisible whitespace
-  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "");
+
+  // Remove invisible whitespace/control and normal spaces using Unicode property
+  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\p{Zs}]+/gu, "");
   if (!cleaned) return null;
 
-  // collect regional indicator codepoints (flag emojis use two regional indicators)
+  // Look for two regional indicator codepoints (classic flag emoji)
   const indicators: number[] = [];
   for (const ch of cleaned) {
     const cp = ch.codePointAt(0) ?? 0;
-    // Regional Indicator Symbols range 0x1F1E6..0x1F1FF
     if (cp >= 0x1f1e6 && cp <= 0x1f1ff) {
       indicators.push(cp);
       if (indicators.length === 2) break;
@@ -60,29 +59,29 @@ function extractFlagEmoji(raw?: string | null): string | null {
     return String.fromCodePoint(indicators[0], indicators[1]);
   }
 
-  // if cleaned itself looks like a short emoji (1-2 visible glyphs) return it
-  if (cleaned.length > 0 && cleaned.length <= 4) {
-    return cleaned;
-  }
+  // Fallback: if the cleaned string is short (emoji or two glyphs) return it
+  if ([...cleaned].length <= 4) return cleaned;
 
   return null;
 }
 
-function preferredFlag(c: Country): string | null {
-  // first, try to extract a clean emoji from DB flag
+function preferredFlagString(c: Country): string | null {
   const fromDb = extractFlagEmoji(c.flag ?? null);
   if (fromDb) return fromDb;
 
-  // next, try to compute from iso2
-  const isoEmoji = iso2ToFlag(c.iso2 ?? null);
+  const isoEmoji = iso2ToFlagEmoji(c.iso2 ?? null);
   if (isoEmoji) return isoEmoji;
 
   return null;
 }
 
+/**
+ * CDN URL (larger size for clarity).
+ * Flagcdn is commonly available; if blocked in your environment, swap to another source or bundle assets.
+ */
 function flagSvgUrl(iso2?: string | null) {
   if (!iso2) return "";
-  return `https://flagcdn.com/w20/${iso2.toLowerCase()}.png`;
+  return `https://flagcdn.com/w40/${iso2.toLowerCase()}.png`;
 }
 
 /* ---------- Debounce hook (small, safe) ---------- */
@@ -126,7 +125,7 @@ export default function CountrySelect({
   const debouncedQuery = useDebounced(query, 160);
   const q = debouncedQuery.trim().toLowerCase();
 
-  // Memoize filtered list — avoids recompute on unrelated renders
+  // Memoize filtered list
   const filtered = useMemo(() => {
     if (!q) return countries;
     return countries.filter((c) => {
@@ -139,6 +138,12 @@ export default function CountrySelect({
   const display = filtered.slice(0, maxItems);
   const selected = countries.find((c) => c.id === value) ?? null;
 
+  // quick debug - remove after verifying your payload
+  useEffect(() => {
+    // show 3 items to verify keys (remove in production)
+    if (countries && countries.length) console.log("CountrySelect sample:", countries.slice(0, 3));
+  }, [countries]);
+
   function handleSelect(c: Country) {
     onChange(c.id);
     setOpen(false);
@@ -147,16 +152,19 @@ export default function CountrySelect({
     buttonRef.current?.focus();
   }
 
-  // helper to move focus to an index reliably (avoids stale-closure race)
-  const moveFocus = useCallback((toIndex: number) => {
-    const safeIndex = Math.max(0, Math.min(toIndex, display.length - 1));
-    setActiveIndex(safeIndex);
-    // focus after DOM update
-    requestAnimationFrame(() => {
-      const el = listRef.current?.querySelector(`[data-index='${safeIndex}']`) as HTMLButtonElement | null;
-      el?.focus();
-    });
-  }, [display.length]);
+  // helper to move focus to an index reliably
+  const moveFocus = useCallback(
+    (toIndex: number) => {
+      const safeIndex = Math.max(0, Math.min(toIndex, display.length - 1));
+      setActiveIndex(safeIndex);
+      // focus after DOM update
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(`[data-index='${safeIndex}']`) as HTMLButtonElement | null;
+        el?.focus();
+      });
+    },
+    [display.length]
+  );
 
   // keyboard handling for trigger
   function onTriggerKey(e: React.KeyboardEvent) {
@@ -164,7 +172,6 @@ export default function CountrySelect({
       e.preventDefault();
       setOpen(true);
       setTimeout(() => {
-        // focus first item when opened
         if (display.length > 0) moveFocus(0);
       }, 0);
     } else if (e.key === "Escape") {
@@ -175,10 +182,10 @@ export default function CountrySelect({
   function onListKey(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      moveFocus((activeIndex < 0 ? 0 : activeIndex + 1));
+      moveFocus(activeIndex < 0 ? 0 : activeIndex + 1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      moveFocus((activeIndex <= 0 ? 0 : activeIndex - 1));
+      moveFocus(activeIndex <= 0 ? 0 : activeIndex - 1);
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
       const c = display[activeIndex];
@@ -189,12 +196,35 @@ export default function CountrySelect({
     }
   }
 
-  // fallback handler: hide broken imgs and rely on iso2 text
+  // hide broken imgs and rely on iso2 text
   const handleImgError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     const img = e.currentTarget;
     img.style.display = "none";
     img.setAttribute("aria-hidden", "true");
   };
+
+  // Render the left badge gracefully: emoji, image, or iso2 letters
+  function FlagBadge({ c }: { c: Country }) {
+    const s = preferredFlagString(c);
+    if (s) {
+      return (
+        <span className="inline-flex items-center justify-center w-7 h-5 text-lg leading-none" aria-hidden style={{ lineHeight: 1 }}>
+          {s}
+        </span>
+      );
+    }
+
+    if (c.iso2) {
+      return (
+        <span className="inline-flex items-center justify-center w-7 h-5 rounded-sm overflow-hidden bg-transparent" aria-hidden>
+          <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" onError={handleImgError} />
+          {/* if image hides due to onError, the trigger/list has textual iso fallback elsewhere */}
+        </span>
+      );
+    }
+
+    return <span className="inline-flex items-center justify-center w-7 h-5 text-xs text-white/40">{(c.iso2 || "").toUpperCase()}</span>;
+  }
 
   return (
     <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
@@ -221,9 +251,7 @@ export default function CountrySelect({
           {selected ? (
             <>
               <span className="text-lg leading-none mr-2" aria-hidden style={{ lineHeight: 1 }}>
-                {preferredFlag(selected) ?? (selected.iso2 ? (
-                  <img src={flagSvgUrl(selected.iso2)} alt="" className="inline-block w-5 h-4 rounded-sm object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                ) : null)}
+                <FlagBadge c={selected} />
               </span>
               <span className="text-sm font-medium text-white/95">{selected.name}</span>
             </>
@@ -246,8 +274,17 @@ export default function CountrySelect({
             <input
               data-role="country-search"
               value={query}
-              onChange={(e) => { setQuery(e.target.value); setActiveIndex(0); }}
-              onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null; el?.focus(); } }}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActiveIndex(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  const el = listRef.current?.querySelector("[data-index='0']") as HTMLButtonElement | null;
+                  el?.focus();
+                }
+              }}
               placeholder="Search country..."
               aria-label="Search countries"
               className="w-full rounded-xl px-3 py-2 bg-transparent border border-white/6 placeholder:text-white/40 text-white/90 outline-none"
@@ -267,7 +304,7 @@ export default function CountrySelect({
               <li className="px-3 py-2 text-xs text-white/50">No countries match.</li>
             ) : (
               display.map((c, i) => {
-                const f = preferredFlag(c);
+                const flagText = preferredFlagString(c);
                 return (
                   <li key={c.id} id={`country-${c.id}`} className="px-2">
                     <button
@@ -280,13 +317,16 @@ export default function CountrySelect({
                       className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/6 transition ${c.id === value ? "bg-white/6" : ""}`}
                     >
                       <span className="w-6 text-lg leading-none" aria-hidden style={{ lineHeight: 1 }}>
-                        {/* show emoji if available, else try CDN img, else ISO2 letters */}
-                        {f ?? (c.iso2 ? (
-                          <>
-                            <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" onError={handleImgError} />
-                            <span className="sr-only">{c.name} flag</span>
-                          </>
-                        ) : <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>)}
+                        {flagText ?? (
+                          c.iso2 ? (
+                            <>
+                              <img src={flagSvgUrl(c.iso2)} alt={`${c.name} flag`} className="inline-block w-5 h-4 rounded-sm object-cover" onError={handleImgError} />
+                              <span className="sr-only">{c.name} flag</span>
+                            </>
+                          ) : (
+                            <span className="text-white/40 text-sm">{(c.iso2 || "").toUpperCase()}</span>
+                          )
+                        )}
                       </span>
 
                       <span className="text-sm text-white/90">{c.name}</span>

@@ -139,7 +139,7 @@ export default function SignupPage() {
     };
   }, [debouncedEmail]);
 
-  // fetch countries for selector on mount
+  // fetch countries for selector on mount — NORMALIZE payload so CountrySelect always gets consistent fields
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -147,9 +147,30 @@ export default function SignupPage() {
       try {
         const res = await api.get("/api/global/countries", { params: { active: "true" } });
         if (cancelled) return;
-        const list = Array.isArray(res.data?.data) ? res.data.data : [];
+
+        const raw = Array.isArray(res.data?.data) ? res.data.data : [];
+
+        // Normalizer: adapt mapping here if your API uses different keys.
+        const list: Country[] = raw.map((c: any, idx: number) => {
+          // attempt to pick a stable unique id
+          const id = String(c.id ?? c.uuid ?? c._id ?? c.code ?? `country-${idx}`);
+          const name = String(c.name ?? c.country ?? c.label ?? c.title ?? "");
+          // iso2 should be 2-letter uppercase if available
+          const iso2Raw = (c.iso2 ?? c.alpha2 ?? c.country_code ?? c.code2 ?? c.alpha_2 ?? "").toString();
+          const iso2 = iso2Raw ? iso2Raw.toUpperCase() : undefined;
+          // flag or emoji field from API (may be null)
+          const flag = c.flag ?? c.emoji ?? null;
+
+          return { id, name, iso2, flag };
+        });
+
+        // small debug to verify normalized payload; remove in production
+        console.log("normalized countries sample:", list.slice(0, 6));
+
         setCountries(list);
-        const india = list.find((c: any) => (c.iso2 || "").toUpperCase() === "IN");
+
+        // pick India if present, else first active
+        const india = list.find((c) => (c.iso2 ?? "").toUpperCase() === "IN");
         setCountryId(india ? india.id : (list[0]?.id ?? ""));
       } catch (e) {
         console.warn("failed to load countries", e);
