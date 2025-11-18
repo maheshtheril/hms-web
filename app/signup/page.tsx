@@ -82,7 +82,7 @@ function preferredFlagEmoji(c: Country): string | null {
 function flagSvgUrl(iso2?: string | null) {
   const s = normIso2(iso2);
   if (!s) return "";
-  // FlagCDN small png (w20) — use 40 for slightly larger visuals
+  // FlagCDN small png (w40) — slightly larger visuals
   return `https://flagcdn.com/w40/${s.toLowerCase()}.png`;
 }
 
@@ -262,7 +262,7 @@ function CountrySelect({
       </button>
 
       {open && (
-        <div className="absolute mt-2 w-full rounded-2xl bg-[#0f172a]/75 backdrop-blur-xl border border-white/10 shadow-2xl max-h-64 overflow-hidden">
+        <div className="absolute mt-2 w-full rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl max-h-64 overflow-hidden">
           <div className="p-2">
             <input
               value={query}
@@ -271,7 +271,7 @@ function CountrySelect({
                 setActiveIndex(0);
               }}
               placeholder="Search country..."
-              className="w-full rounded-xl px-3 py-2 bg-white/5 border border-white/20 placeholder:text-white/40 text-white/90 outline-none"
+              className="w-full rounded-xl px-3 py-2 bg-white/10 border border-white/20 placeholder:text-white/40 text-white/90 outline-none"
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
@@ -306,7 +306,7 @@ function CountrySelect({
                       onFocus={() => setActiveIndex(i)}
                       aria-selected={c.id === value}
                       className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg transition ${
-                        c.id === value ? "bg-white/10" : "hover:bg-white/10"
+                        c.id === value ? "bg-white/20" : "hover:bg-white/15"
                       }`}
                     >
                       <span className="w-6 text-lg leading-none" aria-hidden>
