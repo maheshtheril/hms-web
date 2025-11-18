@@ -26,52 +26,60 @@ type Props = {
 
 /* ---------- Utilities ---------- */
 
-function iso2ToFlag(iso2?: string | null): string {
-  if (!iso2) return "";
-  const s = iso2.toUpperCase().trim();
-  if (s.length !== 2) return "";
-  try {
-    return s
-      .split("")
-      .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
-      .join("");
-  } catch {
-    return "";
-  }
+// normalize iso2 once
+function normIso2(i?: string | null): string {
+  return (i ?? "").toString().trim().slice(0, 2).toUpperCase();
 }
 
+// generate emoji from ISO2 (regional indicator symbols)
+function iso2ToFlag(iso2?: string | null): string {
+  const s = normIso2(iso2);
+  if (s.length !== 2) return "";
+  // 'A' => 65; regional indicator starts at 127462 for 'A'
+  return Array.from(s)
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
+/**
+ * Try to extract a flag emoji from the raw field.
+ * Supports:
+ * - pairs of regional indicator symbols (🇮🇳)
+ * - short emoji-like strings (<=4 characters)
+ */
 function extractFlagEmoji(raw?: string | null): string | null {
   if (!raw) return null;
-  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "");
+
+  // remove invisible characters & whitespace
+  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "").trim();
   if (!cleaned) return null;
 
-  const indicators: number[] = [];
-  for (const ch of cleaned) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (cp >= 0x1f1e6 && cp <= 0x1f1ff) {
-      indicators.push(cp);
-      if (indicators.length === 2) break;
-    }
-  }
-  if (indicators.length === 2)
-    return String.fromCodePoint(indicators[0], indicators[1]);
+  // regex for two regional indicator symbols (works with surrogate pairs)
+  const reg = /(\uD83C[\uDDE6-\uDDFF]){2}/u;
+  const match = cleaned.match(reg);
+  if (match) return match[0];
 
-  if (cleaned.length <= 4) return cleaned;
+  // if what's left is short (some DBs store a single char or short text)
+  if ([...cleaned].length <= 4) return cleaned;
 
   return null;
 }
 
 function preferredFlag(c: Country): string | null {
-  const fromDb = extractFlagEmoji(c.flag ?? null);
-  if (fromDb) return fromDb;
+  const db = extractFlagEmoji(c.flag ?? null);
+  if (db) return db;
+
   const isoEmoji = iso2ToFlag(c.iso2 ?? null);
   if (isoEmoji) return isoEmoji;
+
   return null;
 }
 
 function flagSvgUrl(iso2?: string | null) {
-  if (!iso2) return "";
-  return `https://flagcdn.com/w20/${iso2.toLowerCase()}.png`;
+  const s = normIso2(iso2);
+  if (!s) return "";
+  // smaller size is fine for inline icons; use PNG (widely supported)
+  return `https://flagcdn.com/w20/${s.toLowerCase()}.png`;
 }
 
 /* ---------- Debounce ---------- */
@@ -183,8 +191,21 @@ export default function CountrySelect({
   }
 
   const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    // hide only the image so emoji/ISO fallback shows
     e.currentTarget.style.display = "none";
+    // ensure parent remains accessible
+    e.currentTarget.setAttribute("aria-hidden", "true");
   };
+
+  // small accessibility: when opening, reset activeIndex
+  useEffect(() => {
+    if (!open) {
+      setActiveIndex(-1);
+    } else {
+      setTimeout(() => display.length > 0 && setActiveIndex(0), 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   return (
     <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
@@ -196,24 +217,26 @@ export default function CountrySelect({
         aria-haspopup="listbox"
         onClick={() => {
           setOpen(!open);
-          if (!open && display.length > 0)
-            setTimeout(() => moveFocus(0), 0);
+          if (!open && display.length > 0) setTimeout(() => moveFocus(0), 0);
         }}
         onKeyDown={onTriggerKey}
         className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-zinc-800 shadow-lg"
+        aria-label={selected ? `Country: ${selected.name}` : "Select country"}
       >
         <div className="flex items-center gap-3">
           {selected ? (
             <>
-              <span className="text-lg mr-2 leading-none">
-                {preferredFlag(selected) ?? (selected.iso2 ? (
-                  <img
-                    src={flagSvgUrl(selected.iso2)}
-                    alt=""
-                    className="inline-block w-5 h-4 rounded-sm object-cover"
-                    onError={handleImgError}
-                  />
-                ) : null)}
+              <span className="text-lg mr-2 leading-none" aria-hidden>
+                {preferredFlag(selected) ?? (
+                  selected.iso2 ? (
+                    <img
+                      src={flagSvgUrl(selected.iso2)}
+                      alt={`${selected.name} flag`}
+                      className="inline-block w-5 h-4 rounded-sm object-cover"
+                      onError={handleImgError}
+                    />
+                  ) : null
+                )}
               </span>
               <span className="text-sm font-medium text-white/95">
                 {selected.name}
@@ -245,6 +268,7 @@ export default function CountrySelect({
                   moveFocus(0);
                 }
               }}
+              aria-label="Search countries"
             />
           </div>
 
@@ -262,6 +286,7 @@ export default function CountrySelect({
             ) : (
               display.map((c, i) => {
                 const f = preferredFlag(c);
+                const iso = normIso2(c.iso2);
                 return (
                   <li key={c.id} className="px-2">
                     <button
@@ -275,28 +300,24 @@ export default function CountrySelect({
                         c.id === value ? "bg-white/6" : ""
                       }`}
                     >
-                      <span className="w-6 text-lg leading-none">
-                        {f ?? (c.iso2 ? (
-                          <>
-                            <img
-                              src={flagSvgUrl(c.iso2)}
-                              alt={`${c.name} flag`}
-                              className="inline-block w-5 h-4 rounded-sm object-cover"
-                              onError={handleImgError}
-                            />
-                          </>
+                      <span className="w-6 text-lg leading-none" aria-hidden>
+                        {f ?? (iso ? (
+                          <img
+                            src={flagSvgUrl(iso)}
+                            alt={`${c.name} flag`}
+                            className="inline-block w-5 h-4 rounded-sm object-cover"
+                            onError={handleImgError}
+                          />
                         ) : (
                           <span className="text-white/40 text-sm">
-                            {(c.iso2 || "").toUpperCase()}
+                            {iso || ""}
                           </span>
                         ))}
                       </span>
 
-                      <span className="text-sm text-white/90">
-                        {c.name}
-                      </span>
+                      <span className="text-sm text-white/90">{c.name}</span>
                       <span className="ml-auto text-xs text-white/50">
-                        {c.iso2?.toUpperCase() ?? ""}
+                        {iso}
                       </span>
                     </button>
                   </li>
