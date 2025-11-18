@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { motion } from "framer-motion";
@@ -11,9 +11,301 @@ import PrimaryButton from "@/components/PrimaryButton";
 import AIBadge from "@/components/AIBadge";
 import NeuralGlow from "@/components/NeuralGlow";
 
-import CountrySelect, { Country } from "../components/CountrySelect";
-
 const api = axios.create({ baseURL: "", withCredentials: true });
+
+/* -----------------------
+   CountrySelect (inlined)
+   ----------------------- */
+
+export interface Country {
+  id: string;
+  name: string;
+  iso2?: string | null;
+  flag?: string | null;
+}
+
+type CountrySelectProps = {
+  countries: Country[];
+  value?: string | null;
+  onChange: (id: string) => void;
+  placeholder?: string;
+  maxItems?: number;
+  className?: string;
+};
+
+function normIso2(i?: string | null): string {
+  return (i ?? "")
+    .toString()
+    .replace(/[^A-Za-z]/g, "") // remove invisible / weird chars
+    .trim()
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function iso2ToFlag(iso2?: string | null): string {
+  const s = normIso2(iso2);
+  if (s.length !== 2) return "";
+  return Array.from(s)
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
+function extractFlagEmoji(raw?: string | null): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/[\u200B-\u200F\uFEFF\s]+/g, "").trim();
+  if (!cleaned) return null;
+  // regional indicator pair
+  const reg = /(\uD83C[\uDDE6-\uDDFF]){2}/u;
+  const match = cleaned.match(reg);
+  if (match) return match[0];
+  if ([...cleaned].length <= 4) return cleaned;
+  return null;
+}
+
+function preferredFlag(c: Country): string | null {
+  const db = extractFlagEmoji(c.flag ?? null);
+  if (db) return db;
+  const isoEmoji = iso2ToFlag(c.iso2 ?? null);
+  if (isoEmoji) return isoEmoji;
+  return null;
+}
+
+function flagSvgUrl(iso2?: string | null) {
+  const s = normIso2(iso2);
+  if (!s) return "";
+  return `https://flagcdn.com/w20/${s.toLowerCase()}.png`;
+}
+
+function useDebounced<T>(value: T, delay = 160) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+}
+
+function CountrySelect({
+  countries,
+  value,
+  onChange,
+  placeholder = "Select country (optional)",
+  maxItems = 200,
+  className = "",
+}: CountrySelectProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const debouncedQuery = useDebounced(query, 160);
+  const q = debouncedQuery.trim().toLowerCase();
+
+  const filtered = useMemo(() => {
+    if (!q) return countries;
+    return countries.filter((c) => {
+      const name = (c.name || "").toLowerCase();
+      const iso = (c.iso2 || "").toLowerCase();
+      return name.includes(q) || iso.includes(q);
+    });
+  }, [countries, q]);
+
+  const display = filtered.slice(0, maxItems);
+  const selected = countries.find((c) => c.id === value) ?? null;
+
+  const moveFocus = useCallback(
+    (idx: number) => {
+      const safe = Math.max(0, Math.min(idx, display.length - 1));
+      setActiveIndex(safe);
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(
+          `[data-index='${safe}']`
+        ) as HTMLButtonElement | null;
+        el?.focus();
+      });
+    },
+    [display.length]
+  );
+
+  function handleSelect(c: Country) {
+    onChange(c.id);
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(-1);
+    buttonRef.current?.focus();
+  }
+
+  function onTriggerKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setOpen(true);
+      setTimeout(() => display.length > 0 && moveFocus(0), 0);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  function onListKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveFocus(activeIndex < 0 ? 0 : activeIndex + 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus(activeIndex <= 0 ? 0 : activeIndex - 1);
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      e.preventDefault();
+      const c = display[activeIndex];
+      if (c) handleSelect(c);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      buttonRef.current?.focus();
+    }
+  }
+
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    e.currentTarget.style.display = "none";
+    e.currentTarget.setAttribute("aria-hidden", "true");
+  };
+
+  useEffect(() => {
+    if (!open) {
+      setActiveIndex(-1);
+    } else {
+      setTimeout(() => display.length > 0 && setActiveIndex(0), 0);
+    }
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className={`relative z-50 w-full ${className}`}>
+      <button
+        ref={buttonRef}
+        type="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => {
+          setOpen(!open);
+          if (!open && display.length > 0) setTimeout(() => moveFocus(0), 0);
+        }}
+        onKeyDown={onTriggerKey}
+        className="w-full text-left rounded-2xl px-3 py-2 flex items-center gap-3 border border-white/10 bg-white/10 backdrop-blur-xl shadow-lg"
+        aria-label={selected ? `Country: ${selected.name}` : "Select country"}
+      >
+        <div className="flex items-center gap-3">
+          {selected ? (
+            <>
+              <span className="text-lg mr-2 leading-none" aria-hidden>
+                {preferredFlag(selected) ?? (
+                  selected.iso2 ? (
+                    <img
+                      src={flagSvgUrl(selected.iso2)}
+                      alt={`${selected.name} flag`}
+                      className="inline-block w-5 h-4 rounded-sm object-cover"
+                      onError={handleImgError}
+                    />
+                  ) : null
+                )}
+              </span>
+              <span className="text-sm font-medium text-white/95">
+                {selected.name}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm text-white/60">{placeholder}</span>
+          )}
+        </div>
+        <div className="ml-auto text-white/50 text-xs">{open ? "⌃" : "⌄"}</div>
+      </button>
+
+      {open && (
+        <div className="absolute mt-2 w-full rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl max-h-64 overflow-hidden">
+          <div className="p-2">
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActiveIndex(0);
+              }}
+              placeholder="Search country..."
+              className="w-full rounded-xl px-3 py-2 bg-transparent border border-white/20 placeholder:text-white/40 text-white/90 outline-none"
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  moveFocus(0);
+                }
+              }}
+              aria-label="Search countries"
+            />
+          </div>
+
+          <ul
+            role="listbox"
+            ref={listRef}
+            tabIndex={-1}
+            onKeyDown={onListKey}
+            className="overflow-auto max-h-48"
+          >
+            {display.length === 0 ? (
+              <li className="px-3 py-2 text-xs text-white/50">No countries match.</li>
+            ) : (
+              display.map((c, i) => {
+                const f = preferredFlag(c);
+                const iso = normIso2(c.iso2);
+                return (
+                  <li key={c.id} className="px-2">
+                    <button
+                      data-index={i}
+                      role="option"
+                      type="button"
+                      onClick={() => handleSelect(c)}
+                      onFocus={() => setActiveIndex(i)}
+                      aria-selected={c.id === value}
+                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/10 transition ${
+                        c.id === value ? "bg-white/10" : ""
+                      }`}
+                    >
+                      <span className="w-6 text-lg leading-none" aria-hidden>
+                        {f ?? (iso ? (
+                          <img
+                            src={flagSvgUrl(iso)}
+                            alt={`${c.name} flag`}
+                            className="inline-block w-5 h-4 rounded-sm object-cover"
+                            onError={handleImgError}
+                          />
+                        ) : (
+                          <span className="text-white/40 text-sm">{iso || ""}</span>
+                        ))}
+                      </span>
+
+                      <span className="text-sm text-white/90">{c.name}</span>
+                      <span className="ml-auto text-xs text-white/50">{iso}</span>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+
+            {filtered.length > maxItems && (
+              <li className="px-3 py-2 text-xs text-white/50">Showing first {maxItems} results…</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* -----------------------
    Password strength helper
@@ -68,19 +360,14 @@ function PasswordStrength({ value }: { value: string }) {
         {passwordRules.map((_, i) => (
           <div
             key={i}
-            className={`flex-1 rounded ${
-              passedRules[i] ? "bg-emerald-400" : "bg-white/10"
-            }`}
+            className={`flex-1 rounded ${passedRules[i] ? "bg-emerald-400" : "bg-white/10"}`}
           />
         ))}
       </div>
 
       <ul className="mt-1 text-xs text-white/60 list-disc list-inside space-y-1">
         {passwordRules.map((r, i) => (
-          <li
-            key={i}
-            className={passedRules[i] ? "text-emerald-300" : "text-white/50"}
-          >
+          <li key={i} className={passedRules[i] ? "text-emerald-300" : "text-white/50"}>
             {r.label}
           </li>
         ))}
@@ -186,27 +473,22 @@ export default function SignupPage() {
         const raw = Array.isArray(res.data?.data) ? res.data.data : [];
 
         const list: Country[] = raw.map((c: any, idx: number) => ({
-          id: String(
-            c.id ?? c.uuid ?? c._id ?? c.code ?? `country-${idx}`
-          ),
+          id: String(c.id ?? c.uuid ?? c._id ?? c.code ?? `country-${idx}`),
           name: String(c.name ?? c.country ?? c.label ?? c.title ?? ""),
-          iso2: (c.iso2 ??
-            c.alpha2 ??
-            c.code2 ??
-            c.country_code ??
-            c.alpha_2 ??
-            ""
-          )
-            .toString()
-            .toUpperCase(),
+          iso2: normIso2(
+            c.iso2 ??
+              c.alpha2 ??
+              c.code2 ??
+              c.country_code ??
+              c.alpha_2 ??
+              ""
+          ),
           flag: c.flag ?? c.emoji ?? null,
         }));
 
         setCountries(list);
 
-        const india = list.find(
-          (c) => (c.iso2 ?? "").toUpperCase() === "IN"
-        );
+        const india = list.find((c) => (c.iso2 ?? "").toUpperCase() === "IN");
         setCountryId(india ? india.id : list[0]?.id ?? "");
       } catch (e) {
         console.warn("Failed to load countries", e);
@@ -293,11 +575,7 @@ export default function SignupPage() {
         } else if (status === 409 && data.error === "unique_violation") {
           setErr("Signup conflict. Try again.");
         } else {
-          setErr(
-            typeof data.error === "string"
-              ? data.error
-              : `Signup failed (${status}).`
-          );
+          setErr(typeof data.error === "string" ? data.error : `Signup failed (${status}).`);
         }
       } else if (err.request) {
         setErr("No response from server.");
@@ -318,17 +596,11 @@ export default function SignupPage() {
      Render
      ----------------------- */
   return (
-    <div className="relative min-h-screen flex items-center justify-center bg-black text-white overflow-hidden px-6">
-      <div className="absolute inset-0 bg-gradient-to-b from-black/90 via-zinc-950/90 to-black/95" />
+    <div className="relative min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-900/8 via-indigo-900/8 to-sky-900/8 text-white overflow-hidden px-6">
+      <div className="absolute inset-0 bg-gradient-to-b from-white/4 via-white/6 to-white/4 pointer-events-none" />
 
       <div className="absolute -top-40 left-1/2 -translate-x-1/2 pointer-events-none z-0">
-        <NeuralGlow
-          size={680}
-          intensity={0.65}
-          colorA="#7dd3fc"
-          colorB="#6366f1"
-          colorC="#a78bfa"
-        />
+        <NeuralGlow size={680} intensity={0.65} colorA="#7dd3fc" colorB="#6366f1" colorC="#a78bfa" />
       </div>
 
       <div className="relative z-10 flex flex-col items-center w-full max-w-[980px]">
@@ -339,11 +611,7 @@ export default function SignupPage() {
         </div>
 
         <AuthCard className="w-full max-w-xl">
-          <motion.div
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45 }}
-          >
+          <motion.div initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
             <div className="text-center mb-6">
               <div className="flex justify-center items-center gap-2">
                 <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-sky-300 via-indigo-400 to-sky-300">
@@ -351,21 +619,13 @@ export default function SignupPage() {
                 </h1>
                 <AIBadge />
               </div>
-              <p className="mt-2 text-sm text-white/70">
-                Spin up a secure tenant with AI-powered onboarding.
-              </p>
+              <p className="mt-2 text-sm text-white/70">Spin up a secure tenant with AI-powered onboarding.</p>
             </div>
 
-            <form
-              onSubmit={handleSignup}
-              className="space-y-4"
-              aria-label="Signup form"
-            >
+            <form onSubmit={handleSignup} className="space-y-4" aria-label="Signup form">
               {/* Org */}
               <div>
-                <label className="text-xs font-medium text-white/70">
-                  Organization / Company
-                </label>
+                <label className="text-xs font-medium text-white/70">Organization / Company</label>
                 <input
                   placeholder="Organization / Company"
                   className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
@@ -377,39 +637,20 @@ export default function SignupPage() {
 
               {/* Country */}
               <div>
-                <label className="text-xs font-medium text-white/70">
-                  Country
-                </label>
-                <CountrySelect
-                  countries={countries}
-                  value={countryId}
-                  onChange={(id) => setCountryId(id)}
-                />
-                <p className="mt-2 text-xs text-white/50">
-                  Selecting a country lets us pre-apply local tax defaults.
-                </p>
+                <label className="text-xs font-medium text-white/70">Country</label>
+                <CountrySelect countries={countries} value={countryId} onChange={(id) => setCountryId(id)} />
+                <p className="mt-2 text-xs text-white/50">Selecting a country lets us pre-apply local tax defaults.</p>
               </div>
 
               {/* Apply defaults */}
               <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={applyCountryDefaults}
-                  onChange={(e) =>
-                    setApplyCountryDefaults(e.target.checked)
-                  }
-                  className="w-4 h-4 rounded"
-                />
-                <label className="text-xs text-white/70">
-                  Apply country tax defaults to this company
-                </label>
+                <input type="checkbox" checked={applyCountryDefaults} onChange={(e) => setApplyCountryDefaults(e.target.checked)} className="w-4 h-4 rounded" />
+                <label className="text-xs text-white/70">Apply country tax defaults to this company</label>
               </div>
 
               {/* Name */}
               <div>
-                <label className="text-xs font-medium text-white/70">
-                  Your name
-                </label>
+                <label className="text-xs font-medium text-white/70">Your name</label>
                 <input
                   placeholder="Your name"
                   className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
@@ -421,9 +662,7 @@ export default function SignupPage() {
 
               {/* Email */}
               <div>
-                <label className="text-xs font-medium text-white/70">
-                  Work email
-                </label>
+                <label className="text-xs font-medium text-white/70">Work email</label>
                 <input
                   type="email"
                   placeholder="you@company.com"
@@ -436,24 +675,18 @@ export default function SignupPage() {
                   {checkingEmail ? (
                     <span className="text-white/60">Checking…</span>
                   ) : emailAvailable === null ? (
-                    <span className="text-white/50">
-                      Enter a valid business email.
-                    </span>
+                    <span className="text-white/50">Enter a valid business email.</span>
                   ) : emailAvailable ? (
                     <span className="text-emerald-300">Email available</span>
                   ) : (
-                    <span className="text-amber-400">
-                      Email already exists
-                    </span>
+                    <span className="text-amber-400">Email already exists</span>
                   )}
                 </div>
               </div>
 
               {/* Password */}
               <div>
-                <label className="text-xs font-medium text-white/70">
-                  Password
-                </label>
+                <label className="text-xs font-medium text-white/70">Password</label>
                 <input
                   type="password"
                   placeholder="Password"
@@ -475,37 +708,24 @@ export default function SignupPage() {
 
               {/* Errors */}
               {err && (
-                <p
-                  role="alert"
-                  className="text-sm text-red-400 mt-1"
-                >
+                <p role="alert" className="text-sm text-red-400 mt-1">
                   {err}
                 </p>
               )}
 
               {ok && (
-                <p
-                  role="status"
-                  aria-live="polite"
-                  className="text-sm text-emerald-400 mt-1"
-                >
+                <p role="status" aria-live="polite" className="text-sm text-emerald-400 mt-1">
                   Workspace created — redirecting…
                 </p>
               )}
 
-              <PrimaryButton
-                type="submit"
-                disabled={!canSubmit || loading}
-                aria-busy={loading}
-              >
+              <PrimaryButton type="submit" disabled={!canSubmit || loading} aria-busy={loading}>
                 {loading ? "Creating workspace…" : "Start Free"}
               </PrimaryButton>
             </form>
 
             <div className="mt-6 border-t border-white/10 pt-5 text-center">
-              <p className="text-xs text-white/60 mb-2">
-                Already have an account?
-              </p>
+              <p className="text-xs text-white/60 mb-2">Already have an account?</p>
               <a
                 href="/login"
                 className="inline-block w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 transition"
