@@ -223,7 +223,6 @@ export default function CompanySettingsPage(): JSX.Element {
 
   // --- Fetchers --------------------------------------------------
   async function fetchCompanies() {
-    // do NOT hardcode any origin here; endpoints are built from env or relative paths
     const pathVariants = [
       "/tenant/companies",
       "/api/tenant/companies",
@@ -232,7 +231,7 @@ export default function CompanySettingsPage(): JSX.Element {
       "/companies",
     ];
 
-    const endpoints = buildEndpoints(pathVariants.map((p) => `${p}?page=1&perPage=500`)); // try retrieving ample page by default
+    const endpoints = buildEndpoints(pathVariants.map((p) => `${p}?page=1&perPage=500`));
     setLoading(true);
     const controller = createController();
 
@@ -468,7 +467,7 @@ export default function CompanySettingsPage(): JSX.Element {
     }
   }
 
-  // --- UI helpers & render (unchanged) ----------------------------------------------
+  // --- UI helpers & render ----------------------------------------------
   function openCreateTax() {
     setEditingTaxId(null);
     setTaxForm({ name: "", rate: 0, is_active: true });
@@ -616,9 +615,147 @@ export default function CompanySettingsPage(): JSX.Element {
                 </div>
               </div>
             )}
-            {/* taxes & currencies UI unchanged */}
-            {activeTab === "taxes" && ( /* ... same as before */ ) }
-            {activeTab === "currencies" && ( /* ... same as before */ ) }
+
+            {activeTab === "taxes" && (
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-medium">Taxes</h3>
+                  <div className="flex gap-2">
+                    <button onClick={openCreateTax} className="px-3 py-2 rounded-lg bg-green-600 text-white" disabled={!companyId || loading}>
+                      New Tax
+                    </button>
+                    <button onClick={() => void fetchTaxes(companyId || "")} className="px-3 py-2 rounded-lg border" disabled={!companyId || loading}>
+                      Reload
+                    </button>
+                  </div>
+                </div>
+
+                {taxForm && (
+                  <div className="p-4 rounded-lg bg-white/80 border mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <input
+                        placeholder="Tax name"
+                        className="px-3 py-2 rounded-lg border"
+                        value={String(taxForm.name ?? "")}
+                        onChange={(e) => setTaxForm((f) => ({ ...(f ?? {}), name: e.target.value }))}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Rate (%)"
+                        className="px-3 py-2 rounded-lg border"
+                        value={String(taxForm.rate ?? 0)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setTaxForm((f) => ({ ...(f ?? {}), rate: Number.isFinite(v) ? v : 0 }));
+                        }}
+                      />
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(taxForm.is_active)}
+                            onChange={(e) => setTaxForm((f) => ({ ...(f ?? {}), is_active: e.target.checked }))}
+                          />
+                          Active
+                        </label>
+                        <div className="ml-auto">
+                          <button
+                            onClick={() => {
+                              if (!taxForm?.name) return alert("Name required");
+                              if (taxForm.rate == null) return alert("Rate required");
+                              void createOrUpdateTax(taxForm as Partial<Tax>);
+                            }}
+                            className="px-3 py-2 rounded-lg bg-sky-600 text-white"
+                            disabled={loading}
+                          >
+                            {editingTaxId ? "Update" : "Create"}
+                          </button>
+                          <button onClick={() => { setTaxForm(null); setEditingTaxId(null); }} className="ml-2 px-3 py-2 rounded-lg border">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm divide-y">
+                    <thead>
+                      <tr className="text-left">
+                        <th className="p-2">Name</th>
+                        <th className="p-2">Rate</th>
+                        <th className="p2">Status</th>
+                        <th className="p-2">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {taxes.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-4 text-sm text-slate-500">No taxes defined.</td>
+                        </tr>
+                      ) : (
+                        taxes.map((t) => (
+                          <tr key={t.id} className="hover:bg-white/40">
+                            <td className="p-2">{t.name}</td>
+                            <td className="p-2">{t.rate}%</td>
+                            <td className="p-2">{t.is_active ? "Active" : "Inactive"}</td>
+                            <td className="p-2">
+                              <div className="flex gap-2">
+                                <button onClick={() => openEditTax(t)} className="px-2 py-1 rounded border">Edit</button>
+                                <button onClick={() => void deleteTax(t.id)} className="px-2 py-1 rounded border text-red-600">Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "currencies" && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium">Currencies</h3>
+                  <button onClick={() => void fetchCurrencies()} className="px-3 py-2 rounded-lg border" disabled={loading}>
+                    Reload
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm divide-y">
+                    <thead>
+                      <tr className="text-left">
+                        <th className="p-2">Code</th>
+                        <th className="p-2">Name</th>
+                        <th className="p-2">Symbol</th>
+                        <th className="p-2">Precision</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {currencies.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="p-4 text-sm text-slate-500">No currencies available.</td>
+                        </tr>
+                      ) : (
+                        currencies.map((c) => (
+                          <tr key={c.id} className="hover:bg-white/40">
+                            <td className="p-2">{c.code}</td>
+                            <td className="p-2">{c.name}</td>
+                            <td className="p-2">{c.symbol ?? "—"}</td>
+                            <td className="p-2">{c.precision}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-sm text-slate-500 mt-3">Currencies are global (tenant-wide). To add a currency, seed it in the admin DB (or implement a POST /api/currencies).</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
