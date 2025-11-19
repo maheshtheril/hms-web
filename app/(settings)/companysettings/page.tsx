@@ -1,8 +1,8 @@
 "use client";
-// top of file
+// app/(settings)/companysettings/page.tsx
+
 import apiClient from "@/lib/api-client";
 import axios from "axios";
-
 import React, { useEffect, useRef, useState } from "react";
 
 type Company = { id: string; name: string };
@@ -26,6 +26,33 @@ type Tax = {
 
 type Currency = { id: string; code: string; name: string; symbol?: string; precision: number };
 
+/** Safe error message extractor */
+function getErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const resp = (err as any).response;
+    if (resp?.data) {
+      if (typeof resp.data.message === "string") return resp.data.message;
+      if (typeof resp.data.error === "string") return resp.data.error;
+      if (typeof resp.data === "string") return resp.data;
+      try {
+        return JSON.stringify(resp.data);
+      } catch {}
+    }
+    return err.message || `Request failed${resp?.status ? ` (${resp.status})` : ""}`;
+  }
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    try {
+      const e = err as Record<string, unknown>;
+      if (typeof e.message === "string") return e.message;
+      if (typeof e.error === "string") return e.error;
+      return JSON.stringify(e);
+    } catch {}
+  }
+  if (typeof err === "string") return err;
+  return "An unknown error occurred";
+}
+
 export default function CompanySettingsPage(): JSX.Element {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<string | "">("");
@@ -43,8 +70,9 @@ export default function CompanySettingsPage(): JSX.Element {
 
   useEffect(() => {
     // load base data on mount
-    fetchCompanies();
-    fetchCurrencies();
+    void fetchSessionAndInit();
+    void fetchCompanies();
+    void fetchCurrencies();
     // cleanup on unmount: abort outstanding requests
     return () => {
       controllers.current.forEach((c) => {
@@ -59,8 +87,8 @@ export default function CompanySettingsPage(): JSX.Element {
 
   useEffect(() => {
     if (companyId) {
-      fetchCompanySettings(companyId);
-      fetchTaxes(companyId);
+      void fetchCompanySettings(companyId);
+      void fetchTaxes(companyId);
     } else {
       setSettings(null);
       setTaxes([]);
@@ -88,8 +116,7 @@ export default function CompanySettingsPage(): JSX.Element {
       } catch {
         return text;
       }
-    } catch (err: any) {
-      // rethrow so callers can decide to continue to next endpoint
+    } catch (err: unknown) {
       throw err;
     }
   }
@@ -101,11 +128,9 @@ export default function CompanySettingsPage(): JSX.Element {
         const json = await tryFetchJson(ep, opts);
         if (!json) continue;
         return { json, url: ep } as { json: T; url: string };
-      } catch (err: any) {
-        // try next endpoint (log for debugging)
-        // Ignore abort errors so they bubble to caller
-        if (err?.name === "AbortError") throw err;
-        console.warn(`fetchWithVariants: ${ep} failed:`, err?.message ?? err);
+      } catch (err: unknown) {
+        if ((err as any)?.name === "AbortError") throw err;
+        console.warn(`fetchWithVariants: ${ep} failed:`, getErrorMessage(err));
         continue;
       }
     }
@@ -119,9 +144,84 @@ export default function CompanySettingsPage(): JSX.Element {
     return c;
   }
 
-  // --- Fetchers -------------------------------------------------
+  // --- Session / switch helpers --------------------------------
+  // Fetch server session (canonical) and initialize companyId if present
+  async function fetchSessionAndInit() {
+    const controller = createController();
+    try {
+      setLoading(true);
+      const found = await fetchWithVariants(["/api/session", "/api/me", "/session"], { signal: controller.signal });
+      const json = found?.json ?? null;
+      const sessionCompanyId = json?.company_id ?? json?.data?.company_id ?? "";
+      if (sessionCompanyId) {
+        setCompanyId(sessionCompanyId);
+      }
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
+      console.warn("fetchSessionAndInit: no session or failed", getErrorMessage(err));
+    } finally {
+      setLoading(false);
+      controllers.current.delete(controller);
+    }
+  }
+
+  // Call server to set session.company_id (server enforces membership)
+  async function switchCompany(nextCompanyId: string) {
+    if (!nextCompanyId) {
+      setCompanyId("");
+      setSettings(null);
+      setTaxes([]);
+      return;
+    }
+
+    // optimistic UI: but server is authoritative
+    setCompanyId(nextCompanyId);
+    const controller = createController();
+    try {
+      setLoading(true);
+      const resp = await apiClient.post(
+        "/api/switch-company",
+        { company_id: nextCompanyId },
+        { withCredentials: true, signal: (controller.signal as any) }
+      );
+
+      if (!(resp?.status >= 200 && resp.status < 300)) {
+        console.warn("switchCompany: server returned non-2xx", resp?.status);
+        // revert and inform
+        setCompanyId("");
+        setSettings(null);
+        setTaxes([]);
+        alert("Could not switch company (server rejected).");
+        return;
+      }
+
+      // server confirmed; reload company-scoped resources
+      await Promise.all([fetchCompanySettings(nextCompanyId), fetchTaxes(nextCompanyId)]);
+      console.info("Switched company confirmed by server.");
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
+      console.error("switchCompany failed:", getErrorMessage(err), err);
+      // revert on failure
+      setCompanyId("");
+      setSettings(null);
+      setTaxes([]);
+      alert("Could not switch company: " + getErrorMessage(err));
+    } finally {
+      setLoading(false);
+      controllers.current.delete(controller);
+    }
+  }
+
+  // --- Fetchers --------------------------------------------------
   async function fetchCompanies() {
-    const variants = ["/admin/companies", "/api/admin/companies", "/tenant/companies", "/api/companies", "/companies"];
+    const variants = [
+      "https://hmsweb.onrender.com/tenant/companies",
+      "/admin/companies",
+      "/api/admin/companies",
+      "/tenant/companies",
+      "/api/companies",
+      "/companies",
+    ];
     setLoading(true);
     const controller = createController();
     try {
@@ -138,10 +238,9 @@ export default function CompanySettingsPage(): JSX.Element {
             found = { url: norm, data: resp.data };
             break;
           }
-        } catch (err) {
-          // robust logging that narrows error types for TS
+        } catch (err: unknown) {
           if (axios.isAxiosError(err)) {
-            console.warn("company variant failed", v, err.response?.status, err.response?.data ?? err.message);
+            console.warn("company variant failed", v, (err as any).response?.status, (err as any).response?.data ?? (err as any).message);
           } else {
             console.warn("company variant failed (non-axios error)", v, err);
           }
@@ -165,10 +264,15 @@ export default function CompanySettingsPage(): JSX.Element {
       if (!Array.isArray(list)) list = [];
 
       setCompanies(list);
-      if (!companyId && list.length === 1) setCompanyId(list[0].id);
+
+      // If exactly one company and there's no company in state - call switchCompany (server authoritative)
+      if (!companyId && list.length === 1) {
+        void switchCompany(list[0].id);
+      }
+
       console.info("Companies fetched via:", found.url);
-    } catch (err: any) {
-      console.error("fetchCompanies failed:", err);
+    } catch (err: unknown) {
+      console.error("fetchCompanies failed:", getErrorMessage(err), err);
       setCompanies([]);
     } finally {
       setLoading(false);
@@ -181,7 +285,6 @@ export default function CompanySettingsPage(): JSX.Element {
     const controller = createController();
     try {
       setLoading(true);
-      // prefer canonical /api/global/company-settings but try a fallback as well
       const endpoints = [
         `/api/global/company-settings?companyId=${encodeURIComponent(cId)}`,
         `/api/company-settings?companyId=${encodeURIComponent(cId)}`,
@@ -192,10 +295,10 @@ export default function CompanySettingsPage(): JSX.Element {
       const data = (resJson && (resJson.data ?? resJson)) || null;
       setSettings(data || { company_id: cId });
       if (found) console.info("Company settings fetched via:", found.url);
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      console.error("fetchCompanySettings failed:", err);
-      alert("Could not load company settings: " + (err?.message || err));
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
+      console.error("fetchCompanySettings failed:", getErrorMessage(err), err);
+      // avoid blocking UI on settings errors
     } finally {
       setLoading(false);
       controllers.current.delete(controller);
@@ -220,10 +323,10 @@ export default function CompanySettingsPage(): JSX.Element {
       const data: Tax[] = (resJson && (resJson.data ?? resJson)) || [];
       setTaxes(Array.isArray(data) ? data : []);
       if (found) console.info("Taxes fetched via:", found.url);
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      console.error("fetchTaxes failed:", err);
-      alert("Could not load taxes: " + (err?.message || err));
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
+      console.error("fetchTaxes failed:", getErrorMessage(err), err);
+      // non-fatal
     } finally {
       setLoading(false);
       controllers.current.delete(controller);
@@ -254,9 +357,9 @@ export default function CompanySettingsPage(): JSX.Element {
 
       setCurrencies(list);
       console.info("Currencies fetched via:", found.url);
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
-      console.error("fetchCurrencies failed:", err);
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
+      console.error("fetchCurrencies failed:", getErrorMessage(err), err);
       setCurrencies([
         { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
         { id: "INR", code: "INR", name: "Indian Rupee", symbol: "₹", precision: 2 },
@@ -273,7 +376,6 @@ export default function CompanySettingsPage(): JSX.Element {
     const controller = createController();
     try {
       setLoading(true);
-      // use canonical PUT endpoint and include credentials
       const resJson = await tryFetchJson(`/api/global/company-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -283,10 +385,10 @@ export default function CompanySettingsPage(): JSX.Element {
       const data = (resJson && (resJson.data ?? resJson)) || null;
       setSettings(data || payload);
       alert("Settings saved");
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
       console.error(err);
-      alert("Could not save settings: " + (err?.message || err));
+      alert("Could not save settings: " + getErrorMessage(err));
     } finally {
       setLoading(false);
       controllers.current.delete(controller);
@@ -321,10 +423,10 @@ export default function CompanySettingsPage(): JSX.Element {
       }
       setTaxForm(null);
       setEditingTaxId(null);
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
       console.error(err);
-      alert("Could not save tax: " + (err?.message || err));
+      alert("Could not save tax: " + getErrorMessage(err));
     } finally {
       setLoading(false);
       controllers.current.delete(controller);
@@ -339,10 +441,10 @@ export default function CompanySettingsPage(): JSX.Element {
       await tryFetchJson(`/api/global/company-taxes/${id}`, { method: "DELETE", signal: controller.signal });
       setTaxes((s) => s.filter((t) => t.id !== id));
       alert("Deleted");
-    } catch (err: any) {
-      if (err?.name === "AbortError") return;
+    } catch (err: unknown) {
+      if ((err as any)?.name === "AbortError") return;
       console.error(err);
-      alert("Could not delete tax: " + (err?.message || err));
+      alert("Could not delete tax: " + getErrorMessage(err));
     } finally {
       setLoading(false);
       controllers.current.delete(controller);
@@ -379,8 +481,12 @@ export default function CompanySettingsPage(): JSX.Element {
           <div className="flex gap-3 items-center">
             <select
               value={companyId}
-              onChange={(e) => setCompanyId(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                void switchCompany(val);
+              }}
               className="px-3 py-2 rounded-lg bg-white/60 backdrop-blur-sm border border-slate-200"
+              disabled={loading}
             >
               <option value="">— Select company —</option>
               {companies.map((c) => (
@@ -394,8 +500,8 @@ export default function CompanySettingsPage(): JSX.Element {
               disabled={!companyId || loading}
               onClick={() => {
                 if (companyId) {
-                  fetchCompanySettings(companyId);
-                  fetchTaxes(companyId);
+                  void fetchCompanySettings(companyId);
+                  void fetchTaxes(companyId);
                 }
               }}
               className="px-3 py-2 rounded-lg border bg-white/60 backdrop-blur-sm disabled:opacity-50"
@@ -457,7 +563,7 @@ export default function CompanySettingsPage(): JSX.Element {
                     <button
                       onClick={() => {
                         if (!settings || !companyId) return alert("No settings to save");
-                        saveSettings({ ...settings, company_id: companyId });
+                        void saveSettings({ ...settings, company_id: companyId });
                       }}
                       className="px-4 py-2 rounded-lg bg-sky-600 text-white shadow-sm disabled:opacity-50"
                       disabled={!settings || loading}
@@ -503,7 +609,7 @@ export default function CompanySettingsPage(): JSX.Element {
                     <button onClick={openCreateTax} className="px-3 py-2 rounded-lg bg-green-600 text-white" disabled={!companyId || loading}>
                       New Tax
                     </button>
-                    <button onClick={() => fetchTaxes(companyId || "")} className="px-3 py-2 rounded-lg border" disabled={!companyId || loading}>
+                    <button onClick={() => void fetchTaxes(companyId || "")} className="px-3 py-2 rounded-lg border" disabled={!companyId || loading}>
                       Reload
                     </button>
                   </div>
@@ -542,7 +648,7 @@ export default function CompanySettingsPage(): JSX.Element {
                             onClick={() => {
                               if (!taxForm?.name) return alert("Name required");
                               if (taxForm.rate == null) return alert("Rate required");
-                              createOrUpdateTax(taxForm as Partial<Tax>);
+                              void createOrUpdateTax(taxForm as Partial<Tax>);
                             }}
                             className="px-3 py-2 rounded-lg bg-sky-600 text-white"
                             disabled={loading}
@@ -582,7 +688,7 @@ export default function CompanySettingsPage(): JSX.Element {
                             <td className="p-2">
                               <div className="flex gap-2">
                                 <button onClick={() => openEditTax(t)} className="px-2 py-1 rounded border">Edit</button>
-                                <button onClick={() => deleteTax(t.id)} className="px-2 py-1 rounded border text-red-600">Delete</button>
+                                <button onClick={() => void deleteTax(t.id)} className="px-2 py-1 rounded border text-red-600">Delete</button>
                               </div>
                             </td>
                           </tr>
@@ -598,7 +704,7 @@ export default function CompanySettingsPage(): JSX.Element {
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-medium">Currencies</h3>
-                  <button onClick={() => fetchCurrencies()} className="px-3 py-2 rounded-lg border" disabled={loading}>
+                  <button onClick={() => void fetchCurrencies()} className="px-3 py-2 rounded-lg border" disabled={loading}>
                     Reload
                   </button>
                 </div>
