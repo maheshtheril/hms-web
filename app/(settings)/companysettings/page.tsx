@@ -38,6 +38,7 @@ export default function CompanySettingsPage(): JSX.Element {
   useEffect(() => {
     fetchCompanies();
     fetchCurrencies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -48,22 +49,30 @@ export default function CompanySettingsPage(): JSX.Element {
       setSettings(null);
       setTaxes([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
   // --- Helpers -------------------------------------------------
   async function tryFetchJson(url: string, opts?: RequestInit) {
+    const defaults: RequestInit = { credentials: "include", headers: { Accept: "application/json" } };
+    const merged = Object.assign({}, defaults, opts || {});
     try {
-      const res = await fetch(url, opts);
+      const res = await fetch(url, merged);
       if (!res.ok) {
-        // propagate status and text for caller to decide
         const txt = await res.text().catch(() => "");
         const body = txt || `${res.status} ${res.statusText}`;
         const e: any = new Error(body);
         e.status = res.status;
         throw e;
       }
-      const json = await res.json().catch(() => null);
-      return json;
+      // try parse JSON, allow empty body
+      const text = await res.text().catch(() => "");
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
     } catch (err) {
       throw err;
     }
@@ -71,17 +80,12 @@ export default function CompanySettingsPage(): JSX.Element {
 
   // --- Fetchers -------------------------------------------------
   async function fetchCompanies() {
-    // Try multiple endpoints until one returns company list
-    const endpoints = [
-      "/api/tenant/companies",
-      "/api/tenants/companies",
-      "/api/admin/companies",
-    ];
+    // Prefer canonical endpoints; include tenant/admin variants as fallback
+    const endpoints = ["/api/tenant/companies", "/api/admin/companies", "/api/companies"];
     setLoading(true);
     for (const ep of endpoints) {
       try {
         const json = await tryFetchJson(ep);
-        // support both: raw array OR { ok: true, data: [...] }
         let list: Company[] = [];
         if (!json) continue;
         if (Array.isArray(json)) list = json;
@@ -93,18 +97,16 @@ export default function CompanySettingsPage(): JSX.Element {
           setLoading(false);
           return;
         } else {
-          // endpoint responded with empty list (valid), set companies to [] and stop trying further endpoints
           setCompanies([]);
           setLoading(false);
           return;
         }
       } catch (err: any) {
-        // if 404, try next; otherwise log and try next
+        // try next endpoint on error (404/403 may happen depending on auth)
         console.warn(`fetchCompanies: ${ep} failed:`, err?.message || err);
         continue;
       }
     }
-    // nothing worked
     console.warn("fetchCompanies: no tenant/company endpoint found. frontend will show empty list.");
     setCompanies([]);
     setLoading(false);
@@ -114,9 +116,12 @@ export default function CompanySettingsPage(): JSX.Element {
     if (!cId) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/company/settings?companyId=${encodeURIComponent(cId)}`);
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      // canonical endpoint
+      const resJson = await tryFetchJson(`/api/global/company-settings?companyId=${encodeURIComponent(cId)}`, {
+        method: "GET",
+      });
+      // normalize: either object or { data: {...} }
+      const data = (resJson && (resJson.data ?? resJson)) || null;
       setSettings(data || { company_id: cId });
     } catch (err: any) {
       console.error(err);
@@ -130,10 +135,12 @@ export default function CompanySettingsPage(): JSX.Element {
     if (!cId) return setTaxes([]);
     try {
       setLoading(true);
-      const res = await fetch(`/api/company/taxes?companyId=${encodeURIComponent(cId)}`);
-      if (!res.ok) throw new Error(await res.text());
-      const data: Tax[] = await res.json();
-      setTaxes(data || []);
+      // canonical company taxes endpoint
+      const resJson = await tryFetchJson(`/api/global/company-taxes?companyId=${encodeURIComponent(cId)}`, {
+        method: "GET",
+      });
+      const data: Tax[] = (resJson && (resJson.data ?? resJson)) || [];
+      setTaxes(Array.isArray(data) ? data : []);
     } catch (err: any) {
       console.error(err);
       alert("Could not load taxes: " + (err?.message || err));
@@ -143,8 +150,8 @@ export default function CompanySettingsPage(): JSX.Element {
   }
 
   async function fetchCurrencies() {
-    // Try endpoints that may exist and accept multiple response shapes
-    const endpoints = ["/api/currencies", "/api/global/currencies", "/api/currencies/"];
+    // Prefer global canonical endpoint first
+    const endpoints = ["/api/global/currencies", "/api/currencies", "/api/currencies/"];
     setLoading(true);
     for (const ep of endpoints) {
       try {
@@ -159,7 +166,6 @@ export default function CompanySettingsPage(): JSX.Element {
           setLoading(false);
           return;
         } else {
-          // endpoint returned empty but valid array
           setCurrencies([]);
           setLoading(false);
           return;
@@ -170,7 +176,6 @@ export default function CompanySettingsPage(): JSX.Element {
       }
     }
 
-    // final fallback: local minimal list so UI doesn't break
     console.warn("fetchCurrencies: no currencies endpoint found, using fallback list.");
     setCurrencies([
       { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
@@ -184,14 +189,14 @@ export default function CompanySettingsPage(): JSX.Element {
     if (!payload?.company_id) return alert("Missing company id");
     try {
       setLoading(true);
-      const res = await fetch(`/api/company/settings`, {
+      // use canonical PUT endpoint and include credentials
+      const resJson = await tryFetchJson(`/api/global/company-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setSettings(data);
+      const data = (resJson && (resJson.data ?? resJson)) || null;
+      setSettings(data || payload);
       alert("Settings saved");
     } catch (err: any) {
       console.error(err);
@@ -206,23 +211,21 @@ export default function CompanySettingsPage(): JSX.Element {
     try {
       setLoading(true);
       if (editingTaxId) {
-        const res = await fetch(`/api/company/taxes/${editingTaxId}`, {
+        const updatedJson = await tryFetchJson(`/api/global/company-taxes/${editingTaxId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error(await res.text());
-        const updated = await res.json();
+        const updated = (updatedJson && (updatedJson.data ?? updatedJson)) || updatedJson;
         setTaxes((s) => s.map((t) => (t.id === updated.id ? updated : t)));
         alert("Tax updated");
       } else {
-        const res = await fetch(`/api/company/taxes`, {
+        const createdJson = await tryFetchJson(`/api/global/company-taxes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...(payload || {}), company_id: companyId }),
         });
-        if (!res.ok) throw new Error(await res.text());
-        const created = await res.json();
+        const created = (createdJson && (createdJson.data ?? createdJson)) || createdJson;
         setTaxes((s) => [created, ...s]);
         alert("Tax created");
       }
@@ -240,8 +243,7 @@ export default function CompanySettingsPage(): JSX.Element {
     if (!window.confirm("Delete this tax?")) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/company/taxes/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(await res.text());
+      await tryFetchJson(`/api/global/company-taxes/${id}`, { method: "DELETE" });
       setTaxes((s) => s.filter((t) => t.id !== id));
       alert("Deleted");
     } catch (err: any) {
