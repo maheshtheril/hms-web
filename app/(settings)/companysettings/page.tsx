@@ -1,4 +1,7 @@
 "use client";
+// top of file
+import apiClient from "@/lib/api-client";
+import axios from "axios";
 
 import React, { useEffect, useRef, useState } from "react";
 
@@ -118,46 +121,53 @@ export default function CompanySettingsPage(): JSX.Element {
 
   // --- Fetchers -------------------------------------------------
   async function fetchCompanies() {
-    const endpoints = [
-      "/admin/companies",
-      "/tenant/companies",
-      "/api/admin/companies",
-      "/api/companies",
-      "/companies",
-    ];
+    const variants = ["/admin/companies", "/api/admin/companies", "/tenant/companies", "/api/companies", "/companies"];
     setLoading(true);
     const controller = createController();
     try {
-      const found = await fetchWithVariants(endpoints, { signal: controller.signal });
+      // try variants using apiClient to respect baseURL and cookies
+      let found: { url: string; data: any } | null = null;
+      for (const v of variants) {
+        try {
+          const norm =
+            apiClient?.defaults?.baseURL && apiClient.defaults.baseURL.includes("/api") && v.startsWith("/api")
+              ? v.replace(/^\/api/, "")
+              : v;
+          const resp = await apiClient.get(norm, { withCredentials: true });
+          if (resp?.status >= 200 && resp.status < 300) {
+            found = { url: norm, data: resp.data };
+            break;
+          }
+        } catch (err) {
+          // robust logging that narrows error types for TS
+          if (axios.isAxiosError(err)) {
+            console.warn("company variant failed", v, err.response?.status, err.response?.data ?? err.message);
+          } else {
+            console.warn("company variant failed (non-axios error)", v, err);
+          }
+          continue;
+        }
+      }
+
       if (!found) {
         console.warn("fetchCompanies: no tenant/company endpoint found.");
         setCompanies([]);
         return;
       }
 
-      const data = found.json;
+      const data = found.data;
       let list: Company[] = [];
       if (Array.isArray(data)) list = data;
       else if (data?.ok && Array.isArray(data.data)) list = data.data;
       else if (Array.isArray(data.data)) list = data.data;
       else if (Array.isArray((data as any)?.companies)) list = (data as any).companies;
       else if (Array.isArray((data as any).items)) list = (data as any).items;
-
       if (!Array.isArray(list)) list = [];
 
       setCompanies(list);
-
-      // Only auto-select if no selection exists AND there is exactly one company.
-      // If caller or routing already set companyId, respect it.
-      if (!companyId && list.length === 1) {
-        setCompanyId(list[0].id);
-      }
+      if (!companyId && list.length === 1) setCompanyId(list[0].id);
       console.info("Companies fetched via:", found.url);
     } catch (err: any) {
-      if (err?.name === "AbortError") {
-        // aborted; ignore
-        return;
-      }
       console.error("fetchCompanies failed:", err);
       setCompanies([]);
     } finally {
@@ -554,7 +564,7 @@ export default function CompanySettingsPage(): JSX.Element {
                       <tr className="text-left">
                         <th className="p-2">Name</th>
                         <th className="p-2">Rate</th>
-                        <th className="p-2">Status</th>
+                        <th className="p2">Status</th>
                         <th className="p-2">Actions</th>
                       </tr>
                     </thead>
