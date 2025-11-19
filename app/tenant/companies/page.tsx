@@ -78,11 +78,12 @@ export default function AllCompaniesPage() {
 
     // canonical path variants we support on backend
     const pathVariants = [
-      `/tenant/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
-      `/api/tenant/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
-      `/tenant/companies?q=${encodeURIComponent(q)}`, // no paging support backends sometimes
-      `/api/tenant/companies?q=${encodeURIComponent(q)}`,
-    ];
+  `/admin/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
+  `/api/admin/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
+  `/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
+  `/api/companies?page=${page}&perPage=${perPage}&q=${encodeURIComponent(q)}`,
+];
+
 
     const endpoints = buildEndpoints(pathVariants);
 
