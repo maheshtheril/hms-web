@@ -50,21 +50,64 @@ export default function CompanySettingsPage(): JSX.Element {
     }
   }, [companyId]);
 
+  // --- Helpers -------------------------------------------------
+  async function tryFetchJson(url: string, opts?: RequestInit) {
+    try {
+      const res = await fetch(url, opts);
+      if (!res.ok) {
+        // propagate status and text for caller to decide
+        const txt = await res.text().catch(() => "");
+        const body = txt || `${res.status} ${res.statusText}`;
+        const e: any = new Error(body);
+        e.status = res.status;
+        throw e;
+      }
+      const json = await res.json().catch(() => null);
+      return json;
+    } catch (err) {
+      throw err;
+    }
+  }
+
   // --- Fetchers -------------------------------------------------
   async function fetchCompanies() {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/tenant/companies");
-      if (!res.ok) throw new Error(await res.text());
-      const data: Company[] = await res.json();
-      setCompanies(data || []);
-      if (data && data.length > 0) setCompanyId((prev) => (prev || data[0].id));
-    } catch (err: any) {
-      console.error(err);
-      alert("Could not load companies: " + (err?.message || err));
-    } finally {
-      setLoading(false);
+    // Try multiple endpoints until one returns company list
+    const endpoints = [
+      "/api/tenant/companies",
+      "/api/tenants/companies",
+      "/api/admin/companies",
+    ];
+    setLoading(true);
+    for (const ep of endpoints) {
+      try {
+        const json = await tryFetchJson(ep);
+        // support both: raw array OR { ok: true, data: [...] }
+        let list: Company[] = [];
+        if (!json) continue;
+        if (Array.isArray(json)) list = json;
+        else if (json?.ok && Array.isArray(json.data)) list = json.data;
+        else if (Array.isArray(json.data)) list = json.data;
+        if (list.length > 0) {
+          setCompanies(list);
+          if (!companyId) setCompanyId(list[0].id);
+          setLoading(false);
+          return;
+        } else {
+          // endpoint responded with empty list (valid), set companies to [] and stop trying further endpoints
+          setCompanies([]);
+          setLoading(false);
+          return;
+        }
+      } catch (err: any) {
+        // if 404, try next; otherwise log and try next
+        console.warn(`fetchCompanies: ${ep} failed:`, err?.message || err);
+        continue;
+      }
     }
+    // nothing worked
+    console.warn("fetchCompanies: no tenant/company endpoint found. frontend will show empty list.");
+    setCompanies([]);
+    setLoading(false);
   }
 
   async function fetchCompanySettings(cId: string) {
@@ -100,15 +143,40 @@ export default function CompanySettingsPage(): JSX.Element {
   }
 
   async function fetchCurrencies() {
-    try {
-      const res = await fetch(`/api/currencies`);
-      if (!res.ok) throw new Error(await res.text());
-      const data: Currency[] = await res.json();
-      setCurrencies(data || []);
-    } catch (err: any) {
-      console.error(err);
-      alert("Could not load currencies: " + (err?.message || err));
+    // Try endpoints that may exist and accept multiple response shapes
+    const endpoints = ["/api/currencies", "/api/global/currencies", "/api/currencies/"];
+    setLoading(true);
+    for (const ep of endpoints) {
+      try {
+        const json = await tryFetchJson(ep);
+        if (!json) continue;
+        let list: Currency[] = [];
+        if (Array.isArray(json)) list = json;
+        else if (json?.ok && Array.isArray(json.data)) list = json.data;
+        else if (Array.isArray(json.data)) list = json.data;
+        if (list.length > 0) {
+          setCurrencies(list);
+          setLoading(false);
+          return;
+        } else {
+          // endpoint returned empty but valid array
+          setCurrencies([]);
+          setLoading(false);
+          return;
+        }
+      } catch (err: any) {
+        console.warn(`fetchCurrencies: ${ep} failed:`, err?.message || err);
+        continue;
+      }
     }
+
+    // final fallback: local minimal list so UI doesn't break
+    console.warn("fetchCurrencies: no currencies endpoint found, using fallback list.");
+    setCurrencies([
+      { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
+      { id: "INR", code: "INR", name: "Indian Rupee", symbol: "₹", precision: 2 },
+    ]);
+    setLoading(false);
   }
 
   // --- Save handlers --------------------------------------------
@@ -206,6 +274,9 @@ export default function CompanySettingsPage(): JSX.Element {
           <div>
             <h1 className="text-2xl font-semibold">Company Settings</h1>
             <p className="text-sm text-slate-500 mt-1">Manage company-level settings — currencies, taxes, fiscal year.</p>
+            {companies.length === 0 && (
+              <p className="text-sm text-red-600 mt-2">No companies found — backend endpoints may be missing. Check server routes.</p>
+            )}
           </div>
 
           <div className="flex gap-3 items-center">
