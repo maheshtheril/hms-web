@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 type Company = { id: string; name: string };
 type CompanySettings = {
@@ -35,9 +35,22 @@ export default function CompanySettingsPage(): JSX.Element {
   const [taxForm, setTaxForm] = useState<Partial<Tax> | null>(null);
   const [editingTaxId, setEditingTaxId] = useState<string | null>(null);
 
+  // keep refs to abort controllers so we can cancel outstanding requests on unmount
+  const controllers = useRef<Set<AbortController>>(new Set());
+
   useEffect(() => {
+    // load base data on mount
     fetchCompanies();
     fetchCurrencies();
+    // cleanup on unmount: abort outstanding requests
+    return () => {
+      controllers.current.forEach((c) => {
+        try {
+          c.abort();
+        } catch {}
+      });
+      controllers.current.clear();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -53,7 +66,7 @@ export default function CompanySettingsPage(): JSX.Element {
   }, [companyId]);
 
   // --- Helpers -------------------------------------------------
-  async function tryFetchJson(url: string, opts?: RequestInit) {
+  async function tryFetchJson(url: string, opts?: RequestInit & { signal?: AbortSignal }) {
     const defaults: RequestInit = { credentials: "include", headers: { Accept: "application/json" } };
     const merged = Object.assign({}, defaults, opts || {});
     try {
@@ -65,7 +78,6 @@ export default function CompanySettingsPage(): JSX.Element {
         e.status = res.status;
         throw e;
       }
-      // try parse JSON, allow empty body
       const text = await res.text().catch(() => "");
       if (!text) return null;
       try {
@@ -73,120 +85,182 @@ export default function CompanySettingsPage(): JSX.Element {
       } catch {
         return text;
       }
-    } catch (err) {
+    } catch (err: any) {
+      // rethrow so callers can decide to continue to next endpoint
       throw err;
     }
   }
 
-  // --- Fetchers -------------------------------------------------
-  async function fetchCompanies() {
-    // Prefer canonical endpoints; include tenant/admin variants as fallback
-    const endpoints = ["/api/tenant/companies", "/api/admin/companies", "/api/companies"];
-    setLoading(true);
+  // helper to try multiple endpoints with shared options (supports signal)
+  async function fetchWithVariants<T = any>(endpoints: string[], opts?: RequestInit & { signal?: AbortSignal }) {
     for (const ep of endpoints) {
       try {
-        const json = await tryFetchJson(ep);
-        let list: Company[] = [];
+        const json = await tryFetchJson(ep, opts);
         if (!json) continue;
-        if (Array.isArray(json)) list = json;
-        else if (json?.ok && Array.isArray(json.data)) list = json.data;
-        else if (Array.isArray(json.data)) list = json.data;
-        if (list.length > 0) {
-          setCompanies(list);
-          if (!companyId) setCompanyId(list[0].id);
-          setLoading(false);
-          return;
-        } else {
-          setCompanies([]);
-          setLoading(false);
-          return;
-        }
+        return { json, url: ep } as { json: T; url: string };
       } catch (err: any) {
-        // try next endpoint on error (404/403 may happen depending on auth)
-        console.warn(`fetchCompanies: ${ep} failed:`, err?.message || err);
+        // try next endpoint (log for debugging)
+        // Ignore abort errors so they bubble to caller
+        if (err?.name === "AbortError") throw err;
+        console.warn(`fetchWithVariants: ${ep} failed:`, err?.message ?? err);
         continue;
       }
     }
-    console.warn("fetchCompanies: no tenant/company endpoint found. frontend will show empty list.");
-    setCompanies([]);
-    setLoading(false);
+    return null;
+  }
+
+  // small utility to create & track AbortController for each request
+  function createController() {
+    const c = new AbortController();
+    controllers.current.add(c);
+    return c;
+  }
+
+  // --- Fetchers -------------------------------------------------
+  async function fetchCompanies() {
+    const endpoints = [
+      "/api/tenant/companies",
+      "/tenant/companies",
+      "/api/admin/companies",
+      "/api/companies",
+      "/companies",
+    ];
+    setLoading(true);
+    const controller = createController();
+    try {
+      const found = await fetchWithVariants(endpoints, { signal: controller.signal });
+      if (!found) {
+        console.warn("fetchCompanies: no tenant/company endpoint found.");
+        setCompanies([]);
+        return;
+      }
+
+      const data = found.json;
+      let list: Company[] = [];
+      if (Array.isArray(data)) list = data;
+      else if (data?.ok && Array.isArray(data.data)) list = data.data;
+      else if (Array.isArray(data.data)) list = data.data;
+      else if (Array.isArray((data as any)?.companies)) list = (data as any).companies;
+      else if (Array.isArray((data as any).items)) list = (data as any).items;
+
+      if (!Array.isArray(list)) list = [];
+
+      setCompanies(list);
+
+      // Only auto-select if no selection exists AND there is exactly one company.
+      // If caller or routing already set companyId, respect it.
+      if (!companyId && list.length === 1) {
+        setCompanyId(list[0].id);
+      }
+      console.info("Companies fetched via:", found.url);
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        // aborted; ignore
+        return;
+      }
+      console.error("fetchCompanies failed:", err);
+      setCompanies([]);
+    } finally {
+      setLoading(false);
+      controllers.current.delete(controller);
+    }
   }
 
   async function fetchCompanySettings(cId: string) {
     if (!cId) return;
+    const controller = createController();
     try {
       setLoading(true);
-      // canonical endpoint
-      const resJson = await tryFetchJson(`/api/global/company-settings?companyId=${encodeURIComponent(cId)}`, {
-        method: "GET",
-      });
-      // normalize: either object or { data: {...} }
+      // prefer canonical /api/global/company-settings but try a fallback as well
+      const endpoints = [
+        `/api/global/company-settings?companyId=${encodeURIComponent(cId)}`,
+        `/api/company-settings?companyId=${encodeURIComponent(cId)}`,
+        `/api/company-settings/${encodeURIComponent(cId)}`,
+      ];
+      const found = await fetchWithVariants(endpoints, { signal: controller.signal });
+      const resJson = found?.json ?? null;
       const data = (resJson && (resJson.data ?? resJson)) || null;
       setSettings(data || { company_id: cId });
+      if (found) console.info("Company settings fetched via:", found.url);
     } catch (err: any) {
-      console.error(err);
+      if (err?.name === "AbortError") return;
+      console.error("fetchCompanySettings failed:", err);
       alert("Could not load company settings: " + (err?.message || err));
     } finally {
       setLoading(false);
+      controllers.current.delete(controller);
     }
   }
 
   async function fetchTaxes(cId: string) {
-    if (!cId) return setTaxes([]);
+    if (!cId) {
+      setTaxes([]);
+      return;
+    }
+    const controller = createController();
     try {
       setLoading(true);
-      // canonical company taxes endpoint
-      const resJson = await tryFetchJson(`/api/global/company-taxes?companyId=${encodeURIComponent(cId)}`, {
-        method: "GET",
-      });
+      const endpoints = [
+        `/api/global/company-taxes?companyId=${encodeURIComponent(cId)}`,
+        `/api/company-taxes?companyId=${encodeURIComponent(cId)}`,
+        `/api/company-taxes/${encodeURIComponent(cId)}`,
+      ];
+      const found = await fetchWithVariants(endpoints, { signal: controller.signal });
+      const resJson = found?.json ?? null;
       const data: Tax[] = (resJson && (resJson.data ?? resJson)) || [];
       setTaxes(Array.isArray(data) ? data : []);
+      if (found) console.info("Taxes fetched via:", found.url);
     } catch (err: any) {
-      console.error(err);
+      if (err?.name === "AbortError") return;
+      console.error("fetchTaxes failed:", err);
       alert("Could not load taxes: " + (err?.message || err));
     } finally {
       setLoading(false);
+      controllers.current.delete(controller);
     }
   }
 
   async function fetchCurrencies() {
-    // Prefer global canonical endpoint first
-    const endpoints = ["/api/global/currencies", "/api/currencies", "/api/currencies/"];
+    const endpoints = ["/api/global/currencies", "/api/currencies", "/api/currencies/", "/currencies"];
     setLoading(true);
-    for (const ep of endpoints) {
-      try {
-        const json = await tryFetchJson(ep);
-        if (!json) continue;
-        let list: Currency[] = [];
-        if (Array.isArray(json)) list = json;
-        else if (json?.ok && Array.isArray(json.data)) list = json.data;
-        else if (Array.isArray(json.data)) list = json.data;
-        if (list.length > 0) {
-          setCurrencies(list);
-          setLoading(false);
-          return;
-        } else {
-          setCurrencies([]);
-          setLoading(false);
-          return;
-        }
-      } catch (err: any) {
-        console.warn(`fetchCurrencies: ${ep} failed:`, err?.message || err);
-        continue;
+    const controller = createController();
+    try {
+      const found = await fetchWithVariants(endpoints, { signal: controller.signal });
+      if (!found) {
+        console.warn("fetchCurrencies: no currencies endpoint found, using fallback list.");
+        setCurrencies([
+          { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
+          { id: "INR", code: "INR", name: "Indian Rupee", symbol: "₹", precision: 2 },
+        ]);
+        return;
       }
-    }
 
-    console.warn("fetchCurrencies: no currencies endpoint found, using fallback list.");
-    setCurrencies([
-      { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
-      { id: "INR", code: "INR", name: "Indian Rupee", symbol: "₹", precision: 2 },
-    ]);
-    setLoading(false);
+      const json = found.json;
+      let list: Currency[] = [];
+      if (Array.isArray(json)) list = json;
+      else if (json?.ok && Array.isArray(json.data)) list = json.data;
+      else if (Array.isArray(json.data)) list = json.data;
+      if (!Array.isArray(list)) list = [];
+
+      setCurrencies(list);
+      console.info("Currencies fetched via:", found.url);
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      console.error("fetchCurrencies failed:", err);
+      setCurrencies([
+        { id: "USD", code: "USD", name: "US Dollar", symbol: "$", precision: 2 },
+        { id: "INR", code: "INR", name: "Indian Rupee", symbol: "₹", precision: 2 },
+      ]);
+    } finally {
+      setLoading(false);
+      controllers.current.delete(controller);
+    }
   }
 
   // --- Save handlers --------------------------------------------
   async function saveSettings(payload: CompanySettings) {
     if (!payload?.company_id) return alert("Missing company id");
+    const controller = createController();
     try {
       setLoading(true);
       // use canonical PUT endpoint and include credentials
@@ -194,20 +268,24 @@ export default function CompanySettingsPage(): JSX.Element {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       const data = (resJson && (resJson.data ?? resJson)) || null;
       setSettings(data || payload);
       alert("Settings saved");
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error(err);
       alert("Could not save settings: " + (err?.message || err));
     } finally {
       setLoading(false);
+      controllers.current.delete(controller);
     }
   }
 
   async function createOrUpdateTax(payload: Partial<Tax>) {
     if (!companyId) return alert("Select a company first");
+    const controller = createController();
     try {
       setLoading(true);
       if (editingTaxId) {
@@ -215,42 +293,49 @@ export default function CompanySettingsPage(): JSX.Element {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         });
         const updated = (updatedJson && (updatedJson.data ?? updatedJson)) || updatedJson;
-        setTaxes((s) => s.map((t) => (t.id === updated.id ? updated : t)));
+        setTaxes((s) => s.map((t) => (t.id === (updated?.id ?? editingTaxId) ? updated : t)));
         alert("Tax updated");
       } else {
         const createdJson = await tryFetchJson(`/api/global/company-taxes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...(payload || {}), company_id: companyId }),
+          signal: controller.signal,
         });
         const created = (createdJson && (createdJson.data ?? createdJson)) || createdJson;
-        setTaxes((s) => [created, ...s]);
+        if (created) setTaxes((s) => [created, ...s]);
         alert("Tax created");
       }
       setTaxForm(null);
       setEditingTaxId(null);
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error(err);
       alert("Could not save tax: " + (err?.message || err));
     } finally {
       setLoading(false);
+      controllers.current.delete(controller);
     }
   }
 
   async function deleteTax(id: string) {
     if (!window.confirm("Delete this tax?")) return;
+    const controller = createController();
     try {
       setLoading(true);
-      await tryFetchJson(`/api/global/company-taxes/${id}`, { method: "DELETE" });
+      await tryFetchJson(`/api/global/company-taxes/${id}`, { method: "DELETE", signal: controller.signal });
       setTaxes((s) => s.filter((t) => t.id !== id));
       alert("Deleted");
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error(err);
       alert("Could not delete tax: " + (err?.message || err));
     } finally {
       setLoading(false);
+      controllers.current.delete(controller);
     }
   }
 
