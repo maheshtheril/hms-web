@@ -119,7 +119,7 @@ export default function CompanySettingsPage(): JSX.Element {
   // --- Fetchers -------------------------------------------------
   async function fetchCompanies() {
     const endpoints = [
-      "/api/tenant/companies",
+      "/admin/companies",
       "/tenant/companies",
       "/api/admin/companies",
       "/api/companies",
