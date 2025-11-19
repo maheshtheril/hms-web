@@ -61,88 +61,84 @@ const SECTIONS: Section[] = [
     ],
   },
 
-
-{
-  id: "leads",
-  label: "Leads",
-  icon: (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path d="M3 7v6a2 2 0 0 0 2 2h3l4 3 4-3h3a2 2 0 0 0 2-2V7" />
-      <path d="M12 3v8" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="11" r="2" />
-    </svg>
-  ),
-  items: [
-    {
-      label: "Overview",
-      children: [
-        { label: "All Leads", href: "/leads", keywords: ["list", "pipeline", "contacts"] },
-        { label: "Create Lead", href: "/leads/new", keywords: ["add", "new", "create"] },
-        { label: "My Leads", href: "/leads/my", keywords: ["assigned", "mine"] },
-      ],
-    },
-    {
-      label: "Pipelines & Stages",
-      children: [
-        { label: "Pipelines", href: "/leads/pipelines", keywords: ["funnels", "flows"] },
-        { label: "Stages", href: "/leads/stages", keywords: ["columns", "steps"] },
-        { label: "Pipeline Templates", href: "/leads/pipeline-templates", keywords: ["templates", "defaults"] },
-      ],
-    },
-    {
-      label: "Lead Data",
-      children: [
-        { label: "Sources", href: "/leads/sources", keywords: ["origin", "channel"] },
-        { label: "Tags", href: "/leads/tags", keywords: ["labels", "categorize"] },
-        { label: "Custom Fields", href: "/leads/custom-fields", keywords: ["schema", "fields"] },
-      ],
-    },
-    {
-      label: "Activity",
-      children: [
-        { label: "Notes", href: "/leads/notes", keywords: ["comments", "internal"] },
-        { label: "Tasks", href: "/leads/tasks", keywords: ["todos", "assignments"] },
-        { label: "Follow-ups", href: "/leads/followups", keywords: ["callbacks", "reminders"] },
-        { label: "Timeline", href: "/leads/timeline", keywords: ["history", "activity"] },
-      ],
-    },
-    {
-      label: "Assignments",
-      keywords: ["routing", "rules", "auto"],
-      children: [
-        { label: "Assignment Rules", href: "/leads/assignment-rules", keywords: ["auto-assign", "round-robin"] },
-        { label: "Assignment History", href: "/leads/assignment-history", keywords: ["audit", "changes"] },
-        { label: "Duplicates", href: "/leads/duplicates", keywords: ["merge", "find duplicates"] },
-      ],
-    },
-    {
-      label: "Templates",
-      children: [
-        { label: "Lead Templates", href: "/leads/templates", keywords: ["email", "scenarios"] },
-        { label: "Pipeline Templates", href: "/leads/template-pipelines", keywords: ["onboarding", "defaults"] },
-      ],
-    },
-    {
-      label: "Analytics",
-      children: [
-        { label: "Conversion Funnel", href: "/leads/analytics/funnel", keywords: ["conversion", "metrics"] },
-        { label: "Lead Sources Report", href: "/leads/analytics/sources", keywords: ["roi", "channels"] },
-        { label: "Forecast & Velocity", href: "/leads/analytics/forecast", keywords: ["forecast", "velocity"] },
-      ],
-    },
-    {
-      label: "Settings",
-      children: [
-        { label: "Lead Settings", href: "/leads/settings", keywords: ["preferences", "defaults"] },
-        { label: "Import / Export", href: "/leads/import-export", keywords: ["csv", "bulk"] },
-        { label: "Permissions", href: "/leads/settings/permissions", keywords: ["access", "roles"] },
-      ],
-    },
-  ],
-},
-
-
-
+  {
+    id: "leads",
+    label: "Leads",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <path d="M3 7v6a2 2 0 0 0 2 2h3l4 3 4-3h3a2 2 0 0 0 2-2V7" />
+        <path d="M12 3v8" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="12" cy="11" r="2" />
+      </svg>
+    ),
+    items: [
+      {
+        label: "Overview",
+        children: [
+          { label: "All Leads", href: "/leads", keywords: ["list", "pipeline", "contacts"] },
+          { label: "Create Lead", href: "/leads/new", keywords: ["add", "new", "create"] },
+          { label: "My Leads", href: "/leads/my", keywords: ["assigned", "mine"] },
+        ],
+      },
+      {
+        label: "Pipelines & Stages",
+        children: [
+          { label: "Pipelines", href: "/leads/pipelines", keywords: ["funnels", "flows"] },
+          { label: "Stages", href: "/leads/stages", keywords: ["columns", "steps"] },
+          { label: "Pipeline Templates", href: "/leads/pipeline-templates", keywords: ["templates", "defaults"] },
+        ],
+      },
+      {
+        label: "Lead Data",
+        children: [
+          { label: "Sources", href: "/leads/sources", keywords: ["origin", "channel"] },
+          { label: "Tags", href: "/leads/tags", keywords: ["labels", "categorize"] },
+          { label: "Custom Fields", href: "/leads/custom-fields", keywords: ["schema", "fields"] },
+        ],
+      },
+      {
+        label: "Activity",
+        children: [
+          { label: "Notes", href: "/leads/notes", keywords: ["comments", "internal"] },
+          { label: "Tasks", href: "/leads/tasks", keywords: ["todos", "assignments"] },
+          { label: "Follow-ups", href: "/leads/followups", keywords: ["callbacks", "reminders"] },
+          { label: "Timeline", href: "/leads/timeline", keywords: ["history", "activity"] },
+        ],
+      },
+      {
+        label: "Assignments",
+        keywords: ["routing", "rules", "auto"],
+        children: [
+          { label: "Assignment Rules", href: "/leads/assignment-rules", keywords: ["auto-assign", "round-robin"] },
+          { label: "Assignment History", href: "/leads/assignment-history", keywords: ["audit", "changes"] },
+          { label: "Duplicates", href: "/leads/duplicates", keywords: ["merge", "find duplicates"] },
+        ],
+      },
+      {
+        label: "Templates",
+        children: [
+          { label: "Lead Templates", href: "/leads/templates", keywords: ["email", "scenarios"] },
+          { label: "Pipeline Templates", href: "/leads/template-pipelines", keywords: ["onboarding", "defaults"] },
+        ],
+      },
+      {
+        label: "Analytics",
+        children: [
+          { label: "Conversion Funnel", href: "/leads/analytics/funnel", keywords: ["conversion", "metrics"] },
+          { label: "Lead Sources Report", href: "/leads/analytics/sources", keywords: ["roi", "channels"] },
+          { label: "Forecast & Velocity", href: "/leads/analytics/forecast", keywords: ["forecast", "velocity"] },
+        ],
+      },
+      {
+        label: "Settings",
+        children: [
+          { label: "Lead Settings", href: "/leads/settings", keywords: ["preferences", "defaults"] },
+          { label: "Import / Export", href: "/leads/import-export", keywords: ["csv", "bulk"] },
+          { label: "Permissions", href: "/leads/settings/permissions", keywords: ["access", "roles"] },
+        ],
+      },
+    ],
+  },
 
   {
     id: "admin",
@@ -182,8 +178,8 @@ const SECTIONS: Section[] = [
           { label: "Billing", href: "/dashboard/settings/billing" },
           { label: "Teams", href: "/dashboard/settings/teams" },
         ],
-         },
-            {
+      },
+      {
         label: "Leads (Master Data)",
         children: [
           { label: "Sources", href: "/dashboard/settings/leads/sources", keywords: ["source", "origin", "channel", "referral", "campaign"] },
@@ -198,9 +194,7 @@ const SECTIONS: Section[] = [
           { label: "Duplicate Rules", href: "/dashboard/settings/leads/duplicates", keywords: ["dedupe", "merge", "duplicate"] },
           { label: "Import / Field Mapping", href: "/dashboard/settings/leads/import", keywords: ["csv", "import", "mapping"] },
           { label: "Export / Retention", href: "/dashboard/settings/leads/export", keywords: ["export", "retention", "privacy"] },
-          { label: "AI Actions & Audit", href: "/dashboard/settings/leads/ai-actions", keywords: ["ai", "audit", "logs"] }
-        
-      
+          { label: "AI Actions & Audit", href: "/dashboard/settings/leads/ai-actions", keywords: ["ai", "audit", "logs"] },
         ],
       },
     ],
@@ -547,18 +541,17 @@ export default function Sidebar() {
     // - explicit permissions like 'hms.access' or 'hms.*'
     // - tenant-level module flag: tenantModulesSet includes 'hms'
     // - role-based tokens 'hms_user' or 'hms_admin'
-       // Always show HMS section in the sidebar (no DB migration / tenant module required)
-    // NOTE: this only changes UI visibility — backend must still enforce RBAC for API access.
+    // Always show HMS section in the sidebar (no DB migration / tenant module required)
     if (!filtered.some((s) => s.id === "hms")) {
       filtered.push(HMS_SECTION);
     }
-
 
     return filtered;
   }, [loading, isPlatformAdmin, isTenantAdmin, isAdmin, rolesSet, permsSet, tenantModulesSet]);
 
   // Sidebar state
-  const [pinnedSidebar, setPinnedSidebar] = useState(false);
+  // default to expanded (full)
+  const [pinnedSidebar, setPinnedSidebar] = useState(true);
   const [hoveringAside, setHoveringAside] = useState(false);
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
   const [openChildMap, setOpenChildMap] = useState<Record<string, boolean>>({});
@@ -567,10 +560,6 @@ export default function Sidebar() {
   const [pinnedSections, setPinnedSections] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recents, setRecents] = useState<string[]>([]);
-
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIdx, setActiveIdx] = useState(0);
 
   const asideRef = useRef<HTMLDivElement | null>(null);
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -648,21 +637,6 @@ export default function Sidebar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, sections]);
 
-  // Cmd/Ctrl-K
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const isCmdK = (e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "k";
-      if (isCmdK) {
-        e.preventDefault();
-        setPaletteOpen((s) => !s);
-        setQuery("");
-        setActiveIdx(0);
-      } else if (e.key === "Escape") setPaletteOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   // Flyout (collapsed)
   function handleParentHover(id: string) {
     if (isExpanded) return;
@@ -689,79 +663,6 @@ export default function Sidebar() {
     setFavorites((arr) => (arr.includes(href) ? arr.filter((x) => x !== href) : [...arr, href]));
   }
 
-  // Flatten (filtered sections) for palette
-  const FLAT = useMemo(() => {
-    const out: Array<{ sectionId: string; section: string; label: string; href: string; badge?: string; keywords?: string[] }> = [];
-    for (const s of sections) {
-      for (const it of s.items) {
-        if (it.href)
-          out.push({
-            sectionId: s.id,
-            section: s.label,
-            label: it.label,
-            href: it.href,
-            badge: it.badge,
-            keywords: it.keywords,
-          });
-        if (it.children) {
-          for (const ch of it.children) {
-            if (ch.href && !ch.header) {
-              out.push({
-                sectionId: s.id,
-                section: `${s.label} › ${it.label}`,
-                label: ch.label,
-                href: ch.href,
-                badge: ch.badge,
-                keywords: ch.keywords,
-              });
-            }
-          }
-        }
-      }
-    }
-    return out;
-  }, [sections]);
-
-  const results = useMemo(() => {
-    if (!query.trim()) {
-      const favItems = FLAT.filter((x) => favorites.includes(x.href));
-      const recentItems = recents.map((href) => FLAT.find((x) => x.href === href)).filter(notNil);
-      const seen = new Set(favItems.map((x) => x.href));
-      const rec = recentItems.filter((x) => !seen.has(x.href));
-      return [...favItems, ...rec].slice(0, 30);
-    }
-    const q = query.trim();
-    const scored = FLAT.map((x) => {
-      const base = `${x.section} ${x.label} ${x.href} ${(x.keywords || []).join(" ")}`;
-      return { item: x, score: Math.max(fuzzyScore(q, base), fuzzyScore(q, x.label), fuzzyScore(q, x.section)) };
-    })
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((r) => r.item);
-    return scored.slice(0, 50);
-  }, [query, FLAT, favorites, recents]);
-
-  const onPaletteKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!paletteOpen) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.min(i + 1, Math.max(0, results.length - 1)));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const choice = results[activeIdx];
-      if (choice) {
-        setRecents((r) => [choice.href, ...r.filter((p) => p !== choice.href)].slice(0, 20));
-        const anchor = document.querySelector<HTMLAnchorElement>(`a[data-href="${choice.href}"]`);
-        anchor?.click();
-        setPaletteOpen(false);
-        setQuery("");
-      }
-    } else if (e.key === "Escape") setPaletteOpen(false);
-  };
-
   // Loading skeleton
   if (loading) {
     return (
@@ -771,59 +672,9 @@ export default function Sidebar() {
     );
   }
 
-  // Render sidebar (UI preserved from your original file)
+  // Render sidebar (UI preserved from your original file) — search removed, default full
   return (
     <>
-      {/* Command Palette */}
-      {paletteOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm" onClick={() => setPaletteOpen(false)} aria-hidden>
-          <div className="mx-auto mt-24 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Command palette">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
-              <svg className="h-4 w-4 text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setActiveIdx(0); }} onKeyDown={onPaletteKeyDown} placeholder="Search CRM or Admin menus…" className="flex-1 bg-transparent outline-none text-sm placeholder:text-white/40" aria-label="Search menus" />
-              <div className="text-[10px] text-white/40 hidden sm:block">Esc</div>
-            </div>
-            <ul className="max-h-[50vh] overflow-y-auto p-2">
-              {results.length === 0 && <li className="px-3 py-6 text-center text-sm text-white/50">No matches. Try a different keyword.</li>}
-              {results.map((r, idx) => {
-                const active = idx === activeIdx;
-                return (
-                  <li key={`palette::${r.href}::${idx}`} className={`rounded-xl ${active ? "bg-white/10" : "hover:bg-white/5"}`} onMouseEnter={() => setActiveIdx(idx)}>
-                    <Link href={r.href} data-href={r.href} className="flex items-center gap-3 px-3 py-2 text-sm" onClick={() => { setRecents((arr) => [r.href, ...arr.filter((x) => x !== r.href)].slice(0, 20)); setPaletteOpen(false); setQuery(""); }}>
-                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10">
-                        <span className="h-1.5 w-1.5 rounded-sm bg-white/70" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="truncate">{highlight(r.label, query)} <span className="text-white/40">·</span> <span className="text-white/60">{highlight(r.section, query)}</span></div>
-                        <div className="text-[11px] text-white/40 truncate">{r.href}</div>
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="flex items-center justify-between px-4 py-2 border-t border-white/10 text-[11px] text-white/40">
-              <div className="hidden sm:flex items-center gap-3">
-                <span>Navigate:</span>
-                <kbd className="px-1.5 py-0.5 rounded border border-white/15">↑</kbd>
-                <kbd className="px-1.5 py-0.5 rounded border border-white/15">↓</kbd>
-                <span>Open:</span>
-                <kbd className="px-1.5 py-0.5 rounded border border-white/15">Enter</kbd>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:block">Open palette:</span>
-                <kbd className="px-1.5 py-0.5 rounded border border-white/15">Ctrl/⌘</kbd>
-                <kbd className="px-1.5 py-0.5 rounded border border-white/15">K</kbd>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sidebar body */}
       <aside ref={asideRef} onMouseEnter={() => setHoveringAside(true)} onMouseLeave={() => { setHoveringAside(false); setFlyout(null); }} className={`group/sidebar sticky top-0 z-40 h-screen shrink-0 bg-[radial-gradient(1200px_600px_at_-200px_-200px,rgba(255,255,255,0.06),transparent_60%)] bg-black text-white border-r border-white/10 ${isExpanded ? "w-72" : "w-16"} transition-[width] duration-200 ease-out`} aria-label="Primary navigation">
         <div className="relative h-full flex flex-col">
           {/* Header */}
@@ -836,17 +687,8 @@ export default function Sidebar() {
               </div>
             </button>
             <span className={`text-sm font-semibold tracking-wide ${textVisibility} transition-opacity`}>GeniusGrid</span>
-            <button type="button" onClick={() => { setPaletteOpen(true); setQuery(""); setActiveIdx(0); }} className={`ml-auto inline-flex items-center gap-2 rounded-lg border border-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/10 ${isExpanded ? "" : "hidden"}`} title="Search (Ctrl/⌘ + K)">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <span>Search…</span>
-              <span className="ml-2 hidden sm:flex items-center gap-1 text-[10px] text-white/40">
-                <kbd className="px-1 rounded border border-white/15">Ctrl/⌘</kbd>
-                <kbd className="px-1 rounded border border-white/15">K</kbd>
-              </span>
-            </button>
+            {/* Search removed — kept layout spacing */}
+            <div className="ml-auto" />
           </div>
 
           {/* Pinned sections */}
