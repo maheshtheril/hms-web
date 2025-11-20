@@ -2,9 +2,16 @@
 
 import React, { useEffect, useState } from "react";
 
-// Defensive Company Tax Admin + Preview Page
+// Company Tax Admin + Preview Page (corrected & build-safe)
 // Path: web/app/(settings)/taxes/page.tsx
-// Defensive: normalizes API responses so .map never crashes.
+// Uses backend routes:
+// - GET  /api/hms/companies
+// - GET  /api/global/tax-types
+// - GET  /api/global/tax-rates
+// - GET  /api/global/company-taxes?company_id=<id>
+// - POST /api/global/company-taxes
+// - PUT  /api/global/company-taxes/:id
+// - POST /api/companies/:companyId/taxes/resolve
 
 type Company = { id: string; name: string };
 type GlobalTaxType = { id: string; name: string; code?: string; description?: string };
@@ -25,17 +32,17 @@ type CompanyTaxMap = {
 
 type LineInput = { description: string; qty: number; unit_price: number };
 
-// normalize lots of possible server shapes into an array
+// Normalize many possible server response shapes into an array
 function ensureArray<T>(v: any): T[] {
   if (Array.isArray(v)) return v;
   if (!v) return [];
   if (v.data && Array.isArray(v.data)) return v.data;
   if (v.items && Array.isArray(v.items)) return v.items;
   if (v.results && Array.isArray(v.results)) return v.results;
-  // If server returned an object keyed by id -> convert to values
   if (typeof v === "object") {
-    // If it looks like a single record return single element
+    // Single entity shaped object -> return as single-element array
     if (v.id && (v.name || v.id)) return [v] as any;
+    // Object keyed by ids -> return its values
     return Object.values(v).filter(Boolean) as any[];
   }
   return [];
@@ -59,6 +66,7 @@ export default function Page() {
   const [previewResult, setPreviewResult] = useState<any | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
+  // Initial load
   useEffect(() => {
     (async () => {
       try {
@@ -78,10 +86,12 @@ export default function Page() {
         if (cs.length && !companyId) setCompanyId(cs[0].id);
 
         if (!ttRes.ok) throw new Error(`Failed loading tax types: ${await ttRes.text()}`);
-        setTaxTypes(ensureArray<GlobalTaxType>(await ttRes.json()));
+        const ttRaw = await ttRes.json();
+        setTaxTypes(ensureArray<GlobalTaxType>(ttRaw));
 
         if (!trRes.ok) throw new Error(`Failed loading tax rates: ${await trRes.text()}`);
-        setTaxRates(ensureArray<GlobalTaxRate>(await trRes.json()));
+        const trRaw = await trRes.json();
+        setTaxRates(ensureArray<GlobalTaxRate>(trRaw));
       } catch (err: any) {
         console.error("initial load error", err);
         setError(String(err?.message || err));
@@ -95,8 +105,12 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Load company-specific mappings when company changes
   useEffect(() => {
-    if (!companyId) { setCompanyTaxMaps([]); return; }
+    if (!companyId) {
+      setCompanyTaxMaps([]);
+      return;
+    }
     loadCompanyTaxMaps(companyId);
   }, [companyId]);
 
@@ -105,7 +119,10 @@ export default function Page() {
     setError(null);
     try {
       const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`);
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed loading company taxes: ${txt}`);
+      }
       const raw = await res.json();
       setCompanyTaxMaps(ensureArray<CompanyTaxMap>(raw));
     } catch (err: any) {
@@ -117,50 +134,92 @@ export default function Page() {
     }
   }
 
+  // Assign a global tax rate to a company
   async function assignTaxToCompany(taxRateId: string) {
     if (!companyId) { setError("Select a company"); return; }
     setError(null);
     try {
-      const rate = taxRates.find(r => r.id === taxRateId);
+      const rate = (Array.isArray(taxRates) ? taxRates : []).find(r => r.id === taxRateId);
       if (!rate) throw new Error("Invalid tax rate selected");
 
-      const body = { company_id: companyId, tax_type_id: rate.tax_type_id, tax_rate_id: rate.id, is_default: false, is_active: true };
-      const res = await fetch("/api/global/company-taxes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
+      const body = {
+        company_id: companyId,
+        tax_type_id: rate.tax_type_id,
+        tax_rate_id: rate.id,
+        is_default: false,
+        is_active: true,
+      };
+
+      const res = await fetch("/api/global/company-taxes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Assign failed: ${txt}`);
+      }
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
-      console.error("assign error", err);
+      console.error("assignTaxToCompany error", err);
       setError(String(err?.message || err));
     }
   }
 
+  // Update mapping
   async function updateCompanyTaxMap(id: string, patch: Partial<CompanyTaxMap>) {
     if (!companyId) { setError("Select a company"); return; }
     setError(null);
     try {
-      const res = await fetch(`/api/global/company-taxes/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await fetch(`/api/global/company-taxes/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Update failed: ${txt}`);
+      }
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
-      console.error("update error", err);
+      console.error("updateCompanyTaxMap error", err);
       setError(String(err?.message || err));
     }
   }
 
-  async function disableCompanyTaxMap(id: string) { await updateCompanyTaxMap(id, { is_active: false }); }
+  async function disableCompanyTaxMap(id: string) {
+    await updateCompanyTaxMap(id, { is_active: false });
+  }
 
+  // Preview taxes via resolver
   async function previewTaxes() {
     if (!companyId) { setError("Select a company before previewing"); return; }
     setError(null);
     setPreviewLoading(true);
     setPreviewResult(null);
     try {
-      const payload = { tenantId: null, invoiceDate, billingCountryId, transactionType: "sale", lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })) };
-      const res = await fetch(`/api/companies/${companyId}/taxes/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(await res.text());
-      setPreviewResult(await res.json());
+      const payload = {
+        tenantId: null,
+        invoiceDate,
+        billingCountryId,
+        transactionType: "sale",
+        lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })),
+      };
+
+      const res = await fetch(`/api/companies/${companyId}/taxes/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Preview request failed: ${txt}`);
+      }
+      const json = await res.json();
+      setPreviewResult(json ?? null);
     } catch (err: any) {
-      console.error("preview error", err);
+      console.error("previewTaxes error", err);
       setError(String(err?.message || err));
       setPreviewResult(null);
     } finally {
@@ -168,10 +227,14 @@ export default function Page() {
     }
   }
 
-  function updateLine(i: number, patch: Partial<LineInput>) { setLines(s => s.map((ln, idx) => idx === i ? { ...ln, ...patch } : ln)); }
+  // Line helpers
+  function updateLine(i: number, patch: Partial<LineInput>) {
+    setLines(s => s.map((ln, idx) => (idx === i ? { ...ln, ...patch } : ln)));
+  }
   function addLine() { setLines(s => [...s, { description: "", qty: 1, unit_price: 0 }]); }
   function removeLine(i: number) { setLines(s => s.filter((_, idx) => idx !== i)); }
 
+  // Safe preview lines (normalized)
   const safePreviewLines: any[] = ensureArray(previewResult?.lines ?? previewResult?.data ?? previewResult?.items ?? previewResult);
 
   return (
@@ -188,7 +251,9 @@ export default function Page() {
               <label className="text-sm text-muted">Company</label>
               <select value={companyId ?? ""} onChange={e => setCompanyId(e.target.value || null)} className="mt-1 p-2 rounded-lg border w-full bg-white/30">
                 <option value="">-- select company --</option>
-                {(Array.isArray(companies) ? companies : []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {(Array.isArray(companies) ? companies : []).map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
               </select>
 
               <div className="mt-4">
@@ -207,9 +272,15 @@ export default function Page() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl bg-white/40">
                   <h3 className="font-medium mb-2">Assigned Taxes</h3>
-                  {loading ? <div>Loading…</div> : (
+
+                  {loading ? (
+                    <div>Loading…</div>
+                  ) : (
                     <div className="space-y-2">
-                      {(!Array.isArray(companyTaxMaps) || companyTaxMaps.length === 0) && <div className="text-sm text-muted">No taxes assigned to this company.</div>}
+                      {(!Array.isArray(companyTaxMaps) || companyTaxMaps.length === 0) && (
+                        <div className="text-sm text-muted">No taxes assigned to this company.</div>
+                      )}
+
                       {(Array.isArray(companyTaxMaps) ? companyTaxMaps : []).map(map => {
                         const rate = (Array.isArray(taxRates) ? taxRates : []).find(r => r.id === map.tax_rate_id);
                         const type = (Array.isArray(taxTypes) ? taxTypes : []).find(t => t.id === map.tax_type_id);
@@ -220,7 +291,9 @@ export default function Page() {
                               <div className="text-xs text-muted">Active: {String(map.is_active)}</div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <button onClick={() => updateCompanyTaxMap(map.id, { is_active: !map.is_active })} className={`px-2 py-1 rounded ${map.is_active ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>{map.is_active ? 'Active' : 'Disabled'}</button>
+                              <button onClick={() => updateCompanyTaxMap(map.id, { is_active: !map.is_active })} className={`px-2 py-1 rounded ${map.is_active ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
+                                {map.is_active ? 'Active' : 'Disabled'}
+                              </button>
                               <button onClick={() => disableCompanyTaxMap(map.id)} className="px-2 py-1 rounded bg-red-100 text-red-700">Disable</button>
                             </div>
                           </div>
@@ -233,6 +306,7 @@ export default function Page() {
                 <div className="p-4 rounded-xl bg-white/40">
                   <h3 className="font-medium mb-2">Assign Global Tax Rate</h3>
                   <div className="text-sm text-muted mb-2">Choose a tax rate (global) and assign it to the selected company.</div>
+
                   <div className="space-y-2 max-h-56 overflow-auto">
                     {(Array.isArray(taxRates) ? taxRates : []).map(tr => {
                       const tt = (Array.isArray(taxTypes) ? taxTypes : []).find(t => t.id === tr.tax_type_id);
@@ -241,10 +315,16 @@ export default function Page() {
                         <div key={tr.id} className="p-2 rounded-md bg-white/50 flex items-center justify-between">
                           <div>
                             <div className="font-medium">{tr.name}</div>
-                            <div className="text-xs text-muted">{tt?.name ?? tr.tax_type_id} · {tr.percentage ? `${tr.percentage}%` : tr.fixed_amount ? `${tr.fixed_amount} (fixed)` : ''}</div>
+                            <div className="text-xs text-muted">
+                              {tt?.name ?? tr.tax_type_id} · {tr.percentage ? `${tr.percentage}%` : tr.fixed_amount ? `${tr.fixed_amount} (fixed)` : ''}
+                            </div>
                           </div>
                           <div>
-                            {already ? <div className="text-xs text-muted">Assigned</div> : <button disabled={!companyId} onClick={() => assignTaxToCompany(tr.id)} className="px-2 py-1 rounded bg-indigo-600 text-white">Assign</button>}
+                            {already ? (
+                              <div className="text-xs text-muted">Assigned</div>
+                            ) : (
+                              <button disabled={!companyId} onClick={() => assignTaxToCompany(tr.id)} className="px-2 py-1 rounded bg-indigo-600 text-white">Assign</button>
+                            )}
                           </div>
                         </div>
                       );
@@ -260,17 +340,21 @@ export default function Page() {
                     <div className="text-sm text-muted">Invoice date</div>
                     <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="mt-1 p-2 rounded border w-full" />
                   </div>
+
                   <div>
                     <div className="text-sm text-muted">Billing country id</div>
                     <input value={billingCountryId ?? ""} onChange={e => setBillingCountryId(e.target.value || null)} className="mt-1 p-2 rounded border w-full" />
                   </div>
+
                   <div className="flex items-end">
-                    <button onClick={previewTaxes} disabled={!companyId || previewLoading} className="px-4 py-2 rounded-xl bg-green-600 text-white">{previewLoading ? 'Previewing…' : 'Preview taxes'}</button>
+                    <button onClick={previewTaxes} disabled={!companyId || previewLoading} className="px-4 py-2 rounded-xl bg-green-600 text-white">
+                      {previewLoading ? "Previewing…" : "Preview taxes"}
+                    </button>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  {lines.map((ln, idx) => (
+                  {(Array.isArray(lines) ? lines : []).map((ln, idx) => (
                     <div key={idx} className="flex gap-2 items-center">
                       <input value={ln.description} onChange={e => updateLine(idx, { description: e.target.value })} className="p-2 rounded border flex-1" placeholder="Description" />
                       <input value={ln.qty} onChange={e => updateLine(idx, { qty: Number(e.target.value) })} className="p-2 rounded border w-24" type="number" />
@@ -281,16 +365,16 @@ export default function Page() {
                   <div className="mt-2"><button onClick={addLine} className="px-3 py-1 rounded border">+ Add line</button></div>
                 </div>
               </div>
-
             </div>
           </div>
         </div>
 
         <div className="p-6 rounded-2xl bg-glass/60 backdrop-blur-md shadow-md">
           <h2 className="text-xl font-medium mb-3">Preview Result</h2>
+
           {!previewResult && <div className="text-sm text-muted">No preview yet — run a preview to see resolved taxes.</div>}
 
-          {safePreviewLines.length === 0 && previewResult && (
+          {previewResult && safePreviewLines.length === 0 && (
             <div className="text-sm text-muted">Preview returned no lines.</div>
           )}
 
@@ -299,38 +383,43 @@ export default function Page() {
               <div className="p-3 rounded bg-white/60">
                 <div className="text-sm text-muted">Totals</div>
                 <div className="mt-2 flex gap-6">
-                  <div>Subtotal: <strong>{previewResult?.invoice_totals?.subtotal ?? '—'}</strong></div>
-                  <div>Tax: <strong>{previewResult?.invoice_totals?.total_tax ?? '—'}</strong></div>
-                  <div>Total: <strong>{previewResult?.invoice_totals?.total ?? '—'}</strong></div>
+                  <div>Subtotal: <strong>{previewResult?.invoice_totals?.subtotal ?? "—"}</strong></div>
+                  <div>Tax: <strong>{previewResult?.invoice_totals?.total_tax ?? "—"}</strong></div>
+                  <div>Total: <strong>{previewResult?.invoice_totals?.total ?? "—"}</strong></div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                {safePreviewLines.map((ln: any, i: number) => (
-                  <div key={i} className="p-3 rounded bg-white/40 border">
-                    <div className="flex justify-between">
-                      <div className="font-medium">Line {i + 1} · {lines[i]?.description}</div>
-                      <div className="text-sm text-muted">Base: {ln.base_amount} · Tax: {ln.total_tax} · Total: {ln.total_amount}</div>
-                    </div>
+                {safePreviewLines.map((ln: any, i: number) => {
+                  const taxes = Array.isArray(ln.taxes) ? ln.taxes : [];
+                  return (
+                    <div key={i} className="p-3 rounded bg-white/40 border">
+                      <div className="flex justify-between">
+                        <div className="font-medium">Line {i + 1} · {lines[i]?.description}</div>
+                        <div className="text-sm text-muted">Base: {ln.base_amount} · Tax: {ln.total_tax} · Total: {ln.total_amount}</div>
+                      </div>
 
-                    <div className="mt-3 grid gap-2">
-                      {Array.isArray(ln.taxes) ? ln.taxes.map((t: any, ti: number) => (
-                        <div key={ti} className="p-2 rounded-md bg-white/30 flex justify-between">
-                          <div>
-                            <div className="text-sm font-medium">{t.tax_type_name ?? t.tax_type_id} {t.is_compound ? '(compound)' : ''}</div>
-                            <div className="text-xs text-muted">Rate: {t.rate}{t.is_percentage ? '%' : ' (fixed)'} · {t.notes ?? ''}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-medium">{Number(t.tax_amount || 0).toFixed(2)}</div>
-                            <div className="text-xs text-muted">Rounded: {Number(t.rounding_applied || 0).toFixed(4)}</div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-sm text-muted">No tax lines for this invoice line.</div>
-                      ))}
+                      <div className="mt-3 grid gap-2">
+                        {taxes.length > 0 ? (
+                          taxes.map((t: any, ti: number) => (
+                            <div key={ti} className="p-2 rounded-md bg-white/30 flex justify-between">
+                              <div>
+                                <div className="text-sm font-medium">{t.tax_type_name ?? t.tax_type_id} {t.is_compound ? "(compound)" : ""}</div>
+                                <div className="text-xs text-muted">Rate: {t.rate}{t.is_percentage ? "%" : " (fixed)"} · {t.notes ?? ""}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="font-medium">{Number(t.tax_amount || 0).toFixed(2)}</div>
+                                <div className="text-xs text-muted">Rounded: {Number(t.rounding_applied || 0).toFixed(4)}</div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-sm text-muted">No tax lines for this invoice line.</div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div>
