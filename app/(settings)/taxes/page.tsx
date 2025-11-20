@@ -132,11 +132,11 @@ export default function Page() {
   async function doFetch() {
     const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`, {
       credentials: "include",
-      headers: { "Accept": "application/json" },
+      headers: { "Content-Type": "application/json" },
     });
     const txt = await res.text().catch(() => "");
     let json: any = null;
-    try { json = txt ? JSON.parse(txt) : null; } catch { json = txt; }
+    try { json = txt ? JSON.parse(txt) :   null; } catch { json = txt; }
     return { res, json };
   }
 
