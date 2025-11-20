@@ -79,7 +79,7 @@ export default function Page() {
         setError(null);
 
         const [cRes, ttRes, trRes] = await Promise.all([
-          fetch("/api/hms/companies"),
+          fetch("/api/admin/companies"),
           fetch("/api/global/tax-types"),
           fetch("/api/global/tax-rates"),
         ]);
