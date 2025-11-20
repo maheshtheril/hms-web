@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 
 // Company Tax Admin + Preview Page (defensive)
 // Path: web/app/(settings)/taxes/page.tsx
-// Uses backend routes (adjust host paths as needed)
 
 // --- types ---
 type Company = { id: string; name: string };
@@ -58,26 +57,60 @@ function safeMap<T, U>(arr: any, name: string, fn: (item: T, i: number) => U): U
   return arr.map(fn as any);
 }
 
-// --- small API wrapper (always include credentials) ---
-async function apiFetch(input: RequestInfo, init?: RequestInit) {
+// --- centralised API helper with tenant retry ---
+async function apiFetch(input: RequestInfo, init: RequestInit = {}, opts?: { companyIdForSwitch?: string; allowRetry?: boolean }) {
+  // Always include credentials by default
   const baseInit: RequestInit = {
-    credentials: "include", // <-- critical: send cookies / tenant session
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(init && init.headers ? (init.headers as any) : {}),
+      ...(init.headers ?? {}),
     },
     ...init,
   };
 
-  const res = await fetch(input, baseInit);
-  const text = await res.text().catch(() => "");
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = text;
+  async function rawFetch() {
+    const res = await fetch(input, baseInit);
+    const txt = await res.text().catch(() => "");
+    let json: any = null;
+    try { json = txt ? JSON.parse(txt) : null; } catch { json = txt; }
+    return { res, txt, json };
   }
-  return { res, json, text };
+
+  let { res, txt, json } = await rawFetch();
+
+  // If backend asks for tenant context and we have a company id to set, try switching then retry once
+  if (!res.ok && json && json.error === "tenant_required" && opts?.allowRetry !== false && opts?.companyIdForSwitch) {
+    try {
+      const sw = await fetch("/api/switch-company", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company_id: opts.companyIdForSwitch }),
+      });
+      if (!sw.ok) {
+        const sTxt = await sw.text().catch(() => "");
+        throw new Error(`Switch failed: ${sw.status} ${sw.statusText} - ${sTxt}`);
+      }
+      // retry original
+      ({ res, txt, json } = await rawFetch());
+    } catch (e) {
+      // bubble up switch errors as Response-like
+      throw new Error(String(e));
+    }
+  }
+
+  // Not ok -> throw with body
+  if (!res.ok) {
+    const body = typeof json === "object" ? JSON.stringify(json) : txt;
+    const err = new Error(`${res.status} ${res.statusText} - ${body}`);
+    // attach parsed json if present for callers that inspect it
+    (err as any).json = json;
+    throw err;
+  }
+
+  // success
+  return { res, json, txt };
 }
 
 export default function Page() {
@@ -105,23 +138,18 @@ export default function Page() {
         setLoading(true);
         setError(null);
 
-        // include credentials on initial calls too
         const [cRes, ttRes, trRes] = await Promise.all([
-          apiFetch("/admin/companies"),
-          apiFetch("/global/tax-types"),
-          apiFetch("/global/tax-rates"),
+          apiFetch("/admin/companies", { method: "GET" }).catch(e => { throw new Error(`Failed loading companies: ${String(e)}`); }),
+          apiFetch("/global/tax-types", { method: "GET" }).catch(e => { throw new Error(`Failed loading tax types: ${String(e)}`); }),
+          apiFetch("/global/tax-rates", { method: "GET" }).catch(e => { throw new Error(`Failed loading tax rates: ${String(e)}`); }),
         ]);
 
-        if (!cRes.res.ok) throw new Error(`Failed loading companies: ${cRes.text || cRes.res.status}`);
-        const cs = ensureArray<Company>(cRes.json ?? []);
+        const cs = ensureArray<Company>(cRes.json ?? cRes);
         setCompanies(cs);
         if (cs.length && !companyId) setCompanyId(cs[0].id);
 
-        if (!ttRes.res.ok) throw new Error(`Failed loading tax types: ${ttRes.text || ttRes.res.status}`);
-        setTaxTypes(ensureArray<GlobalTaxType>(ttRes.json ?? []));
-
-        if (!trRes.res.ok) throw new Error(`Failed loading tax rates: ${trRes.text || trRes.res.status}`);
-        setTaxRates(ensureArray<GlobalTaxRate>(trRes.json ?? []));
+        setTaxTypes(ensureArray<GlobalTaxType>(ttRes.json ?? ttRes));
+        setTaxRates(ensureArray<GlobalTaxRate>(trRes.json ?? trRes));
       } catch (err: any) {
         console.error("initial load error", err);
         setError(String(err?.message || err));
@@ -149,41 +177,13 @@ export default function Page() {
     setLoading(true);
     setError(null);
 
-    async function doFetch() {
-      return await apiFetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`, {
-        method: "GET",
-      });
-    }
-
     try {
-      let { res, json } = await doFetch();
+      const { json } = await apiFetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`, {
+        method: "GET",
+      }, { companyIdForSwitch: cid, allowRetry: true });
 
-      // If server explicitly asks for tenant context, attempt to switch company tenant and retry once.
-      if (!res.ok && json && (json.error === "tenant_required" || json.error === "missing_tenant")) {
-        console.warn("[loadCompanyTaxMaps] tenant_required — attempting /api/switch-company then retry");
-
-        const sw = await apiFetch("/api/switch-company", {
-          method: "POST",
-          body: JSON.stringify({ company_id: cid }),
-        });
-
-        if (!sw.res.ok) {
-          const t = sw.text || JSON.stringify(sw.json) || sw.res.statusText;
-          throw new Error(`Switch failed: ${sw.res.status} ${sw.res.statusText} - ${t}`);
-        }
-
-        // retry once after switch
-        ({ res, json } = await doFetch());
-      }
-
-      if (!res.ok) {
-        console.error("[loadCompanyTaxMaps] non-2xx body:", json);
-        throw new Error(`Failed loading company taxes: ${res.status} ${res.statusText} - ${typeof json === "object" ? JSON.stringify(json) : json}`);
-      }
-
-      // normalize payload
-      const maps = Array.isArray(json) ? json : (json?.data ?? json?.items ?? []);
-      setCompanyTaxMaps(maps);
+      const list = Array.isArray(json) ? json : (json?.data ?? json?.items ?? []);
+      setCompanyTaxMaps(ensureArray<CompanyTaxMap>(list));
     } catch (err: any) {
       console.error("loadCompanyTaxMaps error", err);
       setError(String(err?.message || err));
@@ -209,14 +209,11 @@ export default function Page() {
         is_active: true,
       };
 
-      const res = await apiFetch("/api/global/company-taxes", {
+      await apiFetch("/api/global/company-taxes", {
         method: "POST",
         body: JSON.stringify(body),
-      });
-      if (!res.res.ok) {
-        const txt = res.text || JSON.stringify(res.json);
-        throw new Error(`Assign failed: ${txt}`);
-      }
+      }, { companyIdForSwitch: companyId, allowRetry: true });
+
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
       console.error("assignTaxToCompany error", err);
@@ -229,14 +226,11 @@ export default function Page() {
     if (!companyId) { setError("Select a company"); return; }
     setError(null);
     try {
-      const res = await apiFetch(`/api/global/company-taxes/${id}`, {
+      await apiFetch(`/api/global/company-taxes/${id}`, {
         method: "PUT",
         body: JSON.stringify(patch),
-      });
-      if (!res.res.ok) {
-        const txt = res.text || JSON.stringify(res.json);
-        throw new Error(`Update failed: ${txt}`);
-      }
+      }, { companyIdForSwitch: companyId, allowRetry: true });
+
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
       console.error("updateCompanyTaxMap error", err);
@@ -256,7 +250,6 @@ export default function Page() {
     setPreviewResult(null);
     try {
       const payload = {
-        // Leave tenantId null so server uses session tenant; otherwise provide companyId/tenant explicitly
         tenantId: null,
         invoiceDate,
         billingCountryId,
@@ -264,16 +257,11 @@ export default function Page() {
         lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })),
       };
 
-      const res = await apiFetch(`/api/companies/${companyId}/taxes/resolve`, {
+      const { json } = await apiFetch(`/api/companies/${companyId}/taxes/resolve`, {
         method: "POST",
         body: JSON.stringify(payload),
-      });
+      }, { companyIdForSwitch: companyId, allowRetry: true });
 
-      if (!res.res.ok) {
-        const txt = res.text || JSON.stringify(res.json);
-        throw new Error(`Preview request failed: ${txt}`);
-      }
-      const json = res.json;
       setPreviewResult(json ?? null);
     } catch (err: any) {
       console.error("previewTaxes error", err);
