@@ -131,7 +131,7 @@ export default function Page() {
 
   async function doFetch() {
     const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`, {
-      credentials: "include", // <-- important: send cookies
+      credentials: "include",
       headers: { "Accept": "application/json" },
     });
     const txt = await res.text().catch(() => "");
@@ -143,29 +143,22 @@ export default function Page() {
   try {
     let { res, json } = await doFetch();
 
-    if (!res.ok) {
-      // specific tenant_required handling -> try to switch and retry once
-      if (json && json.error === "tenant_required") {
-        console.warn("[loadCompanyTaxMaps] server asks for tenant context; attempting to switch tenant for company:", cid, json);
-        // attempt to set tenant via switch endpoint (server should set cookie/session)
-        try {
-          const sw = await fetch("/api/switch-company", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ company_id: cid }),
-          });
-          if (!sw.ok) {
-            const t = await sw.text().catch(() => "");
-            throw new Error(`Switch failed: ${sw.status} ${sw.statusText} - ${t}`);
-          }
-          // switch succeeded — retry the original fetch
-          ({ res, json } = await doFetch());
-        } catch (switchErr: any) {
-          console.error("[loadCompanyTaxMaps] switch-company failed", switchErr);
-          throw switchErr;
-        }
+    if (!res.ok && json && json.error === "tenant_required") {
+      console.warn("[loadCompanyTaxMaps] tenant_required — attempting /api/switch-company then retry");
+      // Attempt to set tenant context
+      const sw = await fetch("/api/switch-company", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company_id: cid }),
+      });
+      if (!sw.ok) {
+        const t = await sw.text().catch(() => "");
+        throw new Error(`Switch failed: ${sw.status} ${sw.statusText} - ${t}`);
       }
+
+      // retry original fetch
+      ({ res, json } = await doFetch());
     }
 
     if (!res.ok) {
@@ -173,8 +166,7 @@ export default function Page() {
       throw new Error(`Failed loading company taxes: ${res.status} ${res.statusText} - ${typeof json === "object" ? JSON.stringify(json) : json}`);
     }
 
-    const maps = ensureArray<CompanyTaxMap>(json);
-    setCompanyTaxMaps(maps);
+    setCompanyTaxMaps(Array.isArray(json) ? json : (json?.data ?? json?.items ?? []));
   } catch (err: any) {
     console.error("loadCompanyTaxMaps error", err);
     setError(String(err?.message || err));
@@ -183,6 +175,7 @@ export default function Page() {
     setLoading(false);
   }
 }
+
 
 
   // Assign a global tax rate to a company
