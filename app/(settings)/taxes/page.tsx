@@ -79,9 +79,9 @@ export default function Page() {
         setError(null);
 
         const [cRes, ttRes, trRes] = await Promise.all([
-          fetch("/api/admin/companies"),
-          fetch("/api/global/tax-types"),
-          fetch("/api/global/tax-rates"),
+          fetch("/admin/companies"),
+          fetch("/global/tax-types"),
+          fetch("/global/tax-rates"),
         ]);
 
         if (!cRes.ok) throw new Error(`Failed loading companies: ${await cRes.text()}`);
