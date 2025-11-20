@@ -82,7 +82,7 @@ export default function Page() {
   const [previewResult, setPreviewResult] = useState<any | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // load companies, tax types, tax rates (defensive)
+  // 'load companies, tax types, tax rates (defensive)
   useEffect(() => {
     (async () => {
       try {
