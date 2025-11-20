@@ -126,24 +126,64 @@ export default function Page() {
   }, [companyId]);
 
   async function loadCompanyTaxMaps(cid: string) {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`);
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Failed loading company taxes: ${txt}`);
-      }
-      const raw = await res.json();
-      setCompanyTaxMaps(ensureArray<CompanyTaxMap>(raw));
-    } catch (err: any) {
-      console.error("loadCompanyTaxMaps error", err);
-      setError(String(err?.message || err));
-      setCompanyTaxMaps([]);
-    } finally {
-      setLoading(false);
-    }
+  setLoading(true);
+  setError(null);
+
+  async function doFetch() {
+    const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`, {
+      credentials: "include", // <-- important: send cookies
+      headers: { "Accept": "application/json" },
+    });
+    const txt = await res.text().catch(() => "");
+    let json: any = null;
+    try { json = txt ? JSON.parse(txt) : null; } catch { json = txt; }
+    return { res, json };
   }
+
+  try {
+    let { res, json } = await doFetch();
+
+    if (!res.ok) {
+      // specific tenant_required handling -> try to switch and retry once
+      if (json && json.error === "tenant_required") {
+        console.warn("[loadCompanyTaxMaps] server asks for tenant context; attempting to switch tenant for company:", cid, json);
+        // attempt to set tenant via switch endpoint (server should set cookie/session)
+        try {
+          const sw = await fetch("/api/switch-company", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ company_id: cid }),
+          });
+          if (!sw.ok) {
+            const t = await sw.text().catch(() => "");
+            throw new Error(`Switch failed: ${sw.status} ${sw.statusText} - ${t}`);
+          }
+          // switch succeeded — retry the original fetch
+          ({ res, json } = await doFetch());
+        } catch (switchErr: any) {
+          console.error("[loadCompanyTaxMaps] switch-company failed", switchErr);
+          throw switchErr;
+        }
+      }
+    }
+
+    if (!res.ok) {
+      console.error("[loadCompanyTaxMaps] non-2xx body:", json);
+      throw new Error(`Failed loading company taxes: ${res.status} ${res.statusText} - ${typeof json === "object" ? JSON.stringify(json) : json}`);
+    }
+
+    const maps = ensureArray<CompanyTaxMap>(json);
+    setCompanyTaxMaps(maps);
+  } catch (err: any) {
+    console.error("loadCompanyTaxMaps error", err);
+    setError(String(err?.message || err));
+    setCompanyTaxMaps([]);
+  } finally {
+    setLoading(false);
+  }
+}
+
 
   // Assign a global tax rate to a company
   async function assignTaxToCompany(taxRateId: string) {
