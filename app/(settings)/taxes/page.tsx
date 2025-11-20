@@ -2,16 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 
-// Full Company Tax Admin + Preview Page (defensive, robust)
+// Defensive Company Tax Admin + Preview Page
 // Path: web/app/(settings)/taxes/page.tsx
-// Uses backend routes mounted in server/src/index.ts:
-// - GET  /api/hms/companies
-// - GET  /api/global/tax-types
-// - GET  /api/global/tax-rates
-// - GET  /api/global/company-taxes?company_id=<id>
-// - POST /api/global/company-taxes
-// - PUT  /api/global/company-taxes/:id
-// - POST /api/companies/:companyId/taxes/resolve
+// Defensive: normalizes API responses so .map never crashes.
 
 type Company = { id: string; name: string };
 type GlobalTaxType = { id: string; name: string; code?: string; description?: string };
@@ -32,22 +25,18 @@ type CompanyTaxMap = {
 
 type LineInput = { description: string; qty: number; unit_price: number };
 
-// Defensive helper: normalize many possible backend shapes into an array
+// normalize lots of possible server shapes into an array
 function ensureArray<T>(v: any): T[] {
   if (Array.isArray(v)) return v;
   if (!v) return [];
-  // Common wrappers
   if (v.data && Array.isArray(v.data)) return v.data;
   if (v.items && Array.isArray(v.items)) return v.items;
-  // Some APIs return { results: [...] }
   if (v.results && Array.isArray(v.results)) return v.results;
-  // If object keyed by ids -> convert to values
+  // If server returned an object keyed by id -> convert to values
   if (typeof v === "object") {
-    // If single entity object (has id), return as single-element array
-    if (v.id || v.name || v.length === undefined) {
-      // Avoid turning string into array
-      if (typeof v !== "string") return Object.values(v).filter(Boolean) as any[];
-    }
+    // If it looks like a single record return single element
+    if (v.id && (v.name || v.id)) return [v] as any;
+    return Object.values(v).filter(Boolean) as any[];
   }
   return [];
 }
@@ -70,7 +59,6 @@ export default function Page() {
   const [previewResult, setPreviewResult] = useState<any | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // load companies, tax types, tax rates (defensive)
   useEffect(() => {
     (async () => {
       try {
@@ -83,30 +71,19 @@ export default function Page() {
           fetch("/api/global/tax-rates"),
         ]);
 
-        if (!cRes.ok) {
-          const txt = await cRes.text();
-          throw new Error(`Failed loading companies: ${txt}`);
-        }
+        if (!cRes.ok) throw new Error(`Failed loading companies: ${await cRes.text()}`);
         const csRaw = await cRes.json();
         const cs = ensureArray<Company>(csRaw);
-        setCompanies(cs || []);
+        setCompanies(cs);
         if (cs.length && !companyId) setCompanyId(cs[0].id);
 
-        if (!ttRes.ok) {
-          const txt = await ttRes.text();
-          throw new Error(`Failed loading tax types: ${txt}`);
-        }
-        const ttRaw = await ttRes.json();
-        setTaxTypes(ensureArray<GlobalTaxType>(ttRaw));
+        if (!ttRes.ok) throw new Error(`Failed loading tax types: ${await ttRes.text()}`);
+        setTaxTypes(ensureArray<GlobalTaxType>(await ttRes.json()));
 
-        if (!trRes.ok) {
-          const txt = await trRes.text();
-          throw new Error(`Failed loading tax rates: ${txt}`);
-        }
-        const trRaw = await trRes.json();
-        setTaxRates(ensureArray<GlobalTaxRate>(trRaw));
+        if (!trRes.ok) throw new Error(`Failed loading tax rates: ${await trRes.text()}`);
+        setTaxRates(ensureArray<GlobalTaxRate>(await trRes.json()));
       } catch (err: any) {
-        console.error("load initial data error", err);
+        console.error("initial load error", err);
         setError(String(err?.message || err));
         setCompanies([]);
         setTaxTypes([]);
@@ -118,12 +95,8 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // load company tax maps when company changes
   useEffect(() => {
-    if (!companyId) {
-      setCompanyTaxMaps([]);
-      return;
-    }
+    if (!companyId) { setCompanyTaxMaps([]); return; }
     loadCompanyTaxMaps(companyId);
   }, [companyId]);
 
@@ -132,13 +105,9 @@ export default function Page() {
     setError(null);
     try {
       const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Failed loading company taxes: ${text}`);
-      }
+      if (!res.ok) throw new Error(await res.text());
       const raw = await res.json();
-      const arr = ensureArray<CompanyTaxMap>(raw);
-      setCompanyTaxMaps(arr);
+      setCompanyTaxMaps(ensureArray<CompanyTaxMap>(raw));
     } catch (err: any) {
       console.error("loadCompanyTaxMaps error", err);
       setError(String(err?.message || err));
@@ -148,102 +117,50 @@ export default function Page() {
     }
   }
 
-  // assign a tax to the selected company
   async function assignTaxToCompany(taxRateId: string) {
-    if (!companyId) {
-      setError("Select a company");
-      return;
-    }
+    if (!companyId) { setError("Select a company"); return; }
     setError(null);
     try {
       const rate = taxRates.find(r => r.id === taxRateId);
       if (!rate) throw new Error("Invalid tax rate selected");
 
-      const body = {
-        company_id: companyId,
-        tax_type_id: rate.tax_type_id,
-        tax_rate_id: rate.id,
-        is_default: false,
-        is_active: true,
-      };
-
-      const res = await fetch(`/api/global/company-taxes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Assign failed: ${txt}`);
-      }
+      const body = { company_id: companyId, tax_type_id: rate.tax_type_id, tax_rate_id: rate.id, is_default: false, is_active: true };
+      const res = await fetch("/api/global/company-taxes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(await res.text());
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
-      console.error("assignTaxToCompany error", err);
+      console.error("assign error", err);
       setError(String(err?.message || err));
     }
   }
 
-  // update a company tax mapping (enable/disable)
   async function updateCompanyTaxMap(id: string, patch: Partial<CompanyTaxMap>) {
-    if (!companyId) {
-      setError("Select a company");
-      return;
-    }
+    if (!companyId) { setError("Select a company"); return; }
     setError(null);
     try {
-      const res = await fetch(`/api/global/company-taxes/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Update failed: ${txt}`);
-      }
+      const res = await fetch(`/api/global/company-taxes/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      if (!res.ok) throw new Error(await res.text());
       await loadCompanyTaxMaps(companyId);
     } catch (err: any) {
-      console.error("updateCompanyTaxMap error", err);
+      console.error("update error", err);
       setError(String(err?.message || err));
     }
   }
 
-  // remove/disable mapping
-  async function disableCompanyTaxMap(id: string) {
-    await updateCompanyTaxMap(id, { is_active: false });
-  }
+  async function disableCompanyTaxMap(id: string) { await updateCompanyTaxMap(id, { is_active: false }); }
 
-  // Preview taxes using resolver
   async function previewTaxes() {
-    if (!companyId) {
-      setError("Select a company before previewing");
-      return;
-    }
+    if (!companyId) { setError("Select a company before previewing"); return; }
     setError(null);
     setPreviewLoading(true);
     setPreviewResult(null);
     try {
-      const payload = {
-        tenantId: null,
-        invoiceDate,
-        billingCountryId,
-        transactionType: "sale",
-        lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })),
-      };
-
-      const res = await fetch(`/api/companies/${companyId}/taxes/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Preview request failed: ${txt}`);
-      }
-      const json = await res.json();
-      setPreviewResult(json ?? null);
+      const payload = { tenantId: null, invoiceDate, billingCountryId, transactionType: "sale", lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })) };
+      const res = await fetch(`/api/companies/${companyId}/taxes/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error(await res.text());
+      setPreviewResult(await res.json());
     } catch (err: any) {
-      console.error("previewTaxes error", err);
+      console.error("preview error", err);
       setError(String(err?.message || err));
       setPreviewResult(null);
     } finally {
@@ -251,15 +168,11 @@ export default function Page() {
     }
   }
 
-  // line helpers
-  function updateLine(i: number, patch: Partial<LineInput>) {
-    setLines(s => s.map((ln, idx) => idx === i ? { ...ln, ...patch } : ln));
-  }
+  function updateLine(i: number, patch: Partial<LineInput>) { setLines(s => s.map((ln, idx) => idx === i ? { ...ln, ...patch } : ln)); }
   function addLine() { setLines(s => [...s, { description: "", qty: 1, unit_price: 0 }]); }
   function removeLine(i: number) { setLines(s => s.filter((_, idx) => idx !== i)); }
 
-  // render helpers
-  const safePreviewLines: any[] = ensureArray(previewResult?.lines ?? previewResult?.data ?? previewResult?.items ?? previewResult) as any[];
+  const safePreviewLines: any[] = ensureArray(previewResult?.lines ?? previewResult?.data ?? previewResult?.items ?? previewResult);
 
   return (
     <div className="min-h-screen p-6 bg-gradient-to-b from-white/60 to-white/30">
@@ -275,7 +188,7 @@ export default function Page() {
               <label className="text-sm text-muted">Company</label>
               <select value={companyId ?? ""} onChange={e => setCompanyId(e.target.value || null)} className="mt-1 p-2 rounded-lg border w-full bg-white/30">
                 <option value="">-- select company --</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {(Array.isArray(companies) ? companies : []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
 
               <div className="mt-4">
@@ -296,10 +209,10 @@ export default function Page() {
                   <h3 className="font-medium mb-2">Assigned Taxes</h3>
                   {loading ? <div>Loading…</div> : (
                     <div className="space-y-2">
-                      {companyTaxMaps.length === 0 && <div className="text-sm text-muted">No taxes assigned to this company.</div>}
-                      {companyTaxMaps.map(map => {
-                        const rate = taxRates.find(r => r.id === map.tax_rate_id);
-                        const type = taxTypes.find(t => t.id === map.tax_type_id);
+                      {(!Array.isArray(companyTaxMaps) || companyTaxMaps.length === 0) && <div className="text-sm text-muted">No taxes assigned to this company.</div>}
+                      {(Array.isArray(companyTaxMaps) ? companyTaxMaps : []).map(map => {
+                        const rate = (Array.isArray(taxRates) ? taxRates : []).find(r => r.id === map.tax_rate_id);
+                        const type = (Array.isArray(taxTypes) ? taxTypes : []).find(t => t.id === map.tax_type_id);
                         return (
                           <div key={map.id} className="p-2 rounded-md bg-white/50 flex items-center justify-between">
                             <div>
@@ -321,9 +234,9 @@ export default function Page() {
                   <h3 className="font-medium mb-2">Assign Global Tax Rate</h3>
                   <div className="text-sm text-muted mb-2">Choose a tax rate (global) and assign it to the selected company.</div>
                   <div className="space-y-2 max-h-56 overflow-auto">
-                    {taxRates.map(tr => {
-                      const tt = taxTypes.find(t => t.id === tr.tax_type_id);
-                      const already = companyTaxMaps.find(m => m.tax_rate_id === tr.id && m.company_id === companyId);
+                    {(Array.isArray(taxRates) ? taxRates : []).map(tr => {
+                      const tt = (Array.isArray(taxTypes) ? taxTypes : []).find(t => t.id === tr.tax_type_id);
+                      const already = (Array.isArray(companyTaxMaps) ? companyTaxMaps : []).find(m => m.tax_rate_id === tr.id && m.company_id === companyId);
                       return (
                         <div key={tr.id} className="p-2 rounded-md bg-white/50 flex items-center justify-between">
                           <div>
@@ -401,7 +314,7 @@ export default function Page() {
                     </div>
 
                     <div className="mt-3 grid gap-2">
-                      {Array.isArray(ln.taxes) && ln.taxes.map((t: any, ti: number) => (
+                      {Array.isArray(ln.taxes) ? ln.taxes.map((t: any, ti: number) => (
                         <div key={ti} className="p-2 rounded-md bg-white/30 flex justify-between">
                           <div>
                             <div className="text-sm font-medium">{t.tax_type_name ?? t.tax_type_id} {t.is_compound ? '(compound)' : ''}</div>
@@ -412,11 +325,9 @@ export default function Page() {
                             <div className="text-xs text-muted">Rounded: {Number(t.rounding_applied || 0).toFixed(4)}</div>
                           </div>
                         </div>
-                      ))}
-
-                      {!Array.isArray(ln.taxes) && (
+                      ) : (
                         <div className="text-sm text-muted">No tax lines for this invoice line.</div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 ))}
