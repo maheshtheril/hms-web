@@ -77,7 +77,7 @@ export default function Page() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // helper to make fetches that must send cookies & handle tenant_required retry
-  async function fetchWithTenantRetry(input: RequestInfo, init: RequestInit = {}) {
+  async function fetchWithTenantRetry(input: RequestInfo | string, init: RequestInit = {}) {
     const baseInit: RequestInit = {
       credentials: "include",
       headers: { "Content-Type": "application/json", ...(init.headers || {}) },
@@ -99,14 +99,16 @@ export default function Page() {
     // If server says tenant_required, attempt switch and retry once.
     if (!r.ok && json && (json.error === "tenant_required" || json.message === "Missing tenant context")) {
       console.warn(`[fetchWithTenantRetry] server wants tenant context for ${typeof input === "string" ? input : "request"}`);
-      // try to set tenant via switch endpoint — note: the caller should have company id in URL or body when appropriate
-      // If caller provided company_id in the URL query, extract it. Otherwise the caller should switch separately.
       try {
         // attempt an automatic switch if company_id is present in querystring or body
         let parsedCompany: string | null = null;
         if (typeof input === "string") {
-          const u = new URL(input, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-          parsedCompany = u.searchParams.get("company_id");
+          try {
+            const u = new URL(input, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+            parsedCompany = u.searchParams.get("company_id") || u.searchParams.get("companyId");
+          } catch {
+            parsedCompany = null;
+          }
         }
         // fallback: if caller provided a body with company_id
         if (!parsedCompany && init && init.body) {
@@ -129,11 +131,16 @@ export default function Page() {
             const swt = await sw.text().catch(() => "");
             throw new Error(`Switch failed: ${sw.status} ${sw.statusText} - ${swt}`);
           }
+          // After successful switch, refresh /api/me (best-effort) so session metadata is updated
+          try {
+            await fetch("/api/me", { credentials: "include" });
+          } catch {
+            // non-blocking
+          }
           // retry original request once
           ({ r, txt, json } = await doFetch());
         } else {
-          // no company context we can auto-switch to
-          // return original response so caller can decide
+          // no company context we can auto-switch to — return original response so caller can decide
           return { res: r, text: txt, json };
         }
       } catch (e) {
@@ -146,33 +153,53 @@ export default function Page() {
     return { res: r, text: txt, json };
   }
 
-  // Initial load
+  // Initial load using the tenant-aware helper (so we can auto-switch when possible)
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // NOTE: credentials: "include" is required if these endpoints rely on tenant session cookie
-        const [cRes, ttRes, trRes] = await Promise.all([
-          fetch("/admin/companies", { credentials: "include", headers: { "Content-Type": "application/json" } }),
-          fetch("/global/tax-types", { credentials: "include", headers: { "Content-Type": "application/json" } }),
-          fetch("/global/tax-rates", { credentials: "include", headers: { "Content-Type": "application/json" } }),
+        // prefer api-prefixed endpoints; all calls send cookies via fetchWithTenantRetry
+        const [cResp, ttResp, trResp] = await Promise.all([
+          fetchWithTenantRetry("/api/admin/companies"),
+          fetchWithTenantRetry("/api/global/tax-types"),
+          fetchWithTenantRetry("/api/global/tax-rates"),
         ]);
 
-        if (!cRes.ok) throw new Error(`Failed loading companies: ${await cRes.text()}`);
-        const csRaw = await cRes.json();
-        const cs = ensureArray<Company>(csRaw);
-        setCompanies(cs);
-        if (cs.length && !companyId) setCompanyId(cs[0].id);
+        // companies
+        if (!cResp?.res?.ok) {
+          // try fallback endpoints common in different deployments
+          const fallback = await fetchWithTenantRetry("/admin/companies");
+          if (!fallback?.res?.ok) throw new Error(`Failed loading companies: ${fallback?.text ?? (fallback?.json && JSON.stringify(fallback.json))}`);
+          const csRaw = fallback.json ?? null;
+          const cs = ensureArray<Company>(csRaw);
+          setCompanies(cs);
+          if (cs.length && !companyId) setCompanyId(cs[0].id);
+        } else {
+          const csRaw = cResp.json ?? null;
+          const cs = ensureArray<Company>(csRaw);
+          setCompanies(cs);
+          if (cs.length && !companyId) setCompanyId(cs[0].id);
+        }
 
-        if (!ttRes.ok) throw new Error(`Failed loading tax types: ${await ttRes.text()}`);
-        const ttRaw = await ttRes.json();
-        setTaxTypes(ensureArray<GlobalTaxType>(ttRaw));
+        // tax types
+        if (!ttResp?.res?.ok) {
+          const fallback = await fetchWithTenantRetry("/global/tax-types");
+          if (!fallback?.res?.ok) throw new Error(`Failed loading tax types: ${fallback?.text ?? (fallback?.json && JSON.stringify(fallback.json))}`);
+          setTaxTypes(ensureArray<GlobalTaxType>(fallback.json ?? null));
+        } else {
+          setTaxTypes(ensureArray<GlobalTaxType>(ttResp.json ?? null));
+        }
 
-        if (!trRes.ok) throw new Error(`Failed loading tax rates: ${await trRes.text()}`);
-        const trRaw = await trRes.json();
-        setTaxRates(ensureArray<GlobalTaxRate>(trRaw));
+        // tax rates
+        if (!trResp?.res?.ok) {
+          const fallback = await fetchWithTenantRetry("/global/tax-rates");
+          if (!fallback?.res?.ok) throw new Error(`Failed loading tax rates: ${fallback?.text ?? (fallback?.json && JSON.stringify(fallback.json))}`);
+          setTaxRates(ensureArray<GlobalTaxRate>(fallback.json ?? null));
+        } else {
+          setTaxRates(ensureArray<GlobalTaxRate>(trResp.json ?? null));
+        }
       } catch (err: any) {
         console.error("initial load error", err);
         setError(String(err?.message || err));
@@ -192,7 +219,7 @@ export default function Page() {
       setCompanyTaxMaps([]);
       return;
     }
-    loadCompanyTaxMaps(companyId);
+    void loadCompanyTaxMaps(companyId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
@@ -210,7 +237,8 @@ export default function Page() {
         throw new Error(`Failed loading company taxes: ${res.status} ${res.statusText} - ${typeof json === "object" ? JSON.stringify(json) : text}`);
       }
 
-      setCompanyTaxMaps(Array.isArray(json) ? json : (json?.data ?? json?.items ?? []));
+      const arr = Array.isArray(json) ? json : (json?.data ?? json?.items ?? []);
+      setCompanyTaxMaps(ensureArray<CompanyTaxMap>(arr));
     } catch (err: any) {
       console.error("loadCompanyTaxMaps error", err);
       setError(String(err?.message || err));
@@ -240,7 +268,6 @@ export default function Page() {
       const { res, text, json } = await fetchWithTenantRetry("/api/global/company-taxes", {
         method: "POST",
         body: JSON.stringify(body),
-        headers: { "Content-Type": "application/json" },
       });
 
       if (!res.ok) {
@@ -261,7 +288,6 @@ export default function Page() {
       const { res, text, json } = await fetchWithTenantRetry(`/api/global/company-taxes/${id}`, {
         method: "PUT",
         body: JSON.stringify(patch),
-        headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
         throw new Error(`Update failed: ${text ?? (json && JSON.stringify(json))}`);
@@ -285,7 +311,7 @@ export default function Page() {
     setPreviewResult(null);
     try {
       const payload = {
-        tenantId: null,
+        tenant_id: null,
         invoiceDate,
         billingCountryId,
         transactionType: "sale",
@@ -296,7 +322,6 @@ export default function Page() {
       const { res, text, json } = await fetchWithTenantRetry(`/api/companies/${companyId}/taxes/resolve`, {
         method: "POST",
         body: JSON.stringify(payload),
-        headers: { "Content-Type": "application/json" },
       });
 
       if (!res.ok) {
@@ -353,7 +378,7 @@ export default function Page() {
               </div>
 
               <div className="mt-4">
-                <button onClick={() => companyId && loadCompanyTaxMaps(companyId)} className="px-3 py-2 rounded-lg border">Reload</button>
+                <button onClick={() => companyId && void loadCompanyTaxMaps(companyId)} className="px-3 py-2 rounded-lg border">Reload</button>
               </div>
 
               {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
@@ -382,10 +407,10 @@ export default function Page() {
                               <div className="text-xs text-muted">Active: {String(map.is_active)}</div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <button onClick={() => updateCompanyTaxMap(map.id, { is_active: !map.is_active })} className={`px-2 py-1 rounded ${map.is_active ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
+                              <button onClick={() => void updateCompanyTaxMap(map.id, { is_active: !map.is_active })} className={`px-2 py-1 rounded ${map.is_active ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
                                 {map.is_active ? 'Active' : 'Disabled'}
                               </button>
-                              <button onClick={() => disableCompanyTaxMap(map.id)} className="px-2 py-1 rounded bg-red-100 text-red-700">Disable</button>
+                              <button onClick={() => void disableCompanyTaxMap(map.id)} className="px-2 py-1 rounded bg-red-100 text-red-700">Disable</button>
                             </div>
                           </div>
                         );
@@ -414,7 +439,7 @@ export default function Page() {
                             {already ? (
                               <div className="text-xs text-muted">Assigned</div>
                             ) : (
-                              <button disabled={!companyId} onClick={() => assignTaxToCompany(tr.id)} className="px-2 py-1 rounded bg-indigo-600 text-white">Assign</button>
+                              <button disabled={!companyId} onClick={() => void assignTaxToCompany(tr.id)} className="px-2 py-1 rounded bg-indigo-600 text-white">Assign</button>
                             )}
                           </div>
                         </div>
@@ -438,7 +463,7 @@ export default function Page() {
                   </div>
 
                   <div className="flex items-end">
-                    <button onClick={previewTaxes} disabled={!companyId || previewLoading} className="px-4 py-2 rounded-xl bg-green-600 text-white">
+                    <button onClick={() => void previewTaxes()} disabled={!companyId || previewLoading} className="px-4 py-2 rounded-xl bg-green-600 text-white">
                       {previewLoading ? "Previewing…" : "Preview taxes"}
                     </button>
                   </div>
@@ -453,7 +478,7 @@ export default function Page() {
                       <button onClick={() => removeLine(idx)} className="px-2 py-1 rounded bg-red-100 text-red-700">Remove</button>
                     </div>
                   ))}
-                  <div className="mt-2"><button onClick={addLine} className="px-3 py-1 rounded border">+ Add line</button></div>
+                  <div className="mt-2"><button onClick={() => addLine()} className="px-3 py-1 rounded border">+ Add line</button></div>
                 </div>
               </div>
             </div>
