@@ -1,0 +1,363 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+
+// Full Company Tax Admin + Preview Page
+// Path: web/app/(settings)/taxes/page.tsx
+// Uses exact backend routes mounted in server/src/index.ts:
+// - GET  /api/hms/companies
+// - GET  /api/global/tax-types
+// - GET  /api/global/tax-rates
+// - GET  /api/global/company-taxes?company_id=<id>
+// - POST /api/global/company-taxes
+// - PUT  /api/global/company-taxes/:id
+// - POST /api/companies/:companyId/taxes/resolve
+
+type Company = { id: string; name: string };
+type GlobalTaxType = { id: string; name: string; code?: string; description?: string };
+type GlobalTaxRate = { id: string; tax_type_id: string; name: string; percentage?: number; fixed_amount?: number };
+
+type CompanyTaxMap = {
+  id: string;
+  tenant_id?: string | null;
+  company_id: string;
+  country_id?: string | null;
+  tax_type_id: string;
+  tax_rate_id: string;
+  is_default: boolean;
+  is_active: boolean;
+  account_id?: string | null;
+  refund_account_id?: string | null;
+};
+
+type LineInput = { description: string; qty: number; unit_price: number };
+
+export default function Page() {
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+
+  const [taxTypes, setTaxTypes] = useState<GlobalTaxType[]>([]);
+  const [taxRates, setTaxRates] = useState<GlobalTaxRate[]>([]);
+
+  const [companyTaxMaps, setCompanyTaxMaps] = useState<CompanyTaxMap[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // preview state
+  const [lines, setLines] = useState<LineInput[]>([{ description: "Consultation", qty: 1, unit_price: 100 }]);
+  const [invoiceDate, setInvoiceDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [billingCountryId, setBillingCountryId] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] = useState<any | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  // load companies, tax types, tax rates
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const [cRes, ttRes, trRes] = await Promise.all([
+          fetch("/api/hms/companies"),
+          fetch("/api/global/tax-types"),
+          fetch("/api/global/tax-rates"),
+        ]);
+
+        if (!cRes.ok) throw new Error(`Failed loading companies: ${await cRes.text()}`);
+        const cs = await cRes.json();
+        setCompanies(cs || []);
+        if (cs && cs.length && !companyId) setCompanyId(cs[0].id);
+
+        if (!ttRes.ok) throw new Error(`Failed loading tax types: ${await ttRes.text()}`);
+        setTaxTypes(await ttRes.json());
+
+        if (!trRes.ok) throw new Error(`Failed loading tax rates: ${await trRes.text()}`);
+        setTaxRates(await trRes.json());
+      } catch (err: any) {
+        console.error(err);
+        setError(String(err?.message || err));
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // load company tax maps when company changes
+  useEffect(() => {
+    if (!companyId) { setCompanyTaxMaps([]); return; }
+    loadCompanyTaxMaps(companyId);
+  }, [companyId]);
+
+  async function loadCompanyTaxMaps(cid: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/global/company-taxes?company_id=${encodeURIComponent(cid)}`);
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      // ensure we get an array
+      setCompanyTaxMaps(Array.isArray(json) ? json : []);
+    } catch (err: any) {
+      console.error(err);
+      setError(String(err?.message || err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // assign a tax to the selected company
+  async function assignTaxToCompany(taxRateId: string) {
+    if (!companyId) { setError("Select a company"); return; }
+    setError(null);
+    try {
+      // find the tax_type for the tax_rate
+      const rate = taxRates.find(r => r.id === taxRateId);
+      if (!rate) throw new Error("Invalid tax rate selected");
+
+      const body = {
+        company_id: companyId,
+        tax_type_id: rate.tax_type_id,
+        tax_rate_id: rate.id,
+        is_default: false,
+        is_active: true,
+      };
+
+      const res = await fetch(`/api/global/company-taxes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await loadCompanyTaxMaps(companyId);
+    } catch (err: any) {
+      console.error(err);
+      setError(String(err?.message || err));
+    }
+  }
+
+  // update a company tax mapping (enable/disable)
+  async function updateCompanyTaxMap(id: string, patch: Partial<CompanyTaxMap>) {
+    if (!companyId) { setError("Select a company"); return; }
+    setError(null);
+    try {
+      const res = await fetch(`/api/global/company-taxes/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await loadCompanyTaxMaps(companyId);
+    } catch (err: any) {
+      console.error(err);
+      setError(String(err?.message || err));
+    }
+  }
+
+  // remove/disable mapping
+  async function disableCompanyTaxMap(id: string) {
+    await updateCompanyTaxMap(id, { is_active: false });
+  }
+
+  // Preview taxes using resolver
+  async function previewTaxes() {
+    if (!companyId) { setError("Select a company before previewing"); return; }
+    setError(null);
+    setPreviewLoading(true);
+    setPreviewResult(null);
+    try {
+      const payload = {
+        tenantId: null,
+        invoiceDate,
+        billingCountryId,
+        transactionType: "sale",
+        lines: lines.map(l => ({ qty: l.qty, unit_price: l.unit_price, description: l.description, metadata: {} })),
+      };
+
+      const res = await fetch(`/api/companies/${companyId}/taxes/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setPreviewResult(json);
+    } catch (err: any) {
+      console.error(err);
+      setError(String(err?.message || err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  // line helpers
+  function updateLine(i: number, patch: Partial<LineInput>) {
+    setLines(s => s.map((ln, idx) => idx === i ? { ...ln, ...patch } : ln));
+  }
+  function addLine() { setLines(s => [...s, { description: "", qty: 1, unit_price: 0 }]); }
+  function removeLine(i: number) { setLines(s => s.filter((_, idx) => idx !== i)); }
+
+  return (
+    <div className="min-h-screen p-6 bg-gradient-to-b from-white/60 to-white/30">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="p-6 rounded-2xl bg-glass/60 backdrop-blur-md shadow-lg">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-semibold">Company Tax Management</h1>
+            <div className="text-sm text-muted">Assign global tax rates to companies · Preview</div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="text-sm text-muted">Company</label>
+              <select value={companyId ?? ""} onChange={e => setCompanyId(e.target.value || null)} className="mt-1 p-2 rounded-lg border w-full bg-white/30">
+                <option value="">-- select company --</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+
+              <div className="mt-4">
+                <label className="text-sm text-muted">Billing country (optional)</label>
+                <input value={billingCountryId ?? ""} onChange={e => setBillingCountryId(e.target.value || null)} placeholder="country id" className="mt-1 p-2 rounded-lg border w-full bg-white/30" />
+              </div>
+
+              <div className="mt-4">
+                <button onClick={() => companyId && loadCompanyTaxMaps(companyId)} className="px-3 py-2 rounded-lg border">Reload</button>
+              </div>
+
+              {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-white/40">
+                  <h3 className="font-medium mb-2">Assigned Taxes</h3>
+                  {loading ? <div>Loading…</div> : (
+                    <div className="space-y-2">
+                      {companyTaxMaps.length === 0 && <div className="text-sm text-muted">No taxes assigned to this company.</div>}
+                      {companyTaxMaps.map(map => {
+                        const rate = taxRates.find(r => r.id === map.tax_rate_id);
+                        const type = taxTypes.find(t => t.id === map.tax_type_id);
+                        return (
+                          <div key={map.id} className="p-2 rounded-md bg-white/50 flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">{type?.name ?? map.tax_type_id} · {rate?.name ?? map.tax_rate_id}</div>
+                              <div className="text-xs text-muted">Active: {String(map.is_active)}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => updateCompanyTaxMap(map.id, { is_active: !map.is_active })} className={`px-2 py-1 rounded ${map.is_active ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>{map.is_active ? 'Active' : 'Disabled'}</button>
+                              <button onClick={() => disableCompanyTaxMap(map.id)} className="px-2 py-1 rounded bg-red-100 text-red-700">Disable</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-xl bg-white/40">
+                  <h3 className="font-medium mb-2">Assign Global Tax Rate</h3>
+                  <div className="text-sm text-muted mb-2">Choose a tax rate (global) and assign it to the selected company.</div>
+                  <div className="space-y-2 max-h-56 overflow-auto">
+                    {taxRates.map(tr => {
+                      const tt = taxTypes.find(t => t.id === tr.tax_type_id);
+                      const already = companyTaxMaps.find(m => m.tax_rate_id === tr.id && m.company_id === companyId);
+                      return (
+                        <div key={tr.id} className="p-2 rounded-md bg-white/50 flex items-center justify-between">
+                          <div>
+                            <div className="font-medium">{tr.name}</div>
+                            <div className="text-xs text-muted">{tt?.name ?? tr.tax_type_id} · {tr.percentage ? `${tr.percentage}%` : tr.fixed_amount ? `${tr.fixed_amount} (fixed)` : ''}</div>
+                          </div>
+                          <div>
+                            {already ? <div className="text-xs text-muted">Assigned</div> : <button disabled={!companyId} onClick={() => assignTaxToCompany(tr.id)} className="px-2 py-1 rounded bg-indigo-600 text-white">Assign</button>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 p-4 rounded-xl bg-white/50">
+                <h3 className="font-medium mb-2">Preview Taxes (Invoice)</h3>
+                <div className="grid md:grid-cols-3 gap-3 mb-3">
+                  <div>
+                    <div className="text-sm text-muted">Invoice date</div>
+                    <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="mt-1 p-2 rounded border w-full" />
+                  </div>
+                  <div>
+                    <div className="text-sm text-muted">Billing country id</div>
+                    <input value={billingCountryId ?? ""} onChange={e => setBillingCountryId(e.target.value || null)} className="mt-1 p-2 rounded border w-full" />
+                  </div>
+                  <div className="flex items-end">
+                    <button onClick={previewTaxes} disabled={!companyId || previewLoading} className="px-4 py-2 rounded-xl bg-green-600 text-white">{previewLoading ? 'Previewing…' : 'Preview taxes'}</button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {lines.map((ln, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input value={ln.description} onChange={e => updateLine(idx, { description: e.target.value })} className="p-2 rounded border flex-1" placeholder="Description" />
+                      <input value={ln.qty} onChange={e => updateLine(idx, { qty: Number(e.target.value) })} className="p-2 rounded border w-24" type="number" />
+                      <input value={ln.unit_price} onChange={e => updateLine(idx, { unit_price: Number(e.target.value) })} className="p-2 rounded border w-32" type="number" />
+                      <button onClick={() => removeLine(idx)} className="px-2 py-1 rounded bg-red-100 text-red-700">Remove</button>
+                    </div>
+                  ))}
+                  <div className="mt-2"><button onClick={addLine} className="px-3 py-1 rounded border">+ Add line</button></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 rounded-2xl bg-glass/60 backdrop-blur-md shadow-md">
+          <h2 className="text-xl font-medium mb-3">Preview Result</h2>
+          {!previewResult && <div className="text-sm text-muted">No preview yet — run a preview to see resolved taxes.</div>}
+
+          {previewResult && (
+            <div className="space-y-4">
+              <div className="p-3 rounded bg-white/60">
+                <div className="text-sm text-muted">Totals</div>
+                <div className="mt-2 flex gap-6">
+                  <div>Subtotal: <strong>{previewResult.invoice_totals?.subtotal ?? '—'}</strong></div>
+                  <div>Tax: <strong>{previewResult.invoice_totals?.total_tax ?? '—'}</strong></div>
+                  <div>Total: <strong>{previewResult.invoice_totals?.total ?? '—'}</strong></div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {previewResult.lines.map((ln: any, i: number) => (
+                  <div key={i} className="p-3 rounded bg-white/40 border">
+                    <div className="flex justify-between">
+                      <div className="font-medium">Line {i + 1} · {lines[i]?.description}</div>
+                      <div className="text-sm text-muted">Base: {ln.base_amount} · Tax: {ln.total_tax} · Total: {ln.total_amount}</div>
+                    </div>
+
+                    <div className="mt-3 grid gap-2">
+                      {ln.taxes.map((t: any, ti: number) => (
+                        <div key={ti} className="p-2 rounded-md bg-white/30 flex justify-between">
+                          <div>
+                            <div className="text-sm font-medium">{t.tax_type_name ?? t.tax_type_id} {t.is_compound ? '(compound)' : ''}</div>
+                            <div className="text-xs text-muted">Rate: {t.rate}{t.is_percentage ? '%' : ' (fixed)'} · {t.notes ?? ''}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-medium">{Number(t.tax_amount).toFixed(2)}</div>
+                            <div className="text-xs text-muted">Rounded: {Number(t.rounding_applied ?? 0).toFixed(4)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-medium mb-2">Raw Response</h4>
+                <pre className="max-h-64 overflow-auto p-3 bg-black/5 rounded text-xs">{JSON.stringify(previewResult, null, 2)}</pre>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
