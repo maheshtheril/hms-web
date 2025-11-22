@@ -1,0 +1,34 @@
+/* /web/styles/globals.css */
+
+/* Tailwind base — ensure Tailwind is configured to process this file */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Neural Glass tokens + basic app background */
+:root {
+  --glass-bg: rgba(255,255,255,0.06);
+  --glass-border: rgba(255,255,255,0.08);
+  --glass-strong: rgba(255,255,255,0.14);
+}
+
+body {
+  background: linear-gradient(180deg, #071025 0%, #08111a 100%);
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* helper */
+.bg-erp-bg {
+  background: linear-gradient(180deg, rgba(10,18,30,0.7), rgba(6,10,16,0.8));
+}
+
+/* Glass card base */
+.card-glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px);
+}
+
+/* small utilities for Sidebar/Topbar spacing already used in components */

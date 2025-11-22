@@ -1,24 +1,39 @@
-// app/signup/page.tsx
 "use client";
-
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
-import { motion } from "framer-motion";
+import Logo from "@/components/Logo";
 
-import BrandLogo from "@/components/BrandLogo";
-import AuthCard from "@/components/AuthCard";
-import PrimaryButton from "@/components/PrimaryButton";
-import AIBadge from "@/components/AIBadge";
-import NeuralGlow from "@/components/NeuralGlow";
-import CountrySelect, { Country } from "../components/CountrySelect";
+/**
+ * Final signup page — Option A country selector + full password typing/strength UX
+ *
+ * - Closed: single select-like control showing selected flag + name
+ * - Open: dropdown contains a search input (same sizing) + list
+ * - Password rules, live strength meter, and server-side reasons supported
+ * - Industry selection only (no module-checkbox at signup)
+ *
+ * Notes:
+ * - LOGO_SRC prefers NEXT_PUBLIC_LOGO_SRC (deployment) and falls back to a public asset.
+ * - If industry === "hospital" we redirect to HMS onboarding page after signup.
+ */
 
-const api = axios.create({ baseURL: "", withCredentials: true });
+const LOGO_SRC = process.env.NEXT_PUBLIC_LOGO_SRC || "/assets/brand-logo.png";
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+
+type FormState = {
+  name: string;
+  email: string;
+  password: string;
+  company: string;
+  countryId: string;
+  industry?: string;
+  acceptTerms: boolean;
+};
+
+type Country = { id: string; name: string; flag_emoji?: string | null; iso2?: string };
 
 /* -----------------------
-   Password rules & helpers
+   Password policy + helpers
    ----------------------- */
-
 const PASSWORD_POLICY = {
   minLength: 12,
   requireUpper: true,
@@ -55,7 +70,7 @@ function usePasswordStrength(password: string) {
 function PasswordStrength({ value }: { value: string }) {
   const { passed, strengthLabel, passedRules } = usePasswordStrength(value);
   return (
-    <div className="mt-2" aria-live="polite">
+    <div className="mt-3" aria-live="polite">
       <div className="flex items-center justify-between text-xs text-white/70 mb-2">
         <span>
           Password strength: <strong>{strengthLabel}</strong>
@@ -65,7 +80,7 @@ function PasswordStrength({ value }: { value: string }) {
         </span>
       </div>
 
-      <div className="flex gap-1 h-2 mb-2">
+      <div className="flex gap-1 h-2 mb-3">
         {passwordRules.map((_, i) => (
           <div
             key={i}
@@ -85,379 +100,742 @@ function PasswordStrength({ value }: { value: string }) {
   );
 }
 
-/* -----------------------
-   Debounce helper
-   ----------------------- */
-function useDebouncedValue<T>(value: T, ms = 400) {
-  const [deb, setDeb] = useState(value);
+/* --------------------------
+   Small inline SVG flags
+   -------------------------- */
+function FlagSvg({ iso, size = 20 }: { iso?: string | null; size?: number }) {
+  if (!iso) return null;
+  const key = iso.toUpperCase();
+  switch (key) {
+    case "IN":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2" className="block">
+          <rect width="3" height="2" fill="#ff9933" />
+          <rect y="0.667" width="3" height="0.666" fill="#fff" />
+          <rect y="1.333" width="3" height="0.667" fill="#138808" />
+          <circle cx="1.5" cy="1" r="0.25" fill="#0b3d91" />
+        </svg>
+      );
+    case "US":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 19 10">
+          <rect width="19" height="10" fill="#b22234" />
+          <g fill="#fff">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <rect key={i} y={i * (10 / 9)} width="19" height={10 / 18} />
+            ))}
+          </g>
+          <rect width="7.4" height="4.6" fill="#3c3b6e" />
+        </svg>
+      );
+    case "GB":
+    case "UK":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 60 30">
+          <rect width="60" height="30" fill="#012169" />
+          <g fill="#fff">
+            <polygon points="0,0 24,0 60,21 60,30 36,30 0,9" />
+            <polygon points="60,0 36,0 0,21 0,30 24,30 60,9" />
+          </g>
+          <g fill="#c8102e">
+            <polygon points="0,0 18,0 60,22 60,30 42,30 0,8" />
+            <polygon points="60,0 42,0 0,22 0,30 18,30 60,8" />
+          </g>
+        </svg>
+      );
+    case "DE":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
+          <rect width="3" height="2" fill="#000" />
+          <rect y="0.667" width="3" height="0.666" fill="#DD0000" />
+          <rect y="1.333" width="3" height="0.667" fill="#FFCE00" />
+        </svg>
+      );
+    case "FR":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
+          <rect width="1" height="2" fill="#0055A4" />
+          <rect x="1" width="1" height="2" fill="#fff" />
+          <rect x="2" width="1" height="2" fill="#EF4135" />
+        </svg>
+      );
+    case "JP":
+      return (
+        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
+          <rect width="3" height="2" fill="#fff" />
+          <circle cx="1.5" cy="1" r="0.5" fill="#bc002d" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+/* SafeLogo: tries Logo component and falls back to PNG */
+function SafeLogo({
+  size = 80,
+  className = "",
+  alt = "Zyntra logo",
+  forceFallback = false,
+}: {
+  size?: number;
+  className?: string;
+  alt?: string;
+  forceFallback?: boolean;
+}) {
+  const [fallback, setFallback] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setDeb(value), ms);
-    return () => clearTimeout(id);
-  }, [value, ms]);
-  return deb;
+    if (forceFallback) setFallback(true);
+  }, [forceFallback]);
+
+  return (
+    <div
+      className={`relative inline-flex items-center justify-center ${className}`}
+      style={{ width: size, height: size }}
+    >
+      <div aria-hidden={fallback} className={fallback ? "hidden" : "block"}>
+        <Logo width={size} height={size} />
+      </div>
+
+      <img
+        src={LOGO_SRC}
+        alt={alt}
+        style={{ width: size, height: "auto" }}
+        className={fallback ? "block" : "hidden"}
+        onError={() => setFallback(true)}
+      />
+
+      {fallback && (
+        <div className="sr-only" role="img" aria-label="Zyntra">
+          ZYNTRA
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------
+   CountrySelect - Option A behavior
+   ---------------------------- */
+function CountrySelect({
+  countries,
+  value,
+  onChange,
+  placeholder = "Search country...",
+}: {
+  countries: Country[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [highlight, setHighlight] = useState(0);
+
+  // normalize selected
+  const selected = useMemo(() => countries.find((c) => c.id === value) ?? null, [countries, value]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return countries;
+    return countries.filter((c) => {
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.flag_emoji ?? "").toLowerCase().includes(q) ||
+        (c.iso2 ?? c.id ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [countries, query]);
+
+  // click outside closes dropdown
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // when opening, prefill search with selected name (so selection visible)
+  function openDropdown() {
+    setOpen(true);
+    setQuery(selected?.name ?? "");
+    setTimeout(() => searchRef.current?.focus(), 0);
+    const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+    setHighlight(idx >= 0 ? idx : 0);
+  }
+
+  function onSearchKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
+      scrollIntoView(highlight + 1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+      scrollIntoView(highlight - 1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectAt(highlight);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      setQuery("");
+    }
+  }
+
+  function scrollIntoView(index: number) {
+    const el = listRef.current?.querySelector<HTMLDivElement>(`[data-idx="${index}"]`);
+    if (el) el.scrollIntoView({ block: "nearest" });
+  }
+
+  function selectAt(i: number) {
+    const it = filtered[i];
+    if (!it) return;
+    onChange(it.id);
+    setOpen(false);
+    setQuery("");
+  }
+
+  useEffect(() => {
+    if (highlight >= filtered.length) setHighlight(Math.max(0, filtered.length - 1));
+  }, [filtered.length, highlight]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* CLOSED CONTROL: single select-like button showing selected flag + name */}
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openDropdown())}
+        className="w-full h-10 rounded-md bg-[#06121a] border border-white/8 px-3 py-2 text-sm text-white flex items-center justify-between gap-3 hover:ring-2 hover:ring-[#00E3C2]/20 focus:outline-none"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 flex items-center justify-center">
+            {selected ? (
+              selected.iso2 ? (
+                <FlagSvg iso={selected.iso2} size={18} />
+              ) : selected.flag_emoji ? (
+                <span className="text-lg">{selected.flag_emoji}</span>
+              ) : (
+                <span>🏳️</span>
+              )
+            ) : (
+              <span className="text-white/50">🌐</span>
+            )}
+          </div>
+
+          <div className="text-sm text-white/80 truncate">
+            {selected ? selected.name : <span className="text-white/50">Select country</span>}
+          </div>
+        </div>
+
+        <svg
+          className={`w-4 h-4 text-white/40 transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden
+        >
+          <path d="M5 8L10 13L15 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {/* DROPDOWN PANEL */}
+      {open && (
+        <div className="absolute z-50 mt-2 w-full max-h-[300px] rounded-md bg-[#081421] border border-white/8 shadow-xl py-2 text-sm">
+          <div className="px-3">
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setHighlight(0);
+              }}
+              onKeyDown={onSearchKeyDown}
+              placeholder={placeholder}
+              className="w-full h-10 rounded-md bg-[#06121a] border border-white/8 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
+              aria-label="Search country"
+            />
+          </div>
+
+          <div ref={listRef} className="mt-2 max-h-[210px] overflow-auto">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 h-10 flex items-center text-white/50">No results</div>
+            ) : (
+              filtered.map((c, idx) => {
+                const isHighlighted = idx === highlight;
+                const isSelected = c.id === value;
+                const iso =
+                  (c.iso2 ?? c.id ?? "").length === 2 ? (c.iso2 ?? c.id ?? "").toUpperCase() : c.iso2 ?? null;
+                return (
+                  <div
+                    key={c.id}
+                    data-idx={idx}
+                    role="option"
+                    aria-selected={isSelected}
+                    onMouseEnter={() => setHighlight(idx)}
+                    onMouseDown={(ev) => {
+                      ev.preventDefault();
+                      selectAt(idx);
+                    }}
+                    className={`flex items-center gap-3 px-3 py-2 h-10 cursor-pointer ${isHighlighted ? "bg-[#0f2934]" : "hover:bg-[#0c2229]"} ${isSelected ? "border-l-2 border-[#00E3C2] pl-2" : ""}`}
+                  >
+                    <div className="w-8 h-8 flex items-center justify-center">
+                      {iso ? <FlagSvg iso={iso} size={18} /> : c.flag_emoji ? <span className="text-lg">{c.flag_emoji}</span> : <span>🏳️</span>}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-white/90">{c.name}</div>
+                      <div className="text-xs text-white/50">{c.id}</div>
+                    </div>
+
+                    {isSelected && <div className="text-emerald-300 text-sm">✓</div>}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* -----------------------
-   Signup page component
+   Full Industries list (exposed for render)
+   NOTE: canonical keys used for backend 'industry' field */
+const INDUSTRIES: { key: string; label: string }[] = [
+  { key: "saas", label: "SaaS / Software" },
+  { key: "manufacturing", label: "Manufacturing" },
+  { key: "hospital", label: "Hospital / Healthcare" },
+  { key: "retail", label: "Retail" },
+  { key: "education", label: "Education" },
+  { key: "finance", label: "Finance / Banking" },
+  { key: "insurance", label: "Insurance" },
+  { key: "construction", label: "Construction" },
+  { key: "real_estate", label: "Real Estate" },
+  { key: "logistics", label: "Logistics / Transport" },
+  { key: "ecommerce", label: "E-commerce" },
+  { key: "telecom", label: "Telecommunications" },
+  { key: "agriculture", label: "Agriculture" },
+  { key: "energy", label: "Energy / Utilities" },
+  { key: "pharma", label: "Pharmaceuticals" },
+  { key: "food_beverage", label: "Food & Beverage" },
+  { key: "automotive", label: "Automotive" },
+  { key: "legal", label: "Legal / Law" },
+  { key: "media", label: "Media & Entertainment" },
+  { key: "marketing", label: "Marketing & Advertising" },
+  { key: "consulting", label: "Professional Services / Consulting" },
+  { key: "nonprofit", label: "Non-profit / NGO" },
+  { key: "hospitality", label: "Hospitality / Travel" },
+  { key: "mining", label: "Mining" },
+  { key: "aerospace", label: "Aerospace" },
+  { key: "biotech", label: "Biotechnology" },
+  { key: "chemicals", label: "Chemicals" },
+  { key: "electronics", label: "Electronics" },
+  { key: "textiles", label: "Textiles" },
+  { key: "healthtech", label: "Healthtech" },
+  { key: "itevices", label: "IT & Hardware" },
+  { key: "research", label: "R&D / Lab" },
+  { key: "security", label: "Security / Surveillance" },
+  { key: "property_management", label: "Property Management" },
+  { key: "service", label: "Service Industry" },
+  { key: "other", label: "Other / Not Listed" },
+];
+
+/* -----------------------
+   SignupPage main component
    ----------------------- */
-
-export default function SignupPage() {
+export default function SignupPage(): JSX.Element {
   const router = useRouter();
-
-  const [form, setForm] = useState({
-    org: "",
+  const [form, setForm] = useState<FormState>({
     name: "",
     email: "",
     password: "",
+    company: "",
+    countryId: "",
+    industry: "",
+    acceptTerms: false,
   });
 
+  const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
+  // server-side password reasons (when API responds weak_password)
   const [pwServerReasons, setPwServerReasons] = useState<string[] | null>(null);
 
-  const [emailAvailable, setEmailAvailable] = useState<boolean | null>(null);
-  const [checkingEmail, setCheckingEmail] = useState(false);
-
-  const debouncedEmail = useDebouncedValue(form.email, 450);
-
-  const { passed: passwordPassed } = usePasswordStrength(form.password);
-
-  const [countries, setCountries] = useState<Country[]>([]);
-  const [countryId, setCountryId] = useState<string | "">("");
-  const [applyCountryDefaults, setApplyCountryDefaults] = useState(true);
-  const [loadingCountries, setLoadingCountries] = useState(false);
-
-  /* -----------------------
-     Email availability check
-     ----------------------- */
+  const [mountedAnimate, setMountedAnimate] = useState(false);
   useEffect(() => {
-    let cancelled = false;
+    const t = setTimeout(() => setMountedAnimate(true), 70);
+    return () => clearTimeout(t);
+  }, []);
 
-    async function check() {
-      setErr("");
-      setPwServerReasons(null);
-
-      if (!debouncedEmail || !/^\S+@\S+\.\S+$/.test(debouncedEmail)) {
-        setEmailAvailable(null);
-        return;
-      }
-
-      setCheckingEmail(true);
-      try {
-        const res = await api.get("/api/check-email", {
-          params: { email: debouncedEmail },
-        });
-        if (cancelled) return;
-
-        setEmailAvailable(!res.data?.exists);
-      } catch {
-        setEmailAvailable(null);
-      } finally {
-        setCheckingEmail(false);
-      }
-    }
-
-    check();
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedEmail]);
-
-  /* -----------------------
-     Fetch countries + normalize (robust fallback)
-     ----------------------- */
+  /* Load countries (robust normalization + fallback) */
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      setLoadingCountries(true);
+    let mounted = true;
+    async function loadCountries() {
       try {
-        const res = await api.get("/api/global/countries", {
-          params: { active: "true" },
-        });
-
-        if (cancelled) return;
-
-        const raw = Array.isArray(res.data?.data) ? res.data.data : [];
-
-        const list: Country[] = raw.map((c: any, idx: number) => ({
-          id: String(c.id),
-          name: String(c.name ?? c.country ?? c.label ?? c.title ?? ""),
-          iso2: String((c.iso2 ?? c.alpha2 ?? c.code2 ?? c.country_code ?? c.alpha_2 ?? "").toString()).slice(0,2).toUpperCase(),
-          flag: c.flag ?? c.emoji ?? null,
-        }));
-
-        if (list.length === 0) {
-          // safe fallback so UI still works while API is down
-          setCountries([
-            { id: "IN", name: "India", iso2: "IN", flag: "🇮🇳" },
-            { id: "US", name: "United States", iso2: "US", flag: "🇺🇸" },
-          ]);
-          setCountryId("IN");
-        } else {
-          setCountries(list);
-          const india = list.find((c) => (c.iso2 ?? "").toUpperCase() === "IN");
-          setCountryId(india ? india.id : list[0]?.id ?? "");
+        const base = BACKEND || "";
+        const url = base ? `${base}/api/global/countries` : "/api/global/countries";
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) {
+          if (mounted) {
+            setCountries([
+              { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
+              { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
+            ]);
+            setForm((s) => ({ ...s, countryId: "IN" }));
+          }
+          return;
         }
-      } catch (e) {
-        console.warn("Failed to load countries", e);
-        // fallback
-        setCountries([
-          { id: "IN", name: "India", iso2: "IN", flag: "🇮🇳" },
-          { id: "US", name: "United States", iso2: "US", flag: "🇺🇸" },
-        ]);
-        setCountryId("IN");
-      } finally {
-        if (!cancelled) setLoadingCountries(false);
+        const data: any = await res.json();
+        if (mounted) {
+          const arr = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+          const normalized = arr.length
+            ? arr.map((c: any) => ({
+                id: String(c.id ?? c.iso2 ?? c.code ?? c.name ?? "").slice(0, 64),
+                name: String(c.name ?? c.country ?? c.label ?? c.title ?? ""),
+                flag_emoji: c.flag_emoji ?? c.flag ?? c.emoji ?? c.flagEmoji ?? null,
+                iso2:
+                  (c.iso2 ?? c.alpha2 ?? c.country_code ?? c.alpha_2 ?? "")
+                    .toString()
+                    .slice(0, 2)
+                    .toUpperCase() || undefined,
+              }))
+            : [
+                { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
+                { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
+              ];
+          setCountries(normalized);
+          const india = normalized.find((c) => (c.iso2 ?? "").toUpperCase() === "IN" || c.name === "India");
+          setForm((s) => ({ ...s, countryId: india ? india.id : normalized[0]?.id ?? "" }));
+        }
+      } catch (err) {
+        if (mounted) {
+          setCountries([
+            { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
+            { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
+          ]);
+          setForm((s) => ({ ...s, countryId: "IN" }));
+        }
       }
     }
-
-    load();
+    loadCountries();
     return () => {
-      cancelled = true;
+      mounted = false;
     };
   }, []);
 
-  const onChange =
-    (key: keyof typeof form) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
-      setForm((f) => ({ ...f, [key]: e.target.value }));
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((s) => ({ ...s, [key]: value }));
+  }
 
-  /* -----------------------
-     Signup submit
-     ----------------------- */
-  async function handleSignup(e: React.FormEvent) {
+  const { passed: passwordPassed } = usePasswordStrength(form.password);
+
+  async function createAccount(e: React.FormEvent) {
     e.preventDefault();
-    if (loading) return;
-
-    setErr("");
+    setError(null);
+    setSuccess(false);
     setPwServerReasons(null);
 
-    if (!/^\S+@\S+\.\S+$/.test(form.email)) {
-      setErr("Please enter a valid email address.");
+    if (!form.acceptTerms) {
+      setError("Please accept the Terms & Privacy Policy.");
       return;
     }
-
-    if (emailAvailable === false) {
-      setErr("That email is already registered.");
+    if (!form.name || !form.company || !form.email || !form.password || !form.countryId) {
+      setError("Please complete all fields.");
       return;
     }
-
-    if (passwordPassed < passwordRules.length) {
-      setErr("Please meet all password requirements.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    // enforce same min length as the password policy
+    if (form.password.length < PASSWORD_POLICY.minLength) {
+      setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`);
       return;
     }
 
     setLoading(true);
-
     try {
-      const payload = {
-        ...form,
-        country_id: countryId || undefined,
-        apply_country_tax_defaults: Boolean(applyCountryDefaults),
-      };
+      const base = BACKEND || "";
+      const url = base ? `${base}/api/auth/signup` : "/api/auth/signup";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: form.name,
+          company: form.company,
+          email: form.email,
+          password: form.password,
+          countryId: form.countryId,
+          industry: form.industry || null,
+        }),
+      });
 
-      const res = await api.post("/api/tenant-signup", payload);
-
-      if (res.status === 201 || res.data?.ok) {
-        setOk(true);
-
-        try {
-          await api.get("/api/auth/me");
-        } catch {}
-
-        setTimeout(() => router.push("/dashboard"), 700);
-      } else {
-        setErr(res.data?.error || "Signup failed");
-      }
-    } catch (err: any) {
-      if (err.response) {
-        const data = err.response.data || {};
-        const status = err.response.status;
-
-        if (
-          status === 400 &&
-          data.error === "weak_password" &&
-          Array.isArray(data.reasons)
-        ) {
-          setPwServerReasons(data.reasons);
-          setErr("Password does not meet requirements.");
-        } else if (status === 409 && data.error === "email_exists") {
-          setEmailAvailable(false);
-          setErr("That email is already registered.");
-        } else if (status === 400 && data.error === "invalid_email") {
-          setErr("Invalid email.");
-        } else if (status === 409 && data.error === "unique_violation") {
-          setErr("Signup conflict. Try again.");
-        } else {
-          setErr(typeof data.error === "string" ? data.error : `Signup failed (${status}).`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (payload?.error === "email_exists") {
+          throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
-      } else if (err.request) {
-        setErr("No response from server.");
-      } else {
-        setErr("Unexpected error.");
+        // handle weak_password with reasons
+        if (res.status === 400 && payload?.error === "weak_password" && Array.isArray(payload?.reasons)) {
+          setPwServerReasons(payload.reasons);
+          setError("Password does not meet requirements.");
+          return;
+        }
+        throw new Error(payload?.message || payload?.error || `Signup failed (${res.status})`);
       }
+
+      setSuccess(true);
+
+      // If industry is hospital, send user to the HMS onboarding wizard.
+      // Provisioning/seed jobs run asynchronously on the server (provisioning queue).
+      setTimeout(() => {
+        if (form.industry === "hospital") {
+          router.push("/tenant/onboarding/hms");
+        } else {
+          router.push("/tenant");
+        }
+      }, 350);
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("Signup failed - try again or contact support.");
     } finally {
       setLoading(false);
     }
   }
 
   const canSubmit =
-    Boolean(form.org && form.name && form.email && form.password) &&
-    passwordPassed === passwordRules.length &&
-    emailAvailable !== false;
-
-  /* -----------------------
-     Render
-     ----------------------- */
+    Boolean(form.name && form.company && form.email && form.password) &&
+    passwordPassed === passwordRules.length;
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center bg-linear-to-b from-sky-900/8 via-indigo-900/8 to-sky-900/8 text-white overflow-hidden px-6">
-      <div className="absolute inset-0 bg-linear-to-b from-white/4 via-white/6 to-white/4 pointer-events-none" />
-
-      <div className="absolute -top-40 left-1/2 -translate-x-1/2 pointer-events-none z-0">
-        <NeuralGlow size={680} intensity={0.65} colorA="#7dd3fc" colorB="#6366f1" colorC="#a78bfa" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-6">
+      {/* Background accents */}
+      <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute -left-56 -top-40 w-[680px] h-[680px] rounded-3xl bg-gradient-to-tr from-[#05222f] via-[#01232f] to-transparent opacity-80 blur-[90px] transform rotate-12" />
+        <div className="absolute right-[-120px] top-10 w-[520px] h-[520px] rounded-3xl bg-gradient-to-bl from-[#08293a] via-[#023047] to-transparent opacity-70 blur-[88px]" />
       </div>
 
-      <div className="relative z-10 flex flex-col items-center w-full max-w-[980px]">
-        <div className="mb-6 flex items-center justify-center">
-          <div className="flex h-36 w-36 items-center justify-center rounded-full bg-white/6 shadow-2xl backdrop-blur-sm p-2">
-            <BrandLogo size={8} pulse />
-          </div>
-        </div>
+      <div className="w-full max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          {/* HERO */}
+          <div className="px-4 md:px-8 lg:px-12 order-2 lg:order-1">
+            <div className="max-w-xl">
+              <div className="flex items-center gap-4 mb-6">
+                <div className={`relative flex items-center justify-center ${mountedAnimate ? "zyntra-entrance" : ""}`} aria-hidden>
+                  <div className="absolute w-48 h-48 rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.12), rgba(255,255,255,0.06) 40%, rgba(255,255,255,0.02) 70%, transparent)", filter: "blur(8px) saturate(1.02)" }} />
+                  <div className="absolute w-44 h-44 rounded-3xl bg-white/6 backdrop-blur-3xl border border-white/8 z-10" />
+                  <div className={`absolute w-44 h-44 rounded-3xl ring-4 ring-[#00E3C2]/18 ${"zyntra-pulse"}`} style={{ transformOrigin: "center" }} />
+                  <div className="zyntra-shimmer" data-shimmer={mountedAnimate} aria-hidden />
+                  <div className="relative z-20 flex items-center justify-center w-40 h-40 zyntra-hover" style={{ transition: "transform 220ms cubic-bezier(.2,.9,.2,1)" }}>
+                    <div className="h-28 w-auto flex items-center justify-center">
+                      <SafeLogo size={140} className="drop-shadow-[0_10px_30px_rgba(0,255,220,0.48)]" />
+                    </div>
+                  </div>
+                </div>
 
-        <AuthCard className="w-full max-w-xl">
-          <motion.div initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
-            <div className="text-center mb-6">
-              <div className="flex justify-center items-center gap-2">
-                <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-linear-to-r from-sky-300 via-indigo-400 to-sky-300">
-                  Create your workspace
-                </h1>
-                <AIBadge />
-              </div>
-              <p className="mt-2 text-sm text-white/70">Spin up a secure tenant with AI-powered onboarding.</p>
-            </div>
-
-            <form onSubmit={handleSignup} className="space-y-4" aria-label="Signup form">
-              {/* Org */}
-              <div>
-                <label className="text-xs font-medium text-white/70">Organization / Company</label>
-                <input
-                  placeholder="Organization / Company"
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
-                  value={form.org}
-                  onChange={onChange("org")}
-                  required
-                />
-              </div>
-
-              {/* Country */}
-              <div>
-                <label className="text-xs font-medium text-white/70">Country</label>
-                <CountrySelect
-                  countries={countries}
-                  value={countryId}
-                  onChange={(id: string) => setCountryId(id)}
-                />
-                <p className="mt-2 text-xs text-white/50">Selecting a country lets us pre-apply local tax defaults.</p>
-              </div>
-
-              {/* Apply defaults */}
-              <div className="flex items-center gap-3">
-                <input type="checkbox" checked={applyCountryDefaults} onChange={(e) => setApplyCountryDefaults(e.target.checked)} className="w-4 h-4 rounded" />
-                <label className="text-xs text-white/70">Apply country tax defaults to this company</label>
-              </div>
-
-              {/* Name */}
-              <div>
-                <label className="text-xs font-medium text-white/70">Your name</label>
-                <input
-                  placeholder="Your name"
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
-                  value={form.name}
-                  onChange={onChange("name")}
-                  required
-                />
-              </div>
-
-              {/* Email */}
-              <div>
-                <label className="text-xs font-medium text-white/70">Work email</label>
-                <input
-                  type="email"
-                  placeholder="you@company.com"
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
-                  value={form.email}
-                  onChange={onChange("email")}
-                  required
-                />
-                <div className="mt-2 text-xs">
-                  {checkingEmail ? (
-                    <span className="text-white/60">Checking…</span>
-                  ) : emailAvailable === null ? (
-                    <span className="text-white/50">Enter a valid business email.</span>
-                  ) : emailAvailable ? (
-                    <span className="text-emerald-300">Email available</span>
-                  ) : (
-                    <span className="text-amber-400">Email already exists</span>
-                  )}
+                <div>
+                  <div className="text-xs text-white/60 tracking-wider uppercase">ZYNTRA</div>
+                  <div className="text-sm text-white/50">AI-Driven ERP for Modern Teams</div>
                 </div>
               </div>
 
-              {/* Password */}
-              <div>
-                <label className="text-xs font-medium text-white/70">Password</label>
-                <input
-                  type="password"
-                  placeholder="Password"
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-400/40"
-                  value={form.password}
-                  onChange={onChange("password")}
-                  required
-                />
-                <PasswordStrength value={form.password} />
+              <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight text-white">Smarter business operations. Faster decisions.</h1>
 
-                {pwServerReasons?.length ? (
-                  <ul className="mt-2 text-xs text-red-300 list-disc list-inside space-y-1">
-                    {pwServerReasons.map((r, i) => (
-                      <li key={i}>{r}</li>
-                    ))}
-                  </ul>
-                ) : null}
+              <p className="mt-5 text-lg text-white/75">ZYNTRA combines modern ERP with AI assistants, delivering forecasting, automations and unified operations — built for finance, inventory and teams.</p>
+
+              <div className="mt-8 flex gap-4 items-center">
+                <a href="#signup" className="inline-flex items-center gap-3 px-5 py-2.5 rounded-md bg-gradient-to-r from-[#dffaf2] to-[#c6fff0] text-slate-900 font-semibold shadow-[0_10px_30px_rgba(6,182,163,0.08)] transform transition-transform duration-180 hover:-translate-y-1">Create workspace — Free</a>
+                <a href="/docs" className="text-sm text-white/60 hover:text-white/80">Docs & onboarding →</a>
               </div>
 
-              {/* Errors */}
-              {err && (
-                <p role="alert" className="text-sm text-red-400 mt-1">
-                  {err}
-                </p>
-              )}
-
-              {ok && (
-                <p role="status" aria-live="polite" className="text-sm text-emerald-400 mt-1">
-                  Workspace created — redirecting…
-                </p>
-              )}
-
-              <PrimaryButton type="submit" disabled={!canSubmit || loading} aria-busy={loading}>
-                {loading ? "Creating workspace…" : "Start Free"}
-              </PrimaryButton>
-            </form>
-
-            <div className="mt-6 border-t border-white/10 pt-5 text-center">
-              <p className="text-xs text-white/60 mb-2">Already have an account?</p>
-              <a
-                href="/login"
-                className="inline-block w-full rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white/90 hover:bg-white/10 transition"
-              >
-                Back to Login
-              </a>
+              <div className="mt-10 grid grid-cols-2 gap-4">
+                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
+                  <div className="text-xs text-white/60">Provisioning</div>
+                  <div className="mt-1 font-semibold text-white">Instant workspace</div>
+                </div>
+                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
+                  <div className="text-xs text-white/60">Security</div>
+                  <div className="mt-1 font-semibold text-white">SSO & enterprise-ready</div>
+                </div>
+              </div>
             </div>
-          </motion.div>
-        </AuthCard>
-      </div>
+          </div>
+
+          {/* FORM - glass card */}
+          <div className="order-1 lg:order-2 px-4 md:px-8">
+            <div id="signup" className="mx-auto max-w-md">
+              <div className="relative">
+                <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-gradient-to-tr from-[#00E3C2] to-[#7dd3fc] opacity-6 animate-float" />
+                <div className="relative rounded-md bg-[rgba(255,255,255,0.03)] border border-white/8 backdrop-blur-md p-6 ring-1 ring-white/4 shadow-2xl transition-transform transform hover:-translate-y-1">
+                  {/* left accent stripe */}
+                  <div className="absolute -left-1 top-6 bottom-6 w-[4px] rounded-l-md bg-gradient-to-b from-[#00E3C2]/60 to-transparent" aria-hidden />
+
+                  <div className="flex items-center gap-4 mb-5">
+                    <div className={`relative flex items-center justify-center ${mountedAnimate ? "zyntra-entrance" : ""}`} aria-hidden>
+                      <div className="absolute w-28 h-28 rounded-2xl" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.12), rgba(255,255,255,0.06) 40%, rgba(255,255,255,0.02) 70%, transparent)", filter: "blur(6px)" }} />
+                      <div className="absolute w-24 h-24 rounded-2xl bg-white/6 backdrop-blur-md border border-white/8 z-10" />
+                      <div className={`absolute w-24 h-24 rounded-2xl ring-4 ring-[#00E3C2]/16 ${"zyntra-pulse"}`} />
+                      <div className="zyntra-shimmer" data-shimmer={mountedAnimate} />
+                      <div className="relative z-20 flex items-center justify-center w-20 h-20" style={{ transition: "transform 200ms ease" }}>
+                        <SafeLogo size={80} className="drop-shadow-[0_6px_18px_rgba(0,255,220,0.45)]" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg sm:text-xl font-semibold text-white">Create your workspace</h3>
+                      <p className="text-sm text-white/70">Free trial — enterprise features included.</p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={createAccount} noValidate className="space-y-4" aria-live="polite">
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        aria-label="Your name"
+                        placeholder="Your name"
+                        value={form.name}
+                        onChange={(e) => update("name", e.target.value)}
+                        className="px-3 py-2 h-10 rounded-md bg-[#06121a] border border-white/8 text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
+                      />
+                      <input
+                        aria-label="Company name"
+                        placeholder="Company name"
+                        value={form.company}
+                        onChange={(e) => update("company", e.target.value)}
+                        className="px-3 py-2 h-10 rounded-md bg-[#06121a] border border-white/8 text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
+                      />
+                    </div>
+
+                    <input
+                      aria-label="Work email"
+                      placeholder="Work email"
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => update("email", e.target.value)}
+                      className="w-full px-3 py-2 h-10 rounded-md bg-[#06121a] border border-white/8 text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
+                    />
+
+                    <div className="grid grid-cols-1 gap-2">
+                      <div className="relative">
+                        <div className="flex items-center gap-2">
+                          <input
+                            aria-label="Password"
+                            placeholder="Password"
+                            type={showPassword ? "text" : "password"}
+                            value={form.password}
+                            onChange={(e) => update("password", e.target.value)}
+                            className="w-full px-3 py-2 h-10 rounded-md bg-[#06121a] border border-white/8 text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30 pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword((s) => !s)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-sm rounded"
+                            aria-label={showPassword ? "Hide password" : "Show password"}
+                          >
+                            {showPassword ? "Hide" : "Show"}
+                          </button>
+                        </div>
+
+                        <PasswordStrength value={form.password} />
+                      </div>
+
+                      <div>
+                        <CountrySelect
+                          countries={countries}
+                          value={form.countryId}
+                          onChange={(id) => update("countryId", id)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* industry */}
+                    <div className="grid grid-cols-1 gap-2">
+                      <label className="text-sm text-white/70">Industry</label>
+                      <select
+                        value={form.industry ?? ""}
+                        onChange={(e) => update("industry", e.target.value)}
+                        className="w-full px-3 py-2 h-10 rounded-md bg-[#06121a] border border-white/8 text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
+                      >
+                        <option value="">Select industry (optional)</option>
+                        {INDUSTRIES.map((it) => (
+                          <option key={it.key} value={it.key}>
+                            {it.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* terms */}
+                    <label className="flex items-start gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={form.acceptTerms}
+                        onChange={(e) => update("acceptTerms", e.target.checked)}
+                        className="mt-1 w-4 h-4 bg-[#06121a] border border-white/8 rounded"
+                      />
+                      <span className="text-white/80">
+                        I agree to the <a href="/terms" className="underline">Terms</a> and <a href="/privacy" className="underline">Privacy Policy</a>.
+                      </span>
+                    </label>
+
+                    {/* server-side password reasons, error and success */}
+                    {pwServerReasons && pwServerReasons.length > 0 && (
+                      <div className="rounded-md p-3 bg-[rgba(255,255,255,0.02)] border border-yellow-400/10 text-xs text-yellow-200">
+                        <div className="font-medium text-yellow-100 mb-1">Password suggestions</div>
+                        <ul className="list-disc list-inside space-y-1">
+                          {pwServerReasons.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {error && <div className="text-sm text-red-300">{error}</div>}
+                    {success && <div className="text-sm text-emerald-300">Account created. Redirecting…</div>}
+
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        type="submit"
+                        disabled={!canSubmit || loading}
+                        className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-semibold transition ${
+                          canSubmit && !loading ? "bg-[#00E3C2] text-black" : "bg-white/6 text-white/40 cursor-not-allowed"
+                        }`}
+                      >
+                        {loading ? "Creating…" : "Create workspace"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => router.push("/auth/login")}
+                        className="text-sm text-white/60 hover:text-white/80"
+                      >
+                        Already have an account?
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>  
     </div>
   );
 }
