@@ -330,14 +330,19 @@ function CountrySelect({
   }, []);
 
   function openDropdown() {
-    setOpen(true);
-    setQuery(selected?.name ?? "");
-    setTimeout(() => searchRef.current?.focus(), 0);
-    setTimeout(() => {
-      const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
-      setHighlight(idx >= 0 ? idx : 0);
-    }, 0);
-  }
+  setOpen(true);
+  setQuery(selected?.name ?? "");
+  setTimeout(() => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, 0);
+  setTimeout(() => {
+    const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+    setHighlight(idx >= 0 ? idx : 0);
+    scrollIntoView(idx >= 0 ? idx : 0);
+  }, 10);
+}
+
 
   function scrollIntoView(index: number) {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${index}"]`);
@@ -353,23 +358,27 @@ function CountrySelect({
   }
 
   function onSearchKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
-      scrollIntoView(highlight + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-      scrollIntoView(highlight - 1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      selectAt(highlight);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      setQuery("");
-    }
-  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    setHighlight((h) => {
+      const next = Math.min(h + 1, Math.max(filtered.length - 1, 0));
+      // use next for scroll
+      scrollIntoView(next);
+      return next;
+    });
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    setHighlight((h) => {
+      const next = Math.max(h - 1, 0);
+      scrollIntoView(next);
+      return next;
+    });
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    selectAt(highlight);
+  } 
+}
+
 
   useEffect(() => {
     if (highlight >= filtered.length) setHighlight(Math.max(0, filtered.length - 1));
