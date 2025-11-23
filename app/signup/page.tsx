@@ -131,7 +131,7 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   FlagIcon (Restored: Uses ISO code to generate Unicode emoji)
+   FlagIcon (Displays Emoji Flag, falls back to ISO-2 code generation)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
   const flagEmoji = country?.flag_emoji;
@@ -139,7 +139,8 @@ function FlagIcon({ country }: { country: Country | null }) {
   
   // 1. If the backend provides the emoji, use it.
   if (flagEmoji) {
-    return <span className="text-lg">{flagEmoji}</span>;
+    // text-lg leading-none ensures the emoji is sized correctly
+    return <span className="text-lg leading-none">{flagEmoji}</span>; 
   }
   
   // 2. Fallback: If no emoji but we have a valid ISO-2 code, generate the standard emoji
@@ -147,9 +148,9 @@ function FlagIcon({ country }: { country: Country | null }) {
     const iso = iso2.toUpperCase();
     
     // Unicode trick: Regional Indicator Symbol Letter A is U+1F1E6.
-    // We convert the character code to the regional indicator code point.
     try {
         const A_CODE = 'A'.charCodeAt(0);
+        // The flag emoji is two regional indicator symbols
         const firstChar = iso.charCodeAt(0) + 0x1F1E6 - A_CODE;
         const secondChar = iso.charCodeAt(1) + 0x1F1E6 - A_CODE;
 
@@ -157,7 +158,7 @@ function FlagIcon({ country }: { country: Country | null }) {
         
         // Return generated emoji
         if (generatedEmoji.length === 2) {
-            return <span className="text-lg">{generatedEmoji}</span>;
+            return <span className="text-lg leading-none">{generatedEmoji}</span>; 
         }
     } catch (e) {
         // Fall through to final fallback if code point generation fails
@@ -165,7 +166,7 @@ function FlagIcon({ country }: { country: Country | null }) {
   }
 
   // 3. Final Fallback (Earth icon)
-  return <span>🌐</span>; 
+  return <span className="text-white/50">🌐</span>; // text-white/50 is the styling for the placeholder
 }
 
 
@@ -322,11 +323,8 @@ function CountrySelect({
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
-            {selected ? (
-              <FlagIcon country={selected} />
-            ) : (
-              <span className="text-white/50">🌐</span>
-            )}
+            {/* FlagIcon handles null country and falls back to 🌐 */}
+            <FlagIcon country={selected} />
           </div>
 
           <div className="text-sm text-white/80 truncate">
