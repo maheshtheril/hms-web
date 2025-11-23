@@ -753,8 +753,9 @@ export default function SignupPage(): JSX.Element {
       // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
-      // backend-friendly payload: prefer server-side id as country_id, fallback to iso2 or ui id
-      const country_id = selected?.serverId ?? selected?.iso2 ?? form.countryId;
+      // backend-friendly payload: prefer server-side id as camelCase countryId (server accepts this),
+      // keep country_iso2 for convenience if backend supports it.
+      const countryId = selected?.serverId ?? selected?.iso2 ?? form.countryId;
       const country_iso2 = selected?.iso2 ?? undefined;
 
       const res = await fetch(url, {
@@ -766,22 +767,26 @@ export default function SignupPage(): JSX.Element {
           company: form.company,
           email: form.email,
           password: form.password,
-          country_id, // server field name
-          country_iso2, // convenience if backend accepts iso
+          countryId, // now sending camelCase to match backend's expected field
+          country_iso2, // optional compatibility
           industry: form.industry || null,
         }),
       });
 
       const payload = await res.json().catch(() => ({}));
+
       if (!res.ok) {
+        // map common backend error shapes to user-friendly messages
         if (payload?.error === "email_exists") {
           throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
-        // handle weak_password with reasons
         if (res.status === 400 && payload?.error === "weak_password" && Array.isArray(payload?.reasons)) {
           setPwServerReasons(payload.reasons);
           setError("Password does not meet requirements.");
           return;
+        }
+        if (payload?.error === "missing_fields") {
+          throw new Error("Request missing required fields. Please ensure all fields are filled.");
         }
         throw new Error(payload?.message || payload?.error || `Signup failed (${res.status})`);
       }
