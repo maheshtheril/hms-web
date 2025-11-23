@@ -130,66 +130,42 @@ function PasswordStrength({ value }: { value: string }) {
    FlagIcon (robust emoji fallback generation / force emoji fonts)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
-  // Prefer server-provided emoji (normalized into flag_emoji)
   const explicit = country?.flag_emoji ?? null;
-  if (explicit) {
-    return (
+
+  const iso = (country?.iso2 ?? "").toString().trim().slice(0, 2).toUpperCase();
+
+  const generatedEmoji = React.useMemo(() => {
+    if (!iso || !/^[A-Z]{2}$/.test(iso)) return null;
+    try {
+      const base = 0x1f1e6;
+      const first = base + (iso.charCodeAt(0) - 65);
+      const second = base + (iso.charCodeAt(1) - 65);
+      return String.fromCodePoint(first, second);
+    } catch {
+      return null;
+    }
+  }, [iso]);
+
+  const emojiToShow = explicit || generatedEmoji || "🌐";
+
+  return (
+    <span className="inline-flex items-center" title={country?.name ?? iso}>
       <span
-        title={country?.name ?? ""}
-        aria-hidden
+        aria-hidden="true"
         style={{
           fontSize: 18,
           lineHeight: 1,
-          // Force emoji-capable fonts to avoid custom-font hiding color emoji
           fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
         }}
       >
-        {explicit}
+        {emojiToShow}
       </span>
-    );
-  }
-
-  // Fallback: iso2 -> regional indicator emoji
-  const isoRaw = country?.iso2 ?? "";
-  const iso = typeof isoRaw === "string" ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
-
-  if (iso && /^[A-Z]{2}$/.test(iso)) {
-    try {
-      const base = 0x1f1e6; // regional indicator start
-      const first = base + (iso.charCodeAt(0) - "A".charCodeAt(0));
-      const second = base + (iso.charCodeAt(1) - "A".charCodeAt(0));
-      const emoji = String.fromCodePoint(first, second);
-      return (
-        <span
-          title={country?.name ?? iso}
-          aria-hidden
-          style={{
-            fontSize: 18,
-            lineHeight: 1,
-            fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
-          }}
-        >
-          {emoji}
-        </span>
-      );
-    } catch (err) {
-      // continue to globe fallback
-      // eslint-disable-next-line no-console
-      console.warn("[FlagIcon] iso->emoji generation failed for", iso, err);
-    }
-  }
-
-  // Final fallback
-  return (
-    <span
-      title={country?.name ?? "Unknown"}
-      className="text-white/50"
-      style={{ fontSize: 16, lineHeight: 1 }}
-    >
-      🌐
+      {/* screen-reader only name so assistive tech reads the country */}
+      <span className="sr-only">{country?.name ?? iso}</span>
     </span>
   );
 }
+
 
 /* SafeLogo: tries Logo component and falls back to PNG */
 function SafeLogo({
@@ -557,39 +533,66 @@ export default function SignupPage(): JSX.Element {
         const normalized: Country[] =
           arr.length > 0
             ? arr.map((c: any, idx: number) => {
-                // potential iso fields from various APIs
+                // ----- iso discovery (many possible fields) -----
                 const isoRaw =
-                  c.iso2 ??
-                  c.alpha2 ??
-                  c.country_code ??
-                  c.alpha_2 ??
-                  c.code2 ??
-                  c.code ??
-                  c.countryCode ??
-                  "";
-                const iso = isoRaw ? String(isoRaw).toString().trim().slice(0, 2).toUpperCase() : undefined;
+                  (c?.iso2 ??
+                    c?.alpha2 ??
+                    c?.country_code ??
+                    c?.alpha_2 ??
+                    c?.code2 ??
+                    c?.code ??
+                    c?.countryCode ??
+                    c?.iso ??
+                    c?.ISO ??
+                    ""
+                  ).toString();
+                const iso = isoRaw ? isoRaw.trim().slice(0, 2).toUpperCase() : undefined;
 
-                // server id candidates
-                const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
+                // ----- server id candidates (prefer UUID / db id fields) -----
+                const serverIdCandidate =
+                  c?.id ?? c?._id ?? c?.uuid ?? c?.uid ?? c?.server_id ?? c?.code ?? c?.countryId ?? iso ?? `c${idx}`;
+                const serverId = serverIdCandidate != null ? String(serverIdCandidate) : `c${idx}`;
 
-                // explicit emoji fields commonly used (many possible keys)
-                const explicitFlag =
-                  c.flag_emoji ??
-                  c.flag ??
-                  c.emoji ??
-                  c.flagEmoji ??
-                  c.country_flag ??
-                  c.countryFlag ??
-                  null;
+                // ----- find explicit emoji robustly -----
+                // 1) common explicit fields
+                let explicitFlag =
+                  (c?.flag_emoji ?? c?.flag ?? c?.emoji ?? c?.flagEmoji ?? c?.country_flag ?? c?.countryFlag ?? null) as string | null;
 
-                // name fallback — if server returned only ISO, map to friendly name
-                let nameCandidate = String(c.name ?? c.country ?? c.label ?? c.title ?? (iso || "Unknown"));
-                if (iso && nameCandidate === iso) {
+                // 2) if not found, try to detect any value in object that looks like a regional-flag emoji
+                if (!explicitFlag) {
+                  try {
+                    for (const key of Object.keys(c || {})) {
+                      const val = c[key];
+                      if (typeof val === "string") {
+                        // regional indicator symbols regex (unicode) — will match 🇦🇺 etc
+                        if (/\p{Regional_Indicator}/u.test(val) || /[\u{1F1E6}-\u{1F1FF}]/u.test(val)) {
+                          explicitFlag = val;
+                          break;
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    // ignore detection errors
+                  }
+                }
+
+                // 3) trim whitespace/newlines from explicitFlag and normalize to null if empty
+                if (typeof explicitFlag === "string") {
+                  explicitFlag = explicitFlag.trim();
+                  if (explicitFlag.length === 0) explicitFlag = null;
+                } else {
+                  explicitFlag = null;
+                }
+
+                // ----- name fallback (map iso -> friendly name if server provided only ISO) -----
+                let nameCandidate = String(c?.name ?? c?.country ?? c?.label ?? c?.title ?? (iso ?? "Unknown"));
+                if (iso && (nameCandidate === iso || nameCandidate.trim().length <= 3)) {
                   nameCandidate = ISO_TO_FULL_NAME[iso] ?? nameCandidate;
                 }
 
+                // Final object: use serverId as canonical id so UI text doesn't show ISO code accidentally
                 return {
-                  id: String(iso ?? serverId),
+                  id: String(serverId), // canonical UI id (UUID / DB id)
                   name: nameCandidate || (iso ? ISO_TO_FULL_NAME[iso] ?? iso : `Country ${idx + 1}`),
                   flag_emoji: explicitFlag ?? null,
                   iso2: iso,
@@ -607,6 +610,8 @@ export default function SignupPage(): JSX.Element {
 
         if (!mounted) return;
         setCountries(normalized);
+
+        // Prefer to select India's serverId if present; fallback to first normalized id
         const india = normalized.find((c) => (c.iso2 ?? "").toUpperCase() === "IN" || c.name === "India");
         setForm((s) => ({ ...s, countryId: india ? india.id : normalized[0]?.id ?? "" }));
       } catch (err) {
