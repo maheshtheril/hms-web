@@ -556,26 +556,39 @@ export default function SignupPage(): JSX.Element {
           ? parsed.countries
           : [];
 
+        // NORMALIZE: support many server shapes and produce canonical keys:
+        // { id, name, iso2?, flag_emoji?, serverId? }
         const normalized: Country[] =
           arr.length > 0
             ? arr.map((c: any, idx: number) => {
-                const isoRaw = c.iso2 ?? c.alpha2 ?? c.country_code ?? c.alpha_2 ?? c.code;
-                const iso = isoRaw ? String(isoRaw).trim().slice(0, 2).toUpperCase() : undefined;
+                // possible iso fields
+                const isoRaw =
+                  c.iso2 ??
+                  c.alpha2 ??
+                  c.country_code ??
+                  c.alpha_2 ??
+                  c.code2 ??
+                  c.code ??
+                  c.countryCode ??
+                  "";
+                const iso = isoRaw ? String(isoRaw).toString().trim().slice(0, 2).toUpperCase() : undefined;
+
+                // server id candidates
                 const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
-                const uiId = iso ?? String(serverId);
-                
-                // Prioritize finding a full name, or fall back to defensive map
+
+                // explicit emoji fields commonly used
+                const explicitFlag = c.flag_emoji ?? c.flag ?? c.emoji ?? c.flagEmoji ?? null;
+
+                // name fallback — if server returned only ISO, map to friendly name
                 let nameCandidate = String(c.name ?? c.country ?? c.label ?? c.title ?? (iso || "Unknown"));
-                
-                // If the name candidate is just a 2-letter ISO, replace it with the full name from the defensive map
                 if (iso && nameCandidate === iso) {
-                    nameCandidate = ISO_TO_FULL_NAME[iso] ?? nameCandidate;
+                  nameCandidate = ISO_TO_FULL_NAME[iso] ?? nameCandidate;
                 }
-                
+
                 return {
-                  id: String(uiId),
-                  name: nameCandidate,
-                  flag_emoji: c.flag_emoji ?? c.flag ?? c.emoji ?? null,
+                  id: String(iso ?? serverId),
+                  name: nameCandidate || (iso ? ISO_TO_FULL_NAME[iso] ?? iso : `Country ${idx + 1}`),
+                  flag_emoji: explicitFlag ?? null,
                   iso2: iso,
                   serverId: serverId != null ? String(serverId) : undefined,
                 } as Country;
@@ -584,6 +597,10 @@ export default function SignupPage(): JSX.Element {
                 { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
                 { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
               ];
+
+        // debug sample for devs (remove in production)
+        // eslint-disable-next-line no-console
+        console.debug("[countries] normalized sample:", normalized.slice(0, 6));
 
         if (!mounted) return;
         setCountries(normalized);
@@ -634,7 +651,7 @@ export default function SignupPage(): JSX.Element {
     }
     // enforce same min length as the password policy
     if (form.password.length < PASSWORD_POLICY.minLength) {
-      setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`);
+      setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`); 
       return;
     }
 
@@ -706,8 +723,8 @@ export default function SignupPage(): JSX.Element {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-6">
       {/* Background accents */}
       <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute -left-56 -top-40 w-[680px] h-[680px] rounded-3xl bg-gradient-to-tr from-[#05222f] via-[#01232f] to-transparent opacity-80 blur-[90px] transform rotate-12" />
-        <div className="absolute right-[-120px] top-10 w-[520px] h-[520px] rounded-3xl bg-gradient-to-bl from-[#08293a] via-[#023047] to-transparent opacity-70 blur-[88px]" />
+        <div className="absolute -left-56 -top-40 w-[680px] h-[680px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.12), rgba(255,255,255,0.06) 40%, rgba(255,255,255,0.02) 70%, transparent)", filter: "blur(8px) saturate(1.02)" }} />
+        <div className="absolute right-[-120px] top-10 w-[520px] h-[520px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 40%, transparent)", filter: "blur(88px)" }} />
       </div>
 
       <div className="w-full max-w-7xl mx-auto">
@@ -897,9 +914,7 @@ export default function SignupPage(): JSX.Element {
                       <button
                         type="submit"
                         disabled={!canSubmit || loading}
-                        className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-semibold transition ${
-                          canSubmit && !loading ? "bg-[#00E3C2] text-black" : "bg-white/6 text-white/40 cursor-not-allowed"
-                        }`}
+                        className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-semibold transition ${canSubmit && !loading ? "bg-[#00E3C2] text-black" : "bg-white/6 text-white/40 cursor-not-allowed"}`}
                       >
                         {loading ? "Creating…" : "Create workspace"}
                       </button>
