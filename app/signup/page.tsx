@@ -107,74 +107,18 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   Small inline SVG flags
+   FlagIcon (Simplified to rely on Emojis)
    -------------------------- */
-function FlagSvg({ iso, size = 20 }: { iso?: string | null; size?: number }) {
-  if (!iso) return null;
-  const key = iso.toUpperCase();
-  switch (key) {
-    case "IN":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2" className="block">
-          <rect width="3" height="2" fill="#ff9933" />
-          <rect y="0.667" width="3" height="0.666" fill="#fff" />
-          <rect y="1.333" width="3" height="0.667" fill="#138808" />
-          <circle cx="1.5" cy="1" r="0.25" fill="#0b3d91" />
-        </svg>
-      );
-    case "US":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 19 10">
-          <rect width="19" height="10" fill="#b22234" />
-          <g fill="#fff">
-            {Array.from({ length: 9 }).map((_, i) => (
-              <rect key={i} y={i * (10 / 9)} width="19" height={10 / 18} />
-            ))}
-          </g>
-          <rect width="7.4" height="4.6" fill="#3c3b6e" />
-        </svg>
-      );
-    case "GB":
-    case "UK":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 60 30">
-          <rect width="60" height="30" fill="#012169" />
-          <g fill="#fff">
-            <polygon points="0,0 24,0 60,21 60,30 36,30 0,9" />
-            <polygon points="60,0 36,0 0,21 0,30 24,30 60,9" />
-          </g>
-          <g fill="#c8102e">
-            <polygon points="0,0 18,0 60,22 60,30 42,30 0,8" />
-            <polygon points="60,0 42,0 0,22 0,30 18,30 60,8" />
-          </g>
-        </svg>
-      );
-    case "DE":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
-          <rect width="3" height="2" fill="#000" />
-          <rect y="0.667" width="3" height="0.666" fill="#DD0000" />
-          <rect y="1.333" width="3" height="0.667" fill="#FFCE00" />
-        </svg>
-      );
-    case "FR":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
-          <rect width="1" height="2" fill="#0055A4" />
-          <rect x="1" width="1" height="2" fill="#fff" />
-          <rect x="2" width="1" height="2" fill="#EF4135" />
-        </svg>
-      );
-    case "JP":
-      return (
-        <svg width={size} height={(size * 2) / 3} viewBox="0 0 3 2">
-          <rect width="3" height="2" fill="#fff" />
-          <circle cx="1.5" cy="1" r="0.5" fill="#bc002d" />
-        </svg>
-      );
-    default:
-      return null;
+function FlagIcon({ country }: { country: Country | null }) {
+  const flagEmoji = country?.flag_emoji;
+  
+  // If the backend provides the emoji, use it.
+  if (flagEmoji) {
+    return <span className="text-lg">{flagEmoji}</span>;
   }
+  
+  // Fallback if no emoji is provided
+  return <span>🏳️</span>;
 }
 
 /* SafeLogo: tries Logo component and falls back to PNG */
@@ -220,9 +164,6 @@ function SafeLogo({
   );
 }
 
-/* ----------------------------
-   CountrySelect - Option A behavior
-   ---------------------------- */
 /* ----------------------------
    CountrySelect - Option A behavior
    ---------------------------- */
@@ -334,13 +275,7 @@ function CountrySelect({
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
             {selected ? (
-              selected.iso2 ? (
-                <FlagSvg iso={selected.iso2} size={18} />
-              ) : selected.flag_emoji ? (
-                <span className="text-lg">{selected.flag_emoji}</span>
-              ) : (
-                <span>🏳️</span>
-              )
+              <FlagIcon country={selected} />
             ) : (
               <span className="text-white/50">🌐</span>
             )}
@@ -388,8 +323,6 @@ function CountrySelect({
               filtered.map((c, idx) => {
                 const isHighlighted = idx === highlight;
                 const isSelected = c.id === value;
-                const iso =
-                  (c.iso2 ?? c.id ?? "").length === 2 ? (c.iso2 ?? c.id ?? "").toUpperCase() : c.iso2 ?? null;
                 return (
                   <div
                     key={c.id}
@@ -404,12 +337,12 @@ function CountrySelect({
                     className={`flex items-center gap-3 px-3 py-2 h-10 cursor-pointer ${isHighlighted ? "bg-[#0f2934]" : "hover:bg-[#0c2229]"} ${isSelected ? "border-l-2 border-[#00E3C2] pl-2" : ""}`}
                   >
                     <div className="w-8 h-8 flex items-center justify-center">
-                      {iso ? <FlagSvg iso={iso} size={18} /> : c.flag_emoji ? <span className="text-lg">{c.flag_emoji}</span> : <span>🏳️</span>}
+                      <FlagIcon country={c} />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-white/90">{c.name}</div>
-                      {/* UUID display REMOVED from here */}
+                      {/* Removed: <div className="text-xs text-white/50">{c.id}</div> */}
                     </div>
 
                     {isSelected && <div className="text-emerald-300 text-sm">✓</div>}
