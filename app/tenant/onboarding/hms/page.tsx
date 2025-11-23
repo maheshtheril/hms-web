@@ -9,6 +9,8 @@ export default function HMSOnboarding() {
   const [step, setStep] = useState(1);
   const [departments, setDepartments] = useState<string[]>([]);
   const [billingMode, setBillingMode] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const DEPARTMENT_LIST = [
     "General Medicine",
@@ -30,21 +32,62 @@ export default function HMSOnboarding() {
   }
 
   async function finish() {
-    // Hit backend onboarding API here (optional)
-    // await fetch("/api/onboarding/hms", {...})
+    setError(null);
+    setLoading(true);
 
-    router.push("/tenant/dashboard");
+    try {
+      const API = process.env.NEXT_PUBLIC_API_URL || ""; // env-controlled, empty => relative path
+      const url = API ? `${API}/onboarding/hms` : `/api/onboarding/hms`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        credentials: "include", // ensures HttpOnly cookie (session) is included
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          departments,
+          billingMode,
+        }),
+      });
+
+      if (res.status === 401) {
+        // not authenticated — redirect to login
+        router.push("/login");
+        return;
+      }
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => null);
+        setError(`Onboarding failed: ${res.status} ${txt ?? ""}`);
+        setLoading(false);
+        return;
+      }
+
+      // success — navigate to tenant dashboard
+      router.push("/tenant/dashboard");
+    } catch (err: any) {
+      setError(err?.message || "Network error during onboarding");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#071226] to-[#071321] flex items-center justify-center p-10 text-white">
       <div className="w-full max-w-3xl mx-auto">
-
         {/* Glass Card */}
         <div className="relative rounded-xl bg-[rgba(255,255,255,0.03)] border border-white/10 backdrop-blur-xl p-8 shadow-2xl ring-1 ring-white/5">
           <div className="absolute -top-12 -right-12 w-52 h-52 rounded-full bg-[#00E3C2]/10 blur-3xl"></div>
 
           <h1 className="text-3xl font-bold mb-6">Hospital Onboarding</h1>
+
+          {error && (
+            <div className="mb-4 text-sm text-red-300 bg-red-900/10 p-3 rounded">
+              {error}
+            </div>
+          )}
 
           {/* STEP 1 */}
           {step === 1 && (
@@ -148,7 +191,7 @@ export default function HMSOnboarding() {
                 disabled={!billingMode}
                 className="mt-8 w-full bg-gradient-to-r from-[#C8FFF0] to-[#B2FFE9]
                            text-black py-3 rounded-md font-semibold hover:-translate-y-1
-                           transition-all disabled:opacity-50 shadow-[0_8px_20px_rgba(0,255,220,0.15)]"
+                           transition-transform disabled:opacity-50 shadow-[0_8px_20px_rgba(0,255,220,0.15)]"
               >
                 Continue →
               </button>
@@ -166,11 +209,12 @@ export default function HMSOnboarding() {
 
               <button
                 onClick={finish}
+                disabled={loading}
                 className="mt-8 bg-gradient-to-r from-[#C8FFF0] to-[#B2FFE9]
                            text-black px-6 py-3 rounded-md font-semibold
-                           hover:-translate-y-1 transition-transform shadow-[0_8px_20px_rgba(0,255,220,0.15)]"
+                           hover:-translate-y-1 transition-transform shadow-[0_8px_20px_rgba(0,255,220,0.15)] disabled:opacity-60"
               >
-                Go to Dashboard →
+                {loading ? "Setting up…" : "Go to Dashboard →"}
               </button>
             </div>
           )}
