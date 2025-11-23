@@ -130,24 +130,33 @@ function PasswordStrength({ value }: { value: string }) {
    FlagIcon (robust emoji fallback generation / force emoji fonts)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
+  // Prefer server-provided emoji (normalized into flag_emoji)
   const explicit = country?.flag_emoji ?? null;
 
-  const iso = (country?.iso2 ?? "").toString().trim().slice(0, 2).toUpperCase();
+  // compute iso normalized
+  const isoRaw = country?.iso2 ?? "";
+  const iso = typeof isoRaw === "string" ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
 
-  const generatedEmoji = React.useMemo(() => {
+  // Memoize generated emoji from iso to avoid recomputing on each render for large lists
+  const generatedEmoji = useMemo(() => {
     if (!iso || !/^[A-Z]{2}$/.test(iso)) return null;
     try {
-      const base = 0x1f1e6;
-      const first = base + (iso.charCodeAt(0) - 65);
-      const second = base + (iso.charCodeAt(1) - 65);
-      return String.fromCodePoint(first, second);
-    } catch {
+      const base = 0x1f1e6; // regional indicator start
+      const first = base + (iso.charCodeAt(0) - "A".charCodeAt(0));
+      const second = base + (iso.charCodeAt(1) - "A".charCodeAt(0));
+      const emoji = String.fromCodePoint(first, second);
+      return emoji;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[FlagIcon] iso->emoji generation failed for", iso, err);
       return null;
     }
   }, [iso]);
 
+  // final emoji choice
   const emojiToShow = explicit || generatedEmoji || "🌐";
 
+  // Screen-reader friendly: show emoji aria-hidden, and provide sr-only country name
   return (
     <span className="inline-flex items-center" title={country?.name ?? iso}>
       <span
@@ -155,17 +164,16 @@ function FlagIcon({ country }: { country: Country | null }) {
         style={{
           fontSize: 18,
           lineHeight: 1,
+          // Force emoji-capable fonts to avoid custom-font hiding color emoji
           fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
         }}
       >
         {emojiToShow}
       </span>
-      {/* screen-reader only name so assistive tech reads the country */}
-      <span className="sr-only">{country?.name ?? iso}</span>
+      <span className="sr-only">{country?.name ?? iso ?? "Unknown country"}</span>
     </span>
   );
 }
-
 
 /* SafeLogo: tries Logo component and falls back to PNG */
 function SafeLogo({
@@ -304,6 +312,9 @@ function CountrySelect({
     if (highlight >= filtered.length) setHighlight(Math.max(0, filtered.length - 1));
   }, [filtered.length, highlight]);
 
+  // compute aria-activedescendant id when open
+  const activeOptionId = open && filtered[highlight] ? `country-option-${filtered[highlight].id}` : undefined;
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -312,6 +323,7 @@ function CountrySelect({
         className="w-full h-10 rounded-md bg-[#06121a] border border-white/8 px-3 py-2 text-sm text-white flex items-center justify-between gap-3 hover:ring-2 hover:ring-[#00E3C2]/20 focus:outline-none"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={`Country: ${selected?.name ?? "Select country"}`}
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
@@ -349,18 +361,22 @@ function CountrySelect({
               placeholder={placeholder}
               className="w-full h-10 rounded-md bg-[#06121a] border border-white/8 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:ring-2 focus:ring-[#00E3C2]/30"
               aria-label="Search country"
+              role="searchbox"
+              aria-activedescendant={activeOptionId}
             />
           </div>
 
-          <div ref={listRef} className="mt-2 max-h-[210px] overflow-auto">
+          <div ref={listRef} className="mt-2 max-h-[210px] overflow-auto" role="listbox" aria-label="Country list">
             {filtered.length === 0 ? (
               <div className="px-3 py-2 h-10 flex items-center text-white/50">No results</div>
             ) : (
               filtered.map((c, idx) => {
                 const isHighlighted = idx === highlight;
                 const isSelected = c.id === value;
+                const optionId = `country-option-${c.id}`;
                 return (
                   <div
+                    id={optionId}
                     key={c.id}
                     data-idx={idx}
                     role="option"
