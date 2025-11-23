@@ -29,7 +29,13 @@ type FormState = {
   acceptTerms: boolean;
 };
 
-type Country = { id: string; name: string; flag_emoji?: string | null; iso2?: string };
+type Country = {
+  id: string;
+  name: string;
+  flag_emoji?: string | null;
+  iso2?: string;
+  serverId?: string; // optional server-side id (use for backend payload)
+};
 
 /* -----------------------
    Password policy + helpers
@@ -217,6 +223,9 @@ function SafeLogo({
 /* ----------------------------
    CountrySelect - Option A behavior
    ---------------------------- */
+/* ----------------------------
+   CountrySelect - Option A behavior
+   ---------------------------- */
 function CountrySelect({
   countries,
   value,
@@ -269,8 +278,11 @@ function CountrySelect({
     setOpen(true);
     setQuery(selected?.name ?? "");
     setTimeout(() => searchRef.current?.focus(), 0);
-    const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
-    setHighlight(idx >= 0 ? idx : 0);
+    // compute index after setting query; safe fallback if filtered not updated yet
+    setTimeout(() => {
+      const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+      setHighlight(idx >= 0 ? idx : 0);
+    }, 0);
   }
 
   function onSearchKeyDown(e: React.KeyboardEvent) {
@@ -397,7 +409,7 @@ function CountrySelect({
 
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-white/90">{c.name}</div>
-                      <div className="text-xs text-white/50">{c.id}</div>
+                      {/* UUID display REMOVED from here */}
                     </div>
 
                     {isSelected && <div className="text-emerald-300 text-sm">✓</div>}
@@ -470,6 +482,9 @@ export default function SignupPage(): JSX.Element {
   });
 
   const [countries, setCountries] = useState<Country[]>([]);
+  const [loadingCountries, setLoadingCountries] = useState(false);
+  const [countriesError, setCountriesError] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -488,50 +503,100 @@ export default function SignupPage(): JSX.Element {
   useEffect(() => {
     let mounted = true;
     async function loadCountries() {
+      setLoadingCountries(true);
+      setCountriesError(null);
+
       try {
         const base = BACKEND || "";
-        const url = base ? `${base}/api/global/countries` : "/api/global/countries";
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) {
-          if (mounted) {
-            setCountries([
-              { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
-              { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
-            ]);
-            setForm((s) => ({ ...s, countryId: "IN" }));
+        // try common candidate endpoints (devs often vary)
+        const candidateUrls = base
+          ? [`${base}/api/global/countries`, `${base}/api/countries`, `${base}/api/global/country`]
+          : ["/api/global/countries", "/api/countries", "/api/global/country"];
+
+        let res: Response | null = null;
+        let lastErr: any = null;
+
+        for (const url of candidateUrls) {
+          try {
+            res = await fetch(url, { cache: "no-store", credentials: "include" });
+            if (res && res.ok) {
+              console.info("[countries] fetched from", url);
+              break;
+            } else {
+              lastErr = { url, status: res?.status, statusText: res?.statusText };
+              res = null;
+            }
+          } catch (e) {
+            lastErr = { url, error: e };
+            res = null;
           }
+        }
+
+        if (!res) {
+          console.error("[countries] all fetch attempts failed", lastErr);
+          if (!mounted) return;
+          setCountries([
+            { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
+            { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
+          ]);
+          setCountriesError("Failed to fetch countries from server. See console for details.");
+          setForm((s) => ({ ...s, countryId: "IN" }));
           return;
         }
-        const data: any = await res.json();
-        if (mounted) {
-          const arr = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
-          const normalized = arr.length
-            ? arr.map((c: any) => ({
-                id: String(c.id ?? c.iso2 ?? c.code ?? c.name ?? "").slice(0, 64),
-                name: String(c.name ?? c.country ?? c.label ?? c.title ?? ""),
-                flag_emoji: c.flag_emoji ?? c.flag ?? c.emoji ?? c.flagEmoji ?? null,
-                iso2:
-                  (c.iso2 ?? c.alpha2 ?? c.country_code ?? c.alpha_2 ?? "")
-                    .toString()
-                    .slice(0, 2)
-                    .toUpperCase() || undefined,
-              }))
+
+        const rawText = await res.text();
+        let parsed: any;
+        try {
+          parsed = rawText ? JSON.parse(rawText) : null;
+        } catch (e) {
+          console.warn("[countries] failed to parse JSON, rawText:", rawText);
+          parsed = null;
+        }
+        console.debug("[countries] raw response", { status: res.status, parsed });
+
+        const arr = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.data)
+          ? parsed.data
+          : Array.isArray(parsed?.countries)
+          ? parsed.countries
+          : [];
+
+        const normalized: Country[] =
+          arr.length > 0
+            ? arr.map((c: any, idx: number) => {
+                const isoRaw = c.iso2 ?? c.alpha2 ?? c.country_code ?? c.alpha_2 ?? c.code;
+                const iso = isoRaw ? String(isoRaw).slice(0, 2).toUpperCase() : undefined;
+                const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
+                const uiId = iso ?? String(serverId);
+                return {
+                  id: String(uiId),
+                  name: String(c.name ?? c.country ?? c.label ?? c.title ?? "Unknown"),
+                  flag_emoji: c.flag_emoji ?? c.flag ?? c.emoji ?? null,
+                  iso2: iso,
+                  serverId: serverId != null ? String(serverId) : undefined,
+                } as Country;
+              })
             : [
-                { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
-                { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
+                { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
+                { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
               ];
-          setCountries(normalized);
-          const india = normalized.find((c) => (c.iso2 ?? "").toUpperCase() === "IN" || c.name === "India");
-          setForm((s) => ({ ...s, countryId: india ? india.id : normalized[0]?.id ?? "" }));
-        }
+
+        if (!mounted) return;
+        setCountries(normalized);
+        const india = normalized.find((c) => (c.iso2 ?? "").toUpperCase() === "IN" || c.name === "India");
+        setForm((s) => ({ ...s, countryId: india ? india.id : normalized[0]?.id ?? "" }));
       } catch (err) {
-        if (mounted) {
-          setCountries([
-            { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN" },
-            { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US" },
-          ]);
-          setForm((s) => ({ ...s, countryId: "IN" }));
-        }
+        console.error("[countries] unexpected error", err);
+        if (!mounted) return;
+        setCountries([
+          { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
+          { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
+        ]);
+        setForm((s) => ({ ...s, countryId: "IN" }));
+        setCountriesError("Unexpected error fetching countries - check console.");
+      } finally {
+        if (mounted) setLoadingCountries(false);
       }
     }
     loadCountries();
@@ -574,6 +639,14 @@ export default function SignupPage(): JSX.Element {
     try {
       const base = BACKEND || "";
       const url = base ? `${base}/api/auth/signup` : "/api/auth/signup";
+
+      // pick selected country object to find serverId / iso2
+      const selected = countries.find((c) => c.id === form.countryId);
+
+      // backend-friendly payload: prefer server-side id as country_id, fallback to iso2 or ui id
+      const country_id = selected?.serverId ?? selected?.iso2 ?? form.countryId;
+      const country_iso2 = selected?.iso2 ?? undefined;
+
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -583,7 +656,8 @@ export default function SignupPage(): JSX.Element {
           company: form.company,
           email: form.email,
           password: form.password,
-          countryId: form.countryId,
+          country_id, // server field name
+          country_iso2, // convenience if backend accepts iso
           industry: form.industry || null,
         }),
       });
@@ -757,6 +831,12 @@ export default function SignupPage(): JSX.Element {
                       </div>
 
                       <div>
+                        {loadingCountries ? (
+                          <div className="text-xs text-white/60 mb-2">Loading countries…</div>
+                        ) : countriesError ? (
+                          <div className="text-xs text-amber-300 mb-2">{countriesError}</div>
+                        ) : null}
+
                         <CountrySelect
                           countries={countries}
                           value={form.countryId}
