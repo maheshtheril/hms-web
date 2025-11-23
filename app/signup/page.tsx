@@ -131,35 +131,40 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   FlagIconSvg (Uses SVG img tag for reliable display)
+   FlagIcon (Restored: Uses ISO code to generate Unicode emoji)
    -------------------------- */
-const FLAG_SVG_BASE_PATH = "/flags"; // Assumes flags are at /public/flags/US.svg
-
-function FlagIconSvg({ country }: { country: Country | null }) {
+function FlagIcon({ country }: { country: Country | null }) {
+  const flagEmoji = country?.flag_emoji;
   const iso2 = country?.iso2;
-  const [error, setError] = useState(false);
+  
+  // 1. If the backend provides the emoji, use it.
+  if (flagEmoji) {
+    return <span className="text-lg">{flagEmoji}</span>;
+  }
+  
+  // 2. Fallback: If no emoji but we have a valid ISO-2 code, generate the standard emoji
+  if (iso2 && iso2.length === 2) {
+    const iso = iso2.toUpperCase();
+    
+    // Unicode trick: Regional Indicator Symbol Letter A is U+1F1E6.
+    // We convert the character code to the regional indicator code point.
+    try {
+        const A_CODE = 'A'.charCodeAt(0);
+        const firstChar = iso.charCodeAt(0) + 0x1F1E6 - A_CODE;
+        const secondChar = iso.charCodeAt(1) + 0x1F1E6 - A_CODE;
 
-  // Reset error state if country or iso2 changes
-  useEffect(() => {
-    setError(false); 
-  }, [iso2]);
-
-  if (iso2 && !error) {
-    const src = `${FLAG_SVG_BASE_PATH}/${iso2.toUpperCase()}.svg`;
-    return (
-      // Using a standard aspect ratio and object-cover for consistency
-      <img
-        src={src}
-        alt={`${country?.name} flag`}
-        className="w-full h-full object-cover rounded-sm shadow-md"
-        onError={() => setError(true)}
-        // Force dimensions for a good flag display size in the container
-        style={{ width: "24px", height: "16px", aspectRatio: "3/2" }}
-      />
-    );
+        const generatedEmoji = String.fromCodePoint(firstChar) + String.fromCodePoint(secondChar);
+        
+        // Return generated emoji
+        if (generatedEmoji.length === 2) {
+            return <span className="text-lg">{generatedEmoji}</span>;
+        }
+    } catch (e) {
+        // Fall through to final fallback if code point generation fails
+    }
   }
 
-  // Fallback to globe icon if ISO2 is missing or SVG fails to load
+  // 3. Final Fallback (Earth icon)
   return <span>🌐</span>; 
 }
 
@@ -317,9 +322,8 @@ function CountrySelect({
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
-            {/* Switched to SVG component */}
             {selected ? (
-              <FlagIconSvg country={selected} />
+              <FlagIcon country={selected} />
             ) : (
               <span className="text-white/50">🌐</span>
             )}
@@ -381,8 +385,7 @@ function CountrySelect({
                     className={`flex items-center gap-3 px-3 py-2 h-10 cursor-pointer ${isHighlighted ? "bg-[#0f2934]" : "hover:bg-[#0c2229]"} ${isSelected ? "border-l-2 border-[#00E3C2] pl-2" : ""}`}
                   >
                     <div className="w-8 h-8 flex items-center justify-center">
-                       {/* Switched to SVG component */}
-                      <FlagIconSvg country={c} />
+                      <FlagIcon country={c} />
                     </div>
 
                     <div className="flex-1 min-w-0">
