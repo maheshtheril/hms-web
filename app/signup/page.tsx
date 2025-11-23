@@ -6,14 +6,10 @@ import Logo from "@/components/Logo";
 /**
  * Final signup page — Option A country selector + full password typing/strength UX
  *
- * - Closed: single select-like control showing selected flag + name
- * - Open: dropdown contains a search input (same sizing) + list
- * - Password rules, live strength meter, and server-side reasons supported
- * - Industry selection only (no module-checkbox at signup)
- *
- * Notes:
- * - LOGO_SRC prefers NEXT_PUBLIC_LOGO_SRC (deployment) and falls back to a public asset.
- * - If industry === "hospital" we redirect to HMS onboarding page after signup.
+ * - Normalizes many server shapes into canonical Country objects:
+ *   { id, name, iso2?, flag_emoji?, serverId? }
+ * - FlagIcon prefers explicit emoji, then generates from iso2, then globe fallback.
+ * - Ensures emoji fonts via inline style to avoid custom-font issues.
  */
 
 const LOGO_SRC = process.env.NEXT_PUBLIC_LOGO_SRC || "/assets/brand-logo.png";
@@ -34,7 +30,7 @@ type Country = {
   name: string;
   flag_emoji?: string | null;
   iso2?: string;
-  serverId?: string; // optional server-side id (use for backend payload)
+  serverId?: string;
 };
 
 /* defensive lookup for country names if backend only provides ISO2 code */
@@ -131,55 +127,65 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   FlagIcon (robust emoji fallback generation)
+   FlagIcon (robust emoji fallback generation / force emoji fonts)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
-  // 1) Use explicit emoji if provided by backend
-  const explicitEmoji = country?.flag_emoji ?? null;
-  if (explicitEmoji) {
+  // Prefer server-provided emoji
+  const explicit = country?.flag_emoji ?? null;
+  if (explicit) {
     return (
       <span
         title={country?.name ?? ""}
-        style={{ fontSize: 18, lineHeight: 1 }}
         aria-hidden
+        style={{
+          fontSize: 18,
+          lineHeight: 1,
+          // Force emoji-capable fonts to avoid custom-font hiding color emoji
+          fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
+        }}
       >
-        {explicitEmoji}
+        {explicit}
       </span>
     );
   }
 
-  // 2) Try iso2 fallback: trim + uppercase + validate letters
-  const isoRaw = (country?.iso2 ?? "").toString();
-  const iso = isoRaw ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
+  // Fallback: iso2 -> regional indicator emoji
+  const isoRaw = country?.iso2 ?? "";
+  const iso = typeof isoRaw === "string" ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
 
   if (iso && /^[A-Z]{2}$/.test(iso)) {
     try {
-      // Compute regional indicator symbols (A -> 0x1F1E6)
-      const base = 0x1f1e6;
-      const aCode = "A".charCodeAt(0);
-      const first = iso.charCodeAt(0) - aCode + base;
-      const second = iso.charCodeAt(1) - aCode + base;
+      const base = 0x1f1e6; // regional indicator start
+      const first = base + (iso.charCodeAt(0) - "A".charCodeAt(0));
+      const second = base + (iso.charCodeAt(1) - "A".charCodeAt(0));
       const emoji = String.fromCodePoint(first, second);
-
       return (
         <span
           title={country?.name ?? iso}
-          style={{ fontSize: 18, lineHeight: 1 }}
           aria-hidden
+          style={{
+            fontSize: 18,
+            lineHeight: 1,
+            fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
+          }}
         >
           {emoji}
         </span>
       );
     } catch (err) {
-      // fallback below
+      // continue to globe fallback
       // eslint-disable-next-line no-console
       console.warn("[FlagIcon] iso->emoji generation failed for", iso, err);
     }
   }
 
-  // 3) Last fallback: globe icon
+  // Final fallback
   return (
-    <span title={country?.name ?? "Unknown"} className="text-white/50" style={{ fontSize: 16, lineHeight: 1 }}>
+    <span
+      title={country?.name ?? "Unknown"}
+      className="text-white/50"
+      style={{ fontSize: 16, lineHeight: 1 }}
+    >
       🌐
     </span>
   );
@@ -229,7 +235,7 @@ function SafeLogo({
 }
 
 /* ----------------------------
-   CountrySelect - Option A behavior
+   CountrySelect component
    ---------------------------- */
 function CountrySelect({
   countries,
@@ -250,7 +256,6 @@ function CountrySelect({
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
 
-  // normalize selected
   const selected = useMemo(() => countries.find((c) => c.id === value) ?? null, [countries, value]);
 
   const filtered = useMemo(() => {
@@ -259,13 +264,12 @@ function CountrySelect({
     return countries.filter((c) => {
       return (
         c.name.toLowerCase().includes(q) ||
-        (c.flag_emoji ?? "").toLowerCase().includes(q) ||
-        (c.iso2 ?? c.id ?? "").toLowerCase().includes(q)
+        ((c.flag_emoji ?? "") as string).toLowerCase().includes(q) ||
+        ((c.iso2 ?? c.id ?? "") as string).toLowerCase().includes(q)
       );
     });
   }, [countries, query]);
 
-  // click outside closes dropdown
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!containerRef.current) return;
@@ -278,12 +282,10 @@ function CountrySelect({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // when opening, prefill search with selected name (so selection visible)
   function openDropdown() {
     setOpen(true);
     setQuery(selected?.name ?? "");
     setTimeout(() => searchRef.current?.focus(), 0);
-    // compute index after setting query; safe fallback if filtered not updated yet
     setTimeout(() => {
       const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
       setHighlight(idx >= 0 ? idx : 0);
@@ -328,7 +330,6 @@ function CountrySelect({
 
   return (
     <div ref={containerRef} className="relative">
-      {/* CLOSED CONTROL: single select-like button showing selected flag + name */}
       <button
         type="button"
         onClick={() => (open ? setOpen(false) : openDropdown())}
@@ -338,7 +339,6 @@ function CountrySelect({
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
-            {/* FlagIcon handles null country and falls back to 🌐 */}
             <FlagIcon country={selected} />
           </div>
 
@@ -358,7 +358,6 @@ function CountrySelect({
         </svg>
       </button>
 
-      {/* DROPDOWN PANEL */}
       {open && (
         <div className="absolute z-50 mt-2 w-full max-h-[300px] rounded-md bg-[#081421] border border-white/8 shadow-xl py-2 text-sm">
           <div className="px-3">
@@ -418,8 +417,8 @@ function CountrySelect({
 }
 
 /* -----------------------
-   Full Industries list (exposed for render)
-   NOTE: canonical keys used for backend 'industry' field */
+   Industries list
+   ----------------------- */
 const INDUSTRIES: { key: string; label: string }[] = [
   { key: "saas", label: "SaaS / Software" },
   { key: "manufacturing", label: "Manufacturing" },
@@ -483,7 +482,6 @@ export default function SignupPage(): JSX.Element {
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // server-side password reasons (when API responds weak_password)
   const [pwServerReasons, setPwServerReasons] = useState<string[] | null>(null);
 
   const [mountedAnimate, setMountedAnimate] = useState(false);
@@ -501,7 +499,6 @@ export default function SignupPage(): JSX.Element {
 
       try {
         const base = BACKEND || "";
-        // try common candidate endpoints (devs often vary)
         const candidateUrls = base
           ? [`${base}/api/global/countries`, `${base}/api/countries`, `${base}/api/global/country`]
           : ["/api/global/countries", "/api/countries", "/api/global/country"];
@@ -528,7 +525,6 @@ export default function SignupPage(): JSX.Element {
         if (!res) {
           console.error("[countries] all fetch attempts failed", lastErr);
           if (!mounted) return;
-          // Fallback list includes full names and emojis for safety
           setCountries([
             { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
             { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
@@ -556,12 +552,11 @@ export default function SignupPage(): JSX.Element {
           ? parsed.countries
           : [];
 
-        // NORMALIZE: support many server shapes and produce canonical keys:
-        // { id, name, iso2?, flag_emoji?, serverId? }
+        // NORMALIZE many server shapes -> canonical Country[]
         const normalized: Country[] =
           arr.length > 0
             ? arr.map((c: any, idx: number) => {
-                // possible iso fields
+                // potential iso fields from various APIs
                 const isoRaw =
                   c.iso2 ??
                   c.alpha2 ??
@@ -598,7 +593,7 @@ export default function SignupPage(): JSX.Element {
                 { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
               ];
 
-        // debug sample for devs (remove in production)
+        // quick debug sample
         // eslint-disable-next-line no-console
         console.debug("[countries] normalized sample:", normalized.slice(0, 6));
 
@@ -649,9 +644,8 @@ export default function SignupPage(): JSX.Element {
       setError("Please enter a valid email address.");
       return;
     }
-    // enforce same min length as the password policy
     if (form.password.length < PASSWORD_POLICY.minLength) {
-      setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`); 
+      setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`);
       return;
     }
 
@@ -660,10 +654,8 @@ export default function SignupPage(): JSX.Element {
       const base = BACKEND || "";
       const url = base ? `${base}/api/auth/signup` : "/api/auth/signup";
 
-      // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
-      // backend-friendly payload: prefer server-side id as country_id, fallback to iso2 or ui id
       const country_id = selected?.serverId ?? selected?.iso2 ?? form.countryId;
       const country_iso2 = selected?.iso2 ?? undefined;
 
@@ -676,8 +668,8 @@ export default function SignupPage(): JSX.Element {
           company: form.company,
           email: form.email,
           password: form.password,
-          country_id, // server field name
-          country_iso2, // convenience if backend accepts iso
+          country_id,
+          country_iso2,
           industry: form.industry || null,
         }),
       });
@@ -687,7 +679,6 @@ export default function SignupPage(): JSX.Element {
         if (payload?.error === "email_exists") {
           throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
-        // handle weak_password with reasons
         if (res.status === 400 && payload?.error === "weak_password" && Array.isArray(payload?.reasons)) {
           setPwServerReasons(payload.reasons);
           setError("Password does not meet requirements.");
@@ -698,8 +689,6 @@ export default function SignupPage(): JSX.Element {
 
       setSuccess(true);
 
-      // If industry is hospital, send user to the HMS onboarding wizard.
-      // Provisioning/seed jobs run asynchronously on the server (provisioning queue).
       setTimeout(() => {
         if (form.industry === "hospital") {
           router.push("/tenant/onboarding/hms");
@@ -721,7 +710,6 @@ export default function SignupPage(): JSX.Element {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-6">
-      {/* Background accents */}
       <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -left-56 -top-40 w-[680px] h-[680px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.12), rgba(255,255,255,0.06) 40%, rgba(255,255,255,0.02) 70%, transparent)", filter: "blur(8px) saturate(1.02)" }} />
         <div className="absolute right-[-120px] top-10 w-[520px] h-[520px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 40%, transparent)", filter: "blur(88px)" }} />
@@ -729,7 +717,6 @@ export default function SignupPage(): JSX.Element {
 
       <div className="w-full max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          {/* HERO */}
           <div className="px-4 md:px-8 lg:px-12 order-2 lg:order-1">
             <div className="max-w-xl">
               <div className="flex items-center gap-4 mb-6">
@@ -759,27 +746,14 @@ export default function SignupPage(): JSX.Element {
                 <a href="#signup" className="inline-flex items-center gap-3 px-5 py-2.5 rounded-md bg-gradient-to-r from-[#dffaf2] to-[#c6fff0] text-slate-900 font-semibold shadow-[0_10px_30px_rgba(6,182,163,0.08)] transform transition-transform duration-180 hover:-translate-y-1">Create workspace — Free</a>
                 <a href="/docs" className="text-sm text-white/60 hover:text-white/80">Docs & onboarding →</a>
               </div>
-
-              <div className="mt-10 grid grid-cols-2 gap-4">
-                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
-                  <div className="text-xs text-white/60">Provisioning</div>
-                  <div className="mt-1 font-semibold text-white">Instant workspace</div>
-                </div>
-                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
-                  <div className="text-xs text-white/60">Security</div>
-                  <div className="mt-1 font-semibold text-white">SSO & enterprise-ready</div>
-                </div>
-              </div>
             </div>
           </div>
 
-          {/* FORM - glass card */}
           <div className="order-1 lg:order-2 px-4 md:px-8">
             <div id="signup" className="mx-auto max-w-md">
               <div className="relative">
                 <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-gradient-to-tr from-[#00E3C2] to-[#7dd3fc] opacity-6 animate-float" />
                 <div className="relative rounded-md bg-[rgba(255,255,255,0.03)] border border-white/8 backdrop-blur-md p-6 ring-1 ring-white/4 shadow-2xl transition-transform transform hover:-translate-y-1">
-                  {/* left accent stripe */}
                   <div className="absolute -left-1 top-6 bottom-6 w-[4px] rounded-l-md bg-gradient-to-b from-[#00E3C2]/60 to-transparent" aria-hidden />
 
                   <div className="flex items-center gap-4 mb-5">
@@ -865,7 +839,6 @@ export default function SignupPage(): JSX.Element {
                       </div>
                     </div>
 
-                    {/* industry */}
                     <div className="grid grid-cols-1 gap-2">
                       <label className="text-sm text-white/70">Industry</label>
                       <select
@@ -882,7 +855,6 @@ export default function SignupPage(): JSX.Element {
                       </select>
                     </div>
 
-                    {/* terms */}
                     <label className="flex items-start gap-3 text-sm">
                       <input
                         type="checkbox"
@@ -895,7 +867,6 @@ export default function SignupPage(): JSX.Element {
                       </span>
                     </label>
 
-                    {/* server-side password reasons, error and success */}
                     {pwServerReasons && pwServerReasons.length > 0 && (
                       <div className="rounded-md p-3 bg-[rgba(255,255,255,0.02)] border border-yellow-400/10 text-xs text-yellow-200">
                         <div className="font-medium text-yellow-100 mb-1">Password suggestions</div>
