@@ -37,7 +37,7 @@ type Country = {
   serverId?: string; // optional server-side id (use for backend payload)
 };
 
-// Defensive lookup for country names if backend only provides ISO2 code
+/* defensive lookup for country names if backend only provides ISO2 code */
 const ISO_TO_FULL_NAME: { [key: string]: string } = {
   US: "United States",
   CA: "Canada",
@@ -131,44 +131,59 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   FlagIcon (Displays Emoji Flag, falls back to ISO-2 code generation)
+   FlagIcon (robust emoji fallback generation)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
-  const flagEmoji = country?.flag_emoji;
-  const iso2 = country?.iso2;
-  
-  // 1. If the backend provides the emoji, use it.
-  if (flagEmoji) {
-    // text-lg leading-none ensures the emoji is sized correctly
-    return <span className="text-lg leading-none">{flagEmoji}</span>; 
+  // 1) Use explicit emoji if provided by backend
+  const explicitEmoji = country?.flag_emoji ?? null;
+  if (explicitEmoji) {
+    return (
+      <span
+        title={country?.name ?? ""}
+        style={{ fontSize: 18, lineHeight: 1 }}
+        aria-hidden
+      >
+        {explicitEmoji}
+      </span>
+    );
   }
-  
-  // 2. Fallback: If no emoji but we have a valid ISO-2 code, generate the standard emoji
-  if (iso2 && iso2.length === 2) {
-    const iso = iso2.toUpperCase();
-    
-    // Unicode trick: Regional Indicator Symbol Letter A is U+1F1E6.
-    try {
-        const A_CODE = 'A'.charCodeAt(0);
-        // The flag emoji is two regional indicator symbols
-        const firstChar = iso.charCodeAt(0) + 0x1F1E6 - A_CODE;
-        const secondChar = iso.charCodeAt(1) + 0x1F1E6 - A_CODE;
 
-        const generatedEmoji = String.fromCodePoint(firstChar) + String.fromCodePoint(secondChar);
-        
-        // Return generated emoji
-        if (generatedEmoji.length === 2) {
-            return <span className="text-lg leading-none">{generatedEmoji}</span>; 
-        }
-    } catch (e) {
-        // Fall through to final fallback if code point generation fails
+  // 2) Try iso2 fallback: trim + uppercase + validate letters
+  const isoRaw = (country?.iso2 ?? "").toString();
+  const iso = isoRaw ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
+
+  if (iso && /^[A-Z]{2}$/.test(iso)) {
+    try {
+      // Compute regional indicator symbols (A -> 0x1F1E6)
+      const base = 0x1f1e6;
+      const aCode = "A".charCodeAt(0);
+      const first = iso.charCodeAt(0) - aCode + base;
+      const second = iso.charCodeAt(1) - aCode + base;
+      const emoji = String.fromCodePoint(first, second);
+
+      return (
+        <span
+          title={country?.name ?? iso}
+          style={{ fontSize: 18, lineHeight: 1 }}
+          aria-hidden
+        >
+          {emoji}
+        </span>
+      );
+    } catch (err) {
+      // fallback below
+      // eslint-disable-next-line no-console
+      console.warn("[FlagIcon] iso->emoji generation failed for", iso, err);
     }
   }
 
-  // 3. Final Fallback (Earth icon)
-  return <span className="text-white/50">🌐</span>; // text-white/50 is the styling for the placeholder
+  // 3) Last fallback: globe icon
+  return (
+    <span title={country?.name ?? "Unknown"} className="text-white/50" style={{ fontSize: 16, lineHeight: 1 }}>
+      🌐
+    </span>
+  );
 }
-
 
 /* SafeLogo: tries Logo component and falls back to PNG */
 function SafeLogo({
@@ -545,7 +560,7 @@ export default function SignupPage(): JSX.Element {
           arr.length > 0
             ? arr.map((c: any, idx: number) => {
                 const isoRaw = c.iso2 ?? c.alpha2 ?? c.country_code ?? c.alpha_2 ?? c.code;
-                const iso = isoRaw ? String(isoRaw).slice(0, 2).toUpperCase() : undefined;
+                const iso = isoRaw ? String(isoRaw).trim().slice(0, 2).toUpperCase() : undefined;
                 const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
                 const uiId = iso ?? String(serverId);
                 
