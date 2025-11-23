@@ -13,7 +13,7 @@ import Logo from "@/components/Logo";
  */
 
 const LOGO_SRC = process.env.NEXT_PUBLIC_LOGO_SRC || "/assets/brand-logo.png";
-const BACKEND = process.env.BACKEND_URL || "";
+const BACKEND = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "";
 
 type FormState = {
   name: string;
