@@ -107,18 +107,42 @@ function PasswordStrength({ value }: { value: string }) {
 }
 
 /* --------------------------
-   FlagIcon (Simplified to rely on Emojis)
+   FlagIcon (Modified to use ISO code to generate emoji fallback)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
   const flagEmoji = country?.flag_emoji;
+  // Use ISO2 code if available for generating a fallback emoji
+  const iso2 = country?.iso2;
   
-  // If the backend provides the emoji, use it.
+  // 1. If the backend provides the emoji, use it.
   if (flagEmoji) {
     return <span className="text-lg">{flagEmoji}</span>;
   }
   
-  // Fallback if no emoji is provided
-  return <span>🏳️</span>;
+  // 2. Fallback: If no emoji but we have a valid ISO-2 code, generate the standard emoji
+  if (iso2 && iso2.length === 2) {
+    const iso = iso2.toUpperCase();
+    
+    // Unicode trick: Regional Indicator Symbol Letter A is U+1F1E6.
+    // We convert the character code to the regional indicator code point.
+    try {
+        const A_CODE = 'A'.charCodeAt(0);
+        const firstChar = iso.charCodeAt(0) + 0x1F1E6 - A_CODE;
+        const secondChar = iso.charCodeAt(1) + 0x1F1E6 - A_CODE;
+
+        const generatedEmoji = String.fromCodePoint(firstChar) + String.fromCodePoint(secondChar);
+        
+        // Return generated emoji if it looks like a valid flag
+        if (generatedEmoji.length === 2) {
+            return <span className="text-lg">{generatedEmoji}</span>;
+        }
+    } catch (e) {
+        // Fall through to final fallback if code point generation fails
+    }
+  }
+
+  // 3. Final Fallback if no data is usable
+  return <span>🌐</span>; // Using a globe icon now as a clearer symbol for missing data
 }
 
 /* SafeLogo: tries Logo component and falls back to PNG */
@@ -342,7 +366,6 @@ function CountrySelect({
 
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-white/90">{c.name}</div>
-                      {/* Removed: <div className="text-xs text-white/50">{c.id}</div> */}
                     </div>
 
                     {isSelected && <div className="text-emerald-300 text-sm">✓</div>}
@@ -468,6 +491,7 @@ export default function SignupPage(): JSX.Element {
         if (!res) {
           console.error("[countries] all fetch attempts failed", lastErr);
           if (!mounted) return;
+          // Fallback list includes full names and emojis for safety
           setCountries([
             { id: "IN", name: "India", flag_emoji: "🇮🇳", iso2: "IN", serverId: "IN" },
             { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
@@ -502,9 +526,13 @@ export default function SignupPage(): JSX.Element {
                 const iso = isoRaw ? String(isoRaw).slice(0, 2).toUpperCase() : undefined;
                 const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
                 const uiId = iso ?? String(serverId);
+                
+                // Prioritize finding a full name
+                const nameCandidate = String(c.name ?? c.country ?? c.label ?? c.title ?? (iso || "Unknown"));
+                
                 return {
                   id: String(uiId),
-                  name: String(c.name ?? c.country ?? c.label ?? c.title ?? "Unknown"),
+                  name: nameCandidate,
                   flag_emoji: c.flag_emoji ?? c.flag ?? c.emoji ?? null,
                   iso2: iso,
                   serverId: serverId != null ? String(serverId) : undefined,
