@@ -130,7 +130,7 @@ function PasswordStrength({ value }: { value: string }) {
    FlagIcon (robust emoji fallback generation / force emoji fonts)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
-  // Prefer server-provided emoji
+  // Prefer server-provided emoji (normalized into flag_emoji)
   const explicit = country?.flag_emoji ?? null;
   if (explicit) {
     return (
@@ -417,8 +417,8 @@ function CountrySelect({
 }
 
 /* -----------------------
-   Industries list
-   ----------------------- */
+   Full Industries list (exposed for render)
+   NOTE: canonical keys used for backend 'industry' field */
 const INDUSTRIES: { key: string; label: string }[] = [
   { key: "saas", label: "SaaS / Software" },
   { key: "manufacturing", label: "Manufacturing" },
@@ -482,6 +482,7 @@ export default function SignupPage(): JSX.Element {
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // server-side password reasons (when API responds weak_password)
   const [pwServerReasons, setPwServerReasons] = useState<string[] | null>(null);
 
   const [mountedAnimate, setMountedAnimate] = useState(false);
@@ -571,8 +572,15 @@ export default function SignupPage(): JSX.Element {
                 // server id candidates
                 const serverId = c.id ?? c.code ?? c._id ?? c.countryId ?? iso ?? `c${idx}`;
 
-                // explicit emoji fields commonly used
-                const explicitFlag = c.flag_emoji ?? c.flag ?? c.emoji ?? c.flagEmoji ?? null;
+                // explicit emoji fields commonly used (many possible keys)
+                const explicitFlag =
+                  c.flag_emoji ??
+                  c.flag ??
+                  c.emoji ??
+                  c.flagEmoji ??
+                  c.country_flag ??
+                  c.countryFlag ??
+                  null;
 
                 // name fallback — if server returned only ISO, map to friendly name
                 let nameCandidate = String(c.name ?? c.country ?? c.label ?? c.title ?? (iso || "Unknown"));
@@ -593,7 +601,7 @@ export default function SignupPage(): JSX.Element {
                 { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
               ];
 
-        // quick debug sample
+        // quick debug sample for visibility
         // eslint-disable-next-line no-console
         console.debug("[countries] normalized sample:", normalized.slice(0, 6));
 
@@ -644,6 +652,7 @@ export default function SignupPage(): JSX.Element {
       setError("Please enter a valid email address.");
       return;
     }
+    // enforce same min length as the password policy
     if (form.password.length < PASSWORD_POLICY.minLength) {
       setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`);
       return;
@@ -654,8 +663,10 @@ export default function SignupPage(): JSX.Element {
       const base = BACKEND || "";
       const url = base ? `${base}/api/auth/signup` : "/api/auth/signup";
 
+      // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
+      // backend-friendly payload: prefer server-side id as country_id, fallback to iso2 or ui id
       const country_id = selected?.serverId ?? selected?.iso2 ?? form.countryId;
       const country_iso2 = selected?.iso2 ?? undefined;
 
@@ -668,8 +679,8 @@ export default function SignupPage(): JSX.Element {
           company: form.company,
           email: form.email,
           password: form.password,
-          country_id,
-          country_iso2,
+          country_id, // server field name
+          country_iso2, // convenience if backend accepts iso
           industry: form.industry || null,
         }),
       });
@@ -679,6 +690,7 @@ export default function SignupPage(): JSX.Element {
         if (payload?.error === "email_exists") {
           throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
+        // handle weak_password with reasons
         if (res.status === 400 && payload?.error === "weak_password" && Array.isArray(payload?.reasons)) {
           setPwServerReasons(payload.reasons);
           setError("Password does not meet requirements.");
@@ -689,6 +701,8 @@ export default function SignupPage(): JSX.Element {
 
       setSuccess(true);
 
+      // If industry is hospital, send user to the HMS onboarding wizard.
+      // Provisioning/seed jobs run asynchronously on the server (provisioning queue).
       setTimeout(() => {
         if (form.industry === "hospital") {
           router.push("/tenant/onboarding/hms");
@@ -710,6 +724,7 @@ export default function SignupPage(): JSX.Element {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-6">
+      {/* Background accents */}
       <div aria-hidden className="fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -left-56 -top-40 w-[680px] h-[680px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.12), rgba(255,255,255,0.06) 40%, rgba(255,255,255,0.02) 70%, transparent)", filter: "blur(8px) saturate(1.02)" }} />
         <div className="absolute right-[-120px] top-10 w-[520px] h-[520px] rounded-3xl z-0" style={{ background: "radial-gradient(closest-side, rgba(255,255,255,0.06), rgba(255,255,255,0.02) 40%, transparent)", filter: "blur(88px)" }} />
@@ -717,6 +732,7 @@ export default function SignupPage(): JSX.Element {
 
       <div className="w-full max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          {/* HERO */}
           <div className="px-4 md:px-8 lg:px-12 order-2 lg:order-1">
             <div className="max-w-xl">
               <div className="flex items-center gap-4 mb-6">
@@ -746,14 +762,27 @@ export default function SignupPage(): JSX.Element {
                 <a href="#signup" className="inline-flex items-center gap-3 px-5 py-2.5 rounded-md bg-gradient-to-r from-[#dffaf2] to-[#c6fff0] text-slate-900 font-semibold shadow-[0_10px_30px_rgba(6,182,163,0.08)] transform transition-transform duration-180 hover:-translate-y-1">Create workspace — Free</a>
                 <a href="/docs" className="text-sm text-white/60 hover:text-white/80">Docs & onboarding →</a>
               </div>
+
+              <div className="mt-10 grid grid-cols-2 gap-4">
+                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
+                  <div className="text-xs text-white/60">Provisioning</div>
+                  <div className="mt-1 font-semibold text-white">Instant workspace</div>
+                </div>
+                <div className="rounded-md p-4 bg-[rgba(255,255,255,0.02)] border border-white/6">
+                  <div className="text-xs text-white/60">Security</div>
+                  <div className="mt-1 font-semibold text-white">SSO & enterprise-ready</div>
+                </div>
+              </div>
             </div>
           </div>
 
+          {/* FORM - glass card */}
           <div className="order-1 lg:order-2 px-4 md:px-8">
             <div id="signup" className="mx-auto max-w-md">
               <div className="relative">
                 <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-gradient-to-tr from-[#00E3C2] to-[#7dd3fc] opacity-6 animate-float" />
                 <div className="relative rounded-md bg-[rgba(255,255,255,0.03)] border border-white/8 backdrop-blur-md p-6 ring-1 ring-white/4 shadow-2xl transition-transform transform hover:-translate-y-1">
+                  {/* left accent stripe */}
                   <div className="absolute -left-1 top-6 bottom-6 w-[4px] rounded-l-md bg-gradient-to-b from-[#00E3C2]/60 to-transparent" aria-hidden />
 
                   <div className="flex items-center gap-4 mb-5">
@@ -839,6 +868,7 @@ export default function SignupPage(): JSX.Element {
                       </div>
                     </div>
 
+                    {/* industry */}
                     <div className="grid grid-cols-1 gap-2">
                       <label className="text-sm text-white/70">Industry</label>
                       <select
@@ -855,6 +885,7 @@ export default function SignupPage(): JSX.Element {
                       </select>
                     </div>
 
+                    {/* terms */}
                     <label className="flex items-start gap-3 text-sm">
                       <input
                         type="checkbox"
@@ -867,6 +898,7 @@ export default function SignupPage(): JSX.Element {
                       </span>
                     </label>
 
+                    {/* server-side password reasons, error and success */}
                     {pwServerReasons && pwServerReasons.length > 0 && (
                       <div className="rounded-md p-3 bg-[rgba(255,255,255,0.02)] border border-yellow-400/10 text-xs text-yellow-200">
                         <div className="font-medium text-yellow-100 mb-1">Password suggestions</div>
@@ -885,7 +917,9 @@ export default function SignupPage(): JSX.Element {
                       <button
                         type="submit"
                         disabled={!canSubmit || loading}
-                        className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-semibold transition ${canSubmit && !loading ? "bg-[#00E3C2] text-black" : "bg-white/6 text-white/40 cursor-not-allowed"}`}
+                        className={`flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md font-semibold transition ${
+                          canSubmit && !loading ? "bg-[#00E3C2] text-black" : "bg-white/6 text-white/40 cursor-not-allowed"
+                        }`}
                       >
                         {loading ? "Creating…" : "Create workspace"}
                       </button>
