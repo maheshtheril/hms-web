@@ -7,9 +7,13 @@ export default function HospitalOnboardingWizard() {
   const router = useRouter();
   const [step, setStep] = useState(1);
 
+  // you said you don't want subIndustry — keep it local if you want, but we won't send it
   const [subIndustry, setSubIndustry] = useState<string>("hospital");
   const [departments, setDepartments] = useState<string[]>([]);
   const [billingMode, setBillingMode] = useState<string>("cash");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const SUB_TYPES = [
     { key: "clinic", label: "Clinic" },
@@ -39,41 +43,90 @@ export default function HospitalOnboardingWizard() {
 
   function toggleDepartment(dep: string) {
     setDepartments((prev) =>
-      prev.includes(dep)
-        ? prev.filter((d) => d !== dep)
-        : [...prev, dep]
+      prev.includes(dep) ? prev.filter((d) => d !== dep) : [...prev, dep]
     );
   }
 
   async function finishOnboarding() {
-    const res = await fetch("/api/onboarding/hospital", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        subIndustry,
-        departments,
-        billingMode,
-      }),
-    });
+    if (loading) return; // prevent double submit
+    setError(null);
+    setLoading(true);
 
-    if (!res.ok) {
-      alert("Onboarding failed. Try again.");
-      return;
+    const url = "/api/onboarding/hms"; // <-- use backend path
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          // user said no subIndustry — do not send it
+          departments,
+          billingMode,
+        }),
+        signal: controller.signal,
+      });
+
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const text = await res.text().catch(() => "");
+
+      if (!res.ok) {
+        // backend might return JSON or HTML — handle both
+        let detail = "";
+        if (ct.includes("application/json")) {
+          try {
+            const j = JSON.parse(text);
+            detail = j?.error || j?.message || JSON.stringify(j);
+          } catch {
+            detail = "(json-parse-failed)";
+          }
+        } else {
+          detail = text ? text.slice(0, 400) : "(no-body)";
+        }
+        setError(`Onboarding failed: ${res.status} ${detail}`);
+        console.warn("onboarding failed:", res.status, detail);
+        return;
+      }
+
+      // success: try parse json, but don't crash if it's not JSON
+      if (ct.includes("application/json")) {
+        try {
+          const j = JSON.parse(text);
+          console.info("onboarding success:", j);
+        } catch {}
+      }
+
+      router.push("/tenant/dashboard");
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        setError("Onboarding request timed out. Try again.");
+      } else {
+        setError(err?.message || "Network error during onboarding");
+      }
+      console.error("finishOnboarding error:", err);
+    } finally {
+      clearTimeout(timeout);
+      setLoading(false);
     }
-
-    router.push("/tenant/dashboard");
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-10 text-white">
       <div className="w-full max-w-3xl">
-
         {/* Glass Container */}
         <div className="relative rounded-2xl bg-[rgba(255,255,255,0.03)] border border-white/10 backdrop-blur-xl shadow-2xl p-10 ring-1 ring-white/5">
           <div className="absolute -top-12 -right-12 w-56 h-56 rounded-full bg-[#00E3C2]/10 blur-3xl"></div>
 
           <h1 className="text-4xl font-bold mb-8">Hospital Setup Wizard</h1>
+
+          {error && (
+            <div className="mb-4 text-sm text-red-300 bg-red-900/10 p-3 rounded">
+              {error}
+            </div>
+          )}
 
           {/* STEP 1 — Hospital Type */}
           {step === 1 && (
@@ -211,12 +264,13 @@ export default function HospitalOnboardingWizard() {
 
               <button
                 onClick={finishOnboarding}
+                disabled={loading}
                 className="mt-8 px-6 py-3 rounded-md font-semibold 
                 bg-gradient-to-r from-[#B2FFE9] to-[#C8FFF0]
                 text-black hover:-translate-y-1 transition 
                 shadow-[0_8px_20px_rgba(0,255,220,0.15)]"
               >
-                Go to Dashboard →
+                {loading ? "Setting up…" : "Go to Dashboard →"}
               </button>
             </div>
           )}
