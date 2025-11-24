@@ -1,6 +1,7 @@
 // /web/app/layout.tsx
 import "./globals.css";
 import React from "react";
+import { ToastProvider } from "@/components/ToastProvider"; // adjust path if needed
 
 export const metadata = {
   title: "ERP — Dashboard",
@@ -12,8 +13,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head />
       <body>
-        {/* children will usually be routing groups e.g. (tenant) */}
-        {children}
+        <ToastProvider>
+          {/* children will usually be routing groups e.g. (tenant) */}
+          {children}
+        </ToastProvider>
       </body>
     </html>
   );
