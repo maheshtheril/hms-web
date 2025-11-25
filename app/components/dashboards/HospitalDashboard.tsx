@@ -1,6 +1,9 @@
 // app/components/dashboards/HospitalDashboard.tsx
+// NOTE: reference schema (uploaded): file:///mnt/data/schema.sql
+
 import React from "react";
 import KPIGrid from "./KPIGrid";
+import { cookies, headers } from "next/headers";
 
 type Company = {
   id: string;
@@ -9,16 +12,49 @@ type Company = {
   logo_url?: string | null;
 };
 
+async function getApiBase(): Promise<string> {
+  const envBase = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL;
+  if (envBase && envBase.trim() !== "") {
+    return envBase.replace(/\/+$/, "");
+  }
+
+  const hdrs = await headers();
+  const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
+  if (!host) throw new Error("Failed to determine API base URL.");
+
+  const proto = hdrs.get("x-forwarded-proto") ?? "https";
+  return `${proto}://${host}`.replace(/\/+$/, "");
+}
+
 async function fetchTenantHospitalKPIs(companyId: string) {
-  const base = process.env.NEXT_PUBLIC_API_URL || "https://hms-server-njlg.onrender.com";
-  // tenant dashboard endpoint will aggregate company-level KPIs too
-  const res = await fetch(`${base}/api/company/dashboard?company_id=${companyId}`, {
-    cache: "no-store",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    const cookieStore = await cookies();
+    const sid = cookieStore.get("sid")?.value;
+    if (!sid) return null;
+
+    const base = await getApiBase();
+    const url = `${base}/api/company/dashboard?company_id=${companyId}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        cookie: `sid=${sid}`,
+        Accept: "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.error("HospitalDashboard: API error", { url, status: res.status, txt });
+      return null;
+    }
+
+    return await res.json().catch(() => null);
+  } catch (err: any) {
+    console.error("HospitalDashboard: fetch failed", err);
+    return null;
+  }
 }
 
 export default async function HospitalDashboard({ company }: { company: Company }) {
@@ -35,15 +71,18 @@ export default async function HospitalDashboard({ company }: { company: Company 
     { id: "revenue_30d", title: "Revenue (30d)", value: data.revenue_30d ?? "—" },
   ];
 
-  // Per-company panels (if tenant has multiple companies, backend returns companies array)
   const companies = data.companies ?? [{ id: company.id, name: company.name }];
 
   return (
     <div className="p-6 space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{company.name} — Hospital Cockpit</h1>
-          <p className="mt-1 text-sm text-neutral-400">Operational HQ — aggregated & per-facility KPIs</p>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {company.name} — Hospital Cockpit
+          </h1>
+          <p className="mt-1 text-sm text-neutral-400">
+            Operational HQ — aggregated & per-facility KPIs
+          </p>
         </div>
       </header>
 
@@ -59,11 +98,16 @@ export default async function HospitalDashboard({ company }: { company: Company 
               <div className="flex items-start justify-between">
                 <div>
                   <div className="font-semibold">{c.name}</div>
-                  <div className="text-sm text-neutral-400">Industry: {c.industry ?? "—"}</div>
+                  <div className="text-sm text-neutral-400">
+                    Industry: {c.industry ?? "—"}
+                  </div>
                 </div>
                 <div className="text-right text-sm text-neutral-300">
                   <div>Patients: {c.metrics?.active_patients ?? "—"}</div>
-                  <div>Beds: {c.metrics?.occupied_beds ?? "—"}/{c.metrics?.total_beds ?? "—"}</div>
+                  <div>
+                    Beds: {c.metrics?.occupied_beds ?? "—"}/
+                    {c.metrics?.total_beds ?? "—"}
+                  </div>
                 </div>
               </div>
 
@@ -74,11 +118,15 @@ export default async function HospitalDashboard({ company }: { company: Company 
                 </div>
                 <div className="p-2 rounded bg-neutral-900/20 text-center">
                   <div className="text-sm">Admissions</div>
-                  <div className="font-semibold">{c.metrics?.admissions_today ?? 0}</div>
+                  <div className="font-semibold">
+                    {c.metrics?.admissions_today ?? 0}
+                  </div>
                 </div>
                 <div className="p-2 rounded bg-neutral-900/20 text-center">
                   <div className="text-sm">Surgeries</div>
-                  <div className="font-semibold">{c.metrics?.surgeries_today ?? 0}</div>
+                  <div className="font-semibold">
+                    {c.metrics?.surgeries_today ?? 0}
+                  </div>
                 </div>
               </div>
             </div>
@@ -89,13 +137,17 @@ export default async function HospitalDashboard({ company }: { company: Company 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="col-span-2 p-4 rounded-2xl bg-neutral-900/10">
           <h3 className="font-medium">Admissions Trend (7d)</h3>
-          <div className="mt-4 h-56 rounded bg-neutral-800/30 flex items-center justify-center">Chart</div>
+          <div className="mt-4 h-56 rounded bg-neutral-800/30 flex items-center justify-center">
+            Chart
+          </div>
         </div>
 
         <aside className="space-y-4">
           <div className="p-4 rounded-2xl bg-neutral-900/20">
             <h4 className="text-sm font-medium">AI Insights</h4>
-            <div className="mt-3 text-sm text-neutral-300">{data.ai_insights?.[0] ?? "No insights available"}</div>
+            <div className="mt-3 text-sm text-neutral-300">
+              {data.ai_insights?.[0] ?? "No insights available"}
+            </div>
           </div>
 
           <div className="p-4 rounded-2xl bg-neutral-900/20">
