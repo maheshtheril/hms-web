@@ -418,3 +418,30 @@ body[data-page="lead-detailed"] [data-create-lead] {
 
 /* small helpers */
 .drop-shadow-soft { filter: drop-shadow(0 12px 30px rgba(6,182,163,0.12)); }
+
+.btn-glass {
+  @apply px-3 py-1 rounded-lg backdrop-blur-md bg-white/6 border border-white/10;
+}
+.glass {
+  @apply backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl;
+}
+
+.glass-hover {
+  @apply hover:bg-white/10 transition-colors;
+}
+
+.app-slot {
+  @apply absolute rounded-xl bg-indigo-400/30 border border-indigo-500/30 shadow-lg;
+}
+
+.app-slot-preview {
+  @apply absolute rounded-xl bg-white/20 border border-white/40 pointer-events-none;
+}
+
+.time-cell {
+  @apply border-b border-white/5 h-12 relative;
+}
+
+.resource-label {
+  @apply text-sm font-medium text-white/80 px-3 py-2;
+}

@@ -1,0 +1,20 @@
+// /app/dashboard/billing/payments/page.tsx
+"use client";
+
+import TableCard from "../../components/TableCard";
+
+export default function Payments() {
+  return (
+    <TableCard
+      title="Payments Received"
+      columns={[
+        "Receipt No.",
+        "Bill/Invoice",
+        "Patient/Customer",
+        "Amount",
+        "Mode",
+        "Date",
+      ]}
+    />
+  );
+}
