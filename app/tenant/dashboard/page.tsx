@@ -30,29 +30,43 @@ async function getApiBase(): Promise<string> {
 async function getActiveCompany() {
   try {
     const cookieStore = await cookies();
-    const sid = cookieStore.get("sid")?.value;
-    if (!sid) return null;
+    // canonical cookie name your backend sets (use env or default)
+    const canonical = process.env.SESSION_COOKIE_NAME || process.env.SESSION_COOKIE || "erp_session";
+    // quick existence check: look for canonical or common names
+    const candidates = [canonical, "sid", "ssr_sid", "SESSION_ID", "session_id"];
+    let found = null;
+    for (const n of candidates) {
+      const c = cookieStore.get(n);
+      if (c?.value) {
+        found = c.value;
+        break;
+      }
+    }
+    if (!found) {
+      // no cookie available to forward
+      console.debug("[getActiveCompany] no session cookie found in incoming request");
+      return null;
+    }
 
     const base = await getApiBase();
     const url = `${base}/api/user/companies`;
+
+    // Forward the entire incoming cookie header (preserves real cookie name and signed cookies)
+    const hdrs = await headers();
+    const rawCookie = hdrs.get("cookie") ?? `${canonical}=${found}`;
 
     const res = await fetch(url, {
       method: "GET",
       cache: "no-store",
       headers: {
-        cookie: `sid=${sid}`,
+        cookie: rawCookie,
         Accept: "application/json",
       },
     });
 
     if (!res.ok) {
-      // Log details server-side for debugging
       const bodyText = await res.text().catch(() => "");
-      console.error("getActiveCompany: downstream API error", {
-        url,
-        status: res.status,
-        bodyText,
-      });
+      console.error("getActiveCompany: downstream API error", { url, status: res.status, bodyText });
       return null;
     }
 
@@ -68,6 +82,7 @@ async function getActiveCompany() {
   }
 }
 
+
 export default async function TenantDashboardPage() {
   const company = await getActiveCompany();
 
@@ -75,7 +90,7 @@ export default async function TenantDashboardPage() {
     return (
       <div className="p-10 text-center text-red-400">
         No active company found for this tenant. If you are signed in, ensure the
-        server's NEXT_PUBLIC_API_URL is configured and that the <code>sid</code>{" "}
+        server's BACKEND_URL is configured and that the <code>sid</code>{" "}
         cookie is present. Check server logs for details.
       </div>
     );
