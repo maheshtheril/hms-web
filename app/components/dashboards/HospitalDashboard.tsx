@@ -13,7 +13,7 @@ type Company = {
 };
 
 async function getApiBase(): Promise<string> {
-  const envBase = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL;
+  const envBase = process.env.BACKEND_URL || process.env.API_URL;
   if (envBase && envBase.trim() !== "") {
     return envBase.replace(/\/+$/, "");
   }

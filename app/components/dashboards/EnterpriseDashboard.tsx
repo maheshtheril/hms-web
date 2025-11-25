@@ -7,7 +7,7 @@ import { cookies, headers } from "next/headers";
 type Company = { id: string; name: string; industry?: string; logo_url?: string };
 
 async function getApiBase(): Promise<string> {
-  const envBase = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL;
+  const envBase = process.env.BACKEND_URL || process.env.API_URL;
   if (envBase && envBase.trim() !== "") return envBase.replace(/\/+$/, "");
 
   const hdrs = await headers();

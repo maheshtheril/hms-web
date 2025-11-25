@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 async function getApiBase(): Promise<string> {
   // Prefer explicit env var (recommended)
-  const envBase = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL;
+  const envBase = process.env.BACKEND_URL || process.env.API_URL;
   if (envBase && envBase.trim() !== "") {
     return envBase.replace(/\/+$/, "");
   }
@@ -19,7 +19,7 @@ async function getApiBase(): Promise<string> {
   const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
   if (!host) {
     throw new Error(
-      "Unable to determine API base URL. Set NEXT_PUBLIC_API_URL in your environment."
+      "Unable to determine API base URL. Set BACKEND_URL in your environment."
     );
   }
   // prefer forwarded proto when present (Render / proxies), otherwise assume https
