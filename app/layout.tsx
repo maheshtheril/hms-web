@@ -1,10 +1,10 @@
 // app/layout.tsx
-// =======================
-// GLOBAL CSS IMPORTS
-// (Must be first — fixes Next.js CSS warnings)
-// =======================
 
+// No FullCalendar CSS imports here. They must NOT be imported from JS.
+// They will load from globals.css (top-level @import CDN) to avoid webpack export errors.
 
+import "flag-icons/css/flag-icons.min.css";
+import "./globals.css";
 
 import type { Metadata, Viewport } from "next";
 import { Providers } from "./providers";
