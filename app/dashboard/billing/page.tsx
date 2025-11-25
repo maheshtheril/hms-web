@@ -24,7 +24,7 @@ export default function BillingDashboard() {
 
       <GlassPanel title="Alerts">
         <ul className="space-y-2 opacity-80 text-sm">
-          <li>⚠ 12 insurance claims pending for > 7 days</li>
+          <li>⚠ 12 insurance claims pending for &gt; 7 days</li>
           <li>⚠ 3 high-value bills pending doctor confirmation</li>
           <li>⚠ 2 invoices approaching due date</li>
         </ul>

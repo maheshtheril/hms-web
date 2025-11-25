@@ -1,12 +1,19 @@
 "use client";
 
-import FinanceTable from "../components/FinanceTable";
+import React from "react";
+import JournalForm from "../components/JournalForm";
 
-export default function Journals() {
-  return (
-    <FinanceTable
-      title="Journal Entries"
-      columns={["Entry No", "Date", "Reference", "Debits", "Credits", "Status"]}
-    />
-  );
+export default function JournalsPage() {
+  const handleSubmit = async (payload: any) => {
+    const res = await fetch("/api/finance/journals", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Failed");
+    alert("Posted");
+  };
+
+  return <JournalForm onSubmit={handleSubmit} />;
 }

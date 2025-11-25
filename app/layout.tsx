@@ -1,9 +1,13 @@
 // app/layout.tsx
-import "flag-icons/css/flag-icons.min.css";
-import "./globals.css";
+// =======================
+// GLOBAL CSS IMPORTS
+// (Must be first — fixes Next.js CSS warnings)
+// =======================
+
+
 
 import type { Metadata, Viewport } from "next";
-import { Providers } from "./providers"; 
+import { Providers } from "./providers";
 import ClientProviders from "@/components/ClientProviders";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -20,7 +24,7 @@ export const metadata: Metadata = {
     description: "Revolutionary AI-driven ERP built on Neural Glass Design Language.",
     type: "website",
     locale: "en_US",
-    url: "/", // IMPORTANT: prevents absolute host hardcoding
+    url: "/",
   },
 };
 

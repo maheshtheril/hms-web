@@ -1,8 +1,8 @@
 "use client";
 
-import KPICard from "../components/KPICard";
-import ChartCard from "../components/ChartCard";
-import GlassPanel from "../components/GlassPanel";
+import KPICard from "../../components/KPICard";
+import ChartCard from "../../components/ChartCard";
+import GlassPanel from "../../components/GlassPanel";
 
 export default function AdminDashboard() {
   return (

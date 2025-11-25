@@ -6,6 +6,10 @@
 /* 2) Third-party CSS after Tailwind */
 @import url("https://cdn.jsdelivr.net/npm/@fullcalendar/daygrid@6.1.15/index.css");
 @import url("https://cdn.jsdelivr.net/npm/@fullcalendar/timegrid@6.1.15/index.css");
+
+@import url("https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.15/main.css");
+@import url("https://cdn.jsdelivr.net/npm/@fullcalendar/daygrid@6.1.15/main.css");
+@import url("https://cdn.jsdelivr.net/npm/@fullcalendar/timegrid@6.1.15/main.css");
 /* If you use tailwindcss-animate: */
 /* @import "tailwindcss-animate"; */
 
@@ -445,3 +449,9 @@ body[data-page="lead-detailed"] [data-create-lead] {
 .resource-label {
   @apply text-sm font-medium text-white/80 px-3 py-2;
 }
+/* globals.css — MUST BE FIRST (before @tailwind / :root / any rules) */
+
+
+/* then the rest of your globals */
+
+/* your variables and rules below */

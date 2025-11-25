@@ -1,6 +1,15 @@
 "use client";
 
-export default function FinanceRoleGuard({ user, children }) {
+import React from "react";
+
+interface FinanceRoleGuardProps {
+  user: {
+    role: string;
+  };
+  children: React.ReactNode;
+}
+
+export default function FinanceRoleGuard({ user, children }: FinanceRoleGuardProps) {
   const allowed = ["admin", "finance_manager", "accountant"];
 
   if (!allowed.includes(user.role)) {
@@ -11,5 +20,5 @@ export default function FinanceRoleGuard({ user, children }) {
     );
   }
 
-  return children;
+  return <>{children}</>;
 }

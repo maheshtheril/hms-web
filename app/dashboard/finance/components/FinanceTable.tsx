@@ -1,75 +1,51 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React from "react";
+import GlassPanel from "../../components/GlassPanel";
 
-export type Column<T> = {
+export type FinanceColumn = {
   key: string;
   label: string;
-  width?: string;
-  render?: (row: T) => React.ReactNode;
-  numeric?: boolean;
 };
 
-interface Props<T> {
-  columns: Column<T>[];
-  data: T[];
-  pageSize?: number;
-  emptyMessage?: string;
-  className?: string;
-}
+export type FinanceRow = Record<string, any>;
 
-export default function FinanceTable<T extends Record<string, any>>({
-  columns,
-  data,
-  pageSize = 20,
-  emptyMessage = "No records",
-  className = "",
-}: Props<T>) {
-  const [page, setPage] = useState(0);
+export type FinanceTableProps = {
+  title?: string;
+  columns: FinanceColumn[];
+  data?: FinanceRow[];
+};
 
-  const pages = useMemo(() => {
-    const p = Math.max(1, Math.ceil(data.length / pageSize));
-    return p;
-  }, [data.length, pageSize]);
-
-  const visible = useMemo(() => {
-    const start = page * pageSize;
-    return data.slice(start, start + pageSize);
-  }, [data, page, pageSize]);
-
+export default function FinanceTable({ title, columns, data = [] }: FinanceTableProps) {
   return (
-    <div className={`w-full overflow-auto ${className}`}>
-      <table className="w-full text-sm table-fixed">
-        <thead>
-          <tr className="text-left text-xs opacity-70">
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                style={{ width: col.width }}
-                className={`pb-2 pr-4 ${col.numeric ? "text-right" : ""}`}
-              >
-                {col.label}
+    <GlassPanel title={title}>
+      <table className="w-full text-left text-sm">
+        <thead className="opacity-60 border-b border-white/10">
+          <tr>
+            {columns.map((c) => (
+              <th key={c.key} className="py-2 pr-4">
+                {c.label}
               </th>
             ))}
           </tr>
         </thead>
 
         <tbody>
-          {visible.length === 0 ? (
+          {data.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="py-6 text-center opacity-60">
-                {emptyMessage}
+              <td
+                colSpan={columns.length}
+                className="py-6 text-center opacity-40"
+              >
+                No records found
               </td>
             </tr>
           ) : (
-            visible.map((row, idx) => (
-              <tr key={idx} className="border-t border-white/6">
+            data.map((row, i) => (
+              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
                 {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={`py-3 pr-4 align-top ${col.numeric ? "text-right" : ""}`}
-                  >
-                    {col.render ? col.render(row) : String(row[col.key] ?? "")}
+                  <td key={col.key} className="py-2 pr-4">
+                    {row[col.key] ?? "—"}
                   </td>
                 ))}
               </tr>
@@ -77,32 +53,6 @@ export default function FinanceTable<T extends Record<string, any>>({
           )}
         </tbody>
       </table>
-
-      <div className="mt-4 flex items-center justify-between text-xs opacity-70">
-        <div>
-          Showing {Math.min(data.length, page * pageSize + 1)} -{" "}
-          {Math.min(data.length, (page + 1) * pageSize)} of {data.length}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-            className="px-3 py-1 rounded-md bg-white/3 disabled:opacity-40"
-          >
-            Prev
-          </button>
-          <div>
-            Page {page + 1} / {pages}
-          </div>
-          <button
-            onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}
-            disabled={page >= pages - 1}
-            className="px-3 py-1 rounded-md bg-white/3 disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    </div>
+    </GlassPanel>
   );
 }
