@@ -131,33 +131,26 @@ function PasswordStrength({ value }: { value: string }) {
    FlagIcon (robust emoji fallback generation / force emoji fonts)
    -------------------------- */
 function FlagIcon({ country }: { country: Country | null }) {
-  // Prefer server-provided emoji (normalized into flag_emoji)
   const explicit = country?.flag_emoji ?? null;
-
-  // compute iso normalized
   const isoRaw = country?.iso2 ?? "";
   const iso = typeof isoRaw === "string" ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
 
-  // Memoize generated emoji from iso to avoid recomputing on each render for large lists
   const generatedEmoji = useMemo(() => {
     if (!iso || !/^[A-Z]{2}$/.test(iso)) return null;
     try {
-      const base = 0x1f1e6; // regional indicator start
+      const base = 0x1f1e6;
       const first = base + (iso.charCodeAt(0) - "A".charCodeAt(0));
       const second = base + (iso.charCodeAt(1) - "A".charCodeAt(0));
       const emoji = String.fromCodePoint(first, second);
       return emoji;
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn("[FlagIcon] iso->emoji generation failed for", iso, err);
       return null;
     }
   }, [iso]);
 
-  // final emoji choice
   const emojiToShow = explicit || generatedEmoji || "🌐";
 
-  // Screen-reader friendly: show emoji aria-hidden, and provide sr-only country name
   return (
     <span className="inline-flex items-center" title={country?.name ?? iso}>
       <span
@@ -165,7 +158,6 @@ function FlagIcon({ country }: { country: Country | null }) {
         style={{
           fontSize: 18,
           lineHeight: 1,
-          // Force emoji-capable fonts to avoid custom-font hiding color emoji
           fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
         }}
       >
@@ -221,10 +213,6 @@ function SafeLogo({
 
 /* ----------------------------
    UPDATED CountrySelect (reliable flags)
-   - emoji-first (flag_emoji)
-   - iso2 -> emoji fallback
-   - flag_url fallback (if your backend provides it)
-   - keyboard navigation + highlighting
    ---------------------------- */
 
 function iso2ToFlagEmoji(iso2?: string) {
@@ -240,7 +228,6 @@ function iso2ToFlagEmoji(iso2?: string) {
 }
 
 function RenderFlag({ c }: { c: Country }) {
-  // prefer explicit server emoji (flag_emoji)
   if (c.flag_emoji && typeof c.flag_emoji === "string") {
     return (
       <span
@@ -256,7 +243,6 @@ function RenderFlag({ c }: { c: Country }) {
     );
   }
 
-  // iso -> emoji fallback
   const e = iso2ToFlagEmoji(c.iso2);
   if (e) {
     return (
@@ -273,15 +259,12 @@ function RenderFlag({ c }: { c: Country }) {
     );
   }
 
-  // flag_url fallback (if your backend returns a URL)
   if ((c as any).flag_url) {
     return (
-      // plain <img> used to avoid next/image domain config issues
       <img src={(c as any).flag_url} alt={`${c.name} flag`} className="w-6 h-4 object-cover rounded-sm" />
     );
   }
 
-  // final globe fallback
   return <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>🌐</span>;
 }
 
@@ -330,19 +313,18 @@ function CountrySelect({
   }, []);
 
   function openDropdown() {
-  setOpen(true);
-  setQuery(selected?.name ?? "");
-  setTimeout(() => {
-    searchRef.current?.focus();
-    searchRef.current?.select();
-  }, 0);
-  setTimeout(() => {
-    const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
-    setHighlight(idx >= 0 ? idx : 0);
-    scrollIntoView(idx >= 0 ? idx : 0);
-  }, 10);
-}
-
+    setOpen(true);
+    setQuery(selected?.name ?? "");
+    setTimeout(() => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    }, 0);
+    setTimeout(() => {
+      const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+      setHighlight(idx >= 0 ? idx : 0);
+      scrollIntoView(idx >= 0 ? idx : 0);
+    }, 10);
+  }
 
   function scrollIntoView(index: number) {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${index}"]`);
@@ -358,27 +340,25 @@ function CountrySelect({
   }
 
   function onSearchKeyDown(e: React.KeyboardEvent) {
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    setHighlight((h) => {
-      const next = Math.min(h + 1, Math.max(filtered.length - 1, 0));
-      // use next for scroll
-      scrollIntoView(next);
-      return next;
-    });
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    setHighlight((h) => {
-      const next = Math.max(h - 1, 0);
-      scrollIntoView(next);
-      return next;
-    });
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    selectAt(highlight);
-  } 
-}
-
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => {
+        const next = Math.min(h + 1, Math.max(filtered.length - 1, 0));
+        scrollIntoView(next);
+        return next;
+      });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => {
+        const next = Math.max(h - 1, 0);
+        scrollIntoView(next);
+        return next;
+      });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectAt(highlight);
+    }
+  }
 
   useEffect(() => {
     if (highlight >= filtered.length) setHighlight(Math.max(0, filtered.length - 1));
@@ -398,7 +378,6 @@ function CountrySelect({
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
-            {/* Use RenderFlag to ensure emoji-first behavior */}
             <RenderFlag c={(selected as Country) ?? { id: "", name: "Unknown" }} />
           </div>
 
@@ -645,17 +624,14 @@ export default function SignupPage(): JSX.Element {
                 const serverId = serverIdCandidate != null ? String(serverIdCandidate) : `c${idx}`;
 
                 // ----- find explicit emoji robustly -----
-                // 1) common explicit fields
                 let explicitFlag =
                   (c?.flag_emoji ?? c?.flag ?? c?.emoji ?? c?.flagEmoji ?? c?.country_flag ?? c?.countryFlag ?? null) as string | null;
 
-                // 2) if not found, try to detect any value in object that looks like a regional-flag emoji
                 if (!explicitFlag) {
                   try {
                     for (const key of Object.keys(c || {})) {
                       const val = c[key];
                       if (typeof val === "string") {
-                        // regional indicator symbols regex (unicode) — will match 🇦🇺 etc
                         if (/\p{Regional_Indicator}/u.test(val) || /[\u{1F1E6}-\u{1F1FF}]/u.test(val)) {
                           explicitFlag = val;
                           break;
@@ -667,7 +643,6 @@ export default function SignupPage(): JSX.Element {
                   }
                 }
 
-                // 3) trim whitespace/newlines from explicitFlag and normalize to null if empty
                 if (typeof explicitFlag === "string") {
                   explicitFlag = explicitFlag.trim();
                   if (explicitFlag.length === 0) explicitFlag = null;
@@ -675,13 +650,11 @@ export default function SignupPage(): JSX.Element {
                   explicitFlag = null;
                 }
 
-                // ----- name fallback (map iso -> friendly name if server provided only ISO) -----
                 let nameCandidate = String(c?.name ?? c?.country ?? c?.label ?? c?.title ?? (iso ?? "Unknown"));
                 if (iso && (nameCandidate === iso || nameCandidate.trim().length <= 3)) {
                   nameCandidate = ISO_TO_FULL_NAME[iso] ?? nameCandidate;
                 }
 
-                // Final object: use serverId as canonical id so UI text doesn't show ISO code accidentally
                 return {
                   id: String(serverId), // canonical UI id (UUID / DB id)
                   name: nameCandidate || (iso ? ISO_TO_FULL_NAME[iso] ?? iso : `Country ${idx + 1}`),
@@ -695,14 +668,11 @@ export default function SignupPage(): JSX.Element {
                 { id: "US", name: "United States", flag_emoji: "🇺🇸", iso2: "US", serverId: "US" },
               ];
 
-        // quick debug sample for visibility
-        // eslint-disable-next-line no-console
         console.debug("[countries] normalized sample:", normalized.slice(0, 6));
 
         if (!mounted) return;
         setCountries(normalized);
 
-        // Prefer to select India's serverId if present; fallback to first normalized id
         const india = normalized.find((c) => (c.iso2 ?? "").toUpperCase() === "IN" || c.name === "India");
         setForm((s) => ({ ...s, countryId: india ? india.id : normalized[0]?.id ?? "" }));
       } catch (err) {
@@ -748,7 +718,6 @@ export default function SignupPage(): JSX.Element {
       setError("Please enter a valid email address.");
       return;
     }
-    // enforce same min length as the password policy
     if (form.password.length < PASSWORD_POLICY.minLength) {
       setError(`Password must be at least ${PASSWORD_POLICY.minLength} characters.`);
       return;
@@ -762,30 +731,30 @@ export default function SignupPage(): JSX.Element {
       // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
-      // backend-friendly payload: prefer server-side id as camelCase countryId (server accepts this),
-      // keep country_iso2 for convenience if backend supports it.
-      const countryId = selected?.serverId ?? selected?.iso2 ?? form.countryId;
-      const country_iso2 = selected?.iso2 ?? undefined;
+      // ----- UPDATED: always prefer the canonical UUID (selected.id) -----
+      const payloadToSend = {
+        name: form.name,
+        company: form.company,
+        email: form.email,
+        password: form.password,
+        countryId: selected?.id ?? selected?.serverId ?? selected?.iso2 ?? form.countryId,
+        country_iso2: selected?.iso2 ?? null,
+        industry: form.industry || null,
+      };
+
+      // debug so you can confirm the exact countryId being sent
+      console.debug("[signup-debug] payloadToSend:", payloadToSend, "URL:", url);
 
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          name: form.name,
-          company: form.company,
-          email: form.email,
-          password: form.password,
-          countryId, // now sending camelCase to match backend's expected field
-          country_iso2, // optional compatibility
-          industry: form.industry || null,
-        }),
+        body: JSON.stringify(payloadToSend),
       });
 
       const payload = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // map common backend error shapes to user-friendly messages
         if (payload?.error === "email_exists") {
           throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
@@ -802,8 +771,6 @@ export default function SignupPage(): JSX.Element {
 
       setSuccess(true);
 
-      // If industry is hospital, send user to the HMS onboarding wizard.
-      // Provisioning/seed jobs run asynchronously on the server (provisioning queue).
       setTimeout(() => {
         if (form.industry === "hospital") {
           router.push("/tenant/onboarding/hms");
@@ -883,7 +850,6 @@ export default function SignupPage(): JSX.Element {
               <div className="relative">
                 <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full bg-gradient-to-tr from-[#00E3C2] to-[#7dd3fc] opacity-6 animate-float" />
                 <div className="relative rounded-md bg-[rgba(255,255,255,0.03)] border border-white/8 backdrop-blur-md p-6 ring-1 ring-white/4 shadow-2xl transition-transform transform hover:-translate-y-1">
-                  {/* left accent stripe */}
                   <div className="absolute -left-1 top-6 bottom-6 w-[4px] rounded-l-md bg-gradient-to-b from-[#00E3C2]/60 to-transparent" aria-hidden />
 
                   <div className="flex items-center gap-4 mb-5">
