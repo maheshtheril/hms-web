@@ -13,7 +13,7 @@ import Logo from "@/components/Logo";
  */
 
 const LOGO_SRC = process.env.NEXT_PUBLIC_LOGO_SRC || "/assets/brand-logo.png";
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "";
+const BACKEND = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "";
 
 type FormState = {
   name: string;
@@ -31,6 +31,7 @@ type Country = {
   flag_emoji?: string | null;
   iso2?: string;
   serverId?: string;
+  flag_url?: string | null;
 };
 
 /* defensive lookup for country names if backend only provides ISO2 code */
@@ -219,8 +220,71 @@ function SafeLogo({
 }
 
 /* ----------------------------
-   CountrySelect component
+   UPDATED CountrySelect (reliable flags)
+   - emoji-first (flag_emoji)
+   - iso2 -> emoji fallback
+   - flag_url fallback (if your backend provides it)
+   - keyboard navigation + highlighting
    ---------------------------- */
+
+function iso2ToFlagEmoji(iso2?: string) {
+  if (!iso2) return undefined;
+  const code = iso2.trim().slice(0, 2).toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return undefined;
+  const A = 0x41;
+  const OFFSET = 0x1f1e6;
+  return String.fromCodePoint(
+    code.charCodeAt(0) - A + OFFSET,
+    code.charCodeAt(1) - A + OFFSET
+  );
+}
+
+function RenderFlag({ c }: { c: Country }) {
+  // prefer explicit server emoji (flag_emoji)
+  if (c.flag_emoji && typeof c.flag_emoji === "string") {
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          fontSize: 18,
+          lineHeight: 1,
+          fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
+        }}
+      >
+        {c.flag_emoji}
+      </span>
+    );
+  }
+
+  // iso -> emoji fallback
+  const e = iso2ToFlagEmoji(c.iso2);
+  if (e) {
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          fontSize: 18,
+          lineHeight: 1,
+          fontFamily: `system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji"`,
+        }}
+      >
+        {e}
+      </span>
+    );
+  }
+
+  // flag_url fallback (if your backend returns a URL)
+  if ((c as any).flag_url) {
+    return (
+      // plain <img> used to avoid next/image domain config issues
+      <img src={(c as any).flag_url} alt={`${c.name} flag`} className="w-6 h-4 object-cover rounded-sm" />
+    );
+  }
+
+  // final globe fallback
+  return <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>🌐</span>;
+}
+
 function CountrySelect({
   countries,
   value,
@@ -246,11 +310,10 @@ function CountrySelect({
     const q = query.trim().toLowerCase();
     if (!q) return countries;
     return countries.filter((c) => {
-      return (
-        c.name.toLowerCase().includes(q) ||
-        ((c.flag_emoji ?? "") as string).toLowerCase().includes(q) ||
-        ((c.iso2 ?? c.id ?? "") as string).toLowerCase().includes(q)
-      );
+      const name = (c.name ?? "").toLowerCase();
+      const iso = (c.iso2 ?? c.id ?? "").toLowerCase();
+      const flagTxt = ((c.flag_emoji ?? "") as string).toLowerCase();
+      return name.includes(q) || iso.includes(q) || flagTxt.includes(q);
     });
   }, [countries, query]);
 
@@ -267,36 +330,22 @@ function CountrySelect({
   }, []);
 
   function openDropdown() {
-    setOpen(true);
-    setQuery(selected?.name ?? "");
-    setTimeout(() => searchRef.current?.focus(), 0);
-    setTimeout(() => {
-      const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
-      setHighlight(idx >= 0 ? idx : 0);
-    }, 0);
-  }
+  setOpen(true);
+  setQuery(selected?.name ?? "");
+  setTimeout(() => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, 0);
+  setTimeout(() => {
+    const idx = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+    setHighlight(idx >= 0 ? idx : 0);
+    scrollIntoView(idx >= 0 ? idx : 0);
+  }, 10);
+}
 
-  function onSearchKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
-      scrollIntoView(highlight + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-      scrollIntoView(highlight - 1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      selectAt(highlight);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      setQuery("");
-    }
-  }
 
   function scrollIntoView(index: number) {
-    const el = listRef.current?.querySelector<HTMLDivElement>(`[data-idx="${index}"]`);
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${index}"]`);
     if (el) el.scrollIntoView({ block: "nearest" });
   }
 
@@ -308,11 +357,33 @@ function CountrySelect({
     setQuery("");
   }
 
+  function onSearchKeyDown(e: React.KeyboardEvent) {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    setHighlight((h) => {
+      const next = Math.min(h + 1, Math.max(filtered.length - 1, 0));
+      // use next for scroll
+      scrollIntoView(next);
+      return next;
+    });
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    setHighlight((h) => {
+      const next = Math.max(h - 1, 0);
+      scrollIntoView(next);
+      return next;
+    });
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    selectAt(highlight);
+  } 
+}
+
+
   useEffect(() => {
     if (highlight >= filtered.length) setHighlight(Math.max(0, filtered.length - 1));
   }, [filtered.length, highlight]);
 
-  // compute aria-activedescendant id when open
   const activeOptionId = open && filtered[highlight] ? `country-option-${filtered[highlight].id}` : undefined;
 
   return (
@@ -327,7 +398,8 @@ function CountrySelect({
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 flex items-center justify-center">
-            <FlagIcon country={selected} />
+            {/* Use RenderFlag to ensure emoji-first behavior */}
+            <RenderFlag c={(selected as Country) ?? { id: "", name: "Unknown" }} />
           </div>
 
           <div className="text-sm text-white/80 truncate">
@@ -386,14 +458,17 @@ function CountrySelect({
                       ev.preventDefault();
                       selectAt(idx);
                     }}
-                    className={`flex items-center gap-3 px-3 py-2 h-10 cursor-pointer ${isHighlighted ? "bg-[#0f2934]" : "hover:bg-[#0c2229]"} ${isSelected ? "border-l-2 border-[#00E3C2] pl-2" : ""}`}
+                    className={`flex items-center gap-3 px-3 py-2 h-10 cursor-pointer ${isHighlighted ? "bg-[#0f2934]" : "hover:bg-[#0c2229]"} ${
+                      isSelected ? "border-l-2 border-[#00E3C2] pl-2" : ""
+                    }`}
                   >
                     <div className="w-8 h-8 flex items-center justify-center">
-                      <FlagIcon country={c} />
+                      <RenderFlag c={c} />
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-white/90">{c.name}</div>
+                      <div className="text-xs text-white/40">{c.iso2 ?? ""}</div>
                     </div>
 
                     {isSelected && <div className="text-emerald-300 text-sm">✓</div>}
@@ -687,8 +762,9 @@ export default function SignupPage(): JSX.Element {
       // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
-      // backend-friendly payload: prefer server-side id as country_id, fallback to iso2 or ui id
-      const country_id = selected?.serverId ?? selected?.iso2 ?? form.countryId;
+      // backend-friendly payload: prefer server-side id as camelCase countryId (server accepts this),
+      // keep country_iso2 for convenience if backend supports it.
+      const countryId = selected?.serverId ?? selected?.iso2 ?? form.countryId;
       const country_iso2 = selected?.iso2 ?? undefined;
 
       const res = await fetch(url, {
@@ -700,22 +776,26 @@ export default function SignupPage(): JSX.Element {
           company: form.company,
           email: form.email,
           password: form.password,
-          country_id, // server field name
-          country_iso2, // convenience if backend accepts iso
+          countryId, // now sending camelCase to match backend's expected field
+          country_iso2, // optional compatibility
           industry: form.industry || null,
         }),
       });
 
       const payload = await res.json().catch(() => ({}));
+
       if (!res.ok) {
+        // map common backend error shapes to user-friendly messages
         if (payload?.error === "email_exists") {
           throw new Error("An account with that email already exists. Try logging in or reset password.");
         }
-        // handle weak_password with reasons
         if (res.status === 400 && payload?.error === "weak_password" && Array.isArray(payload?.reasons)) {
           setPwServerReasons(payload.reasons);
           setError("Password does not meet requirements.");
           return;
+        }
+        if (payload?.error === "missing_fields") {
+          throw new Error("Request missing required fields. Please ensure all fields are filled.");
         }
         throw new Error(payload?.message || payload?.error || `Signup failed (${res.status})`);
       }
