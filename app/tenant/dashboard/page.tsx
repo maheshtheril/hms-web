@@ -30,57 +30,86 @@ async function getApiBase(): Promise<string> {
 async function getActiveCompany() {
   try {
     const cookieStore = await cookies();
-    // canonical cookie name your backend sets (use env or default)
-    const canonical = process.env.SESSION_COOKIE_NAME || process.env.SESSION_COOKIE || "erp_session";
-    // quick existence check: look for canonical or common names
-    const candidates = [canonical, "sid", "ssr_sid", "SESSION_ID", "session_id"];
-    let found = null;
+    const canonical = process.env.SESSION_COOKIE_NAME || "sid"; // prefer env override
+    const candidates = [canonical, "sid", "ssr_sid", "SESSION_ID", "session_id", "erp_session"];
+
+    // 1) Raw header cookie (authoritative for forwarding)
+    const hdrs = await headers();
+    const headerCookie = hdrs.get("cookie") ?? "";
+
+    // 2) Attempt structured cookie read (may not see HttpOnly)
+    let foundFromCookieStore: string | null = null;
     for (const n of candidates) {
       const c = cookieStore.get(n);
       if (c?.value) {
-        found = c.value;
+        foundFromCookieStore = c.value;
         break;
       }
     }
+
+    // 3) Try to extract canonical from headerCookie if cookieStore didn't find it
+    let found = foundFromCookieStore;
+    if (!found && headerCookie) {
+      const esc = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+      const m = headerCookie.match(new RegExp(`${esc(canonical)}=([^;\\s]+)`));
+      if (m) found = m[1];
+      else {
+        const m2 = headerCookie.match(/sid=([^;\s]+)/);
+        if (m2) found = m2[1];
+      }
+    }
+
+    // Logging to help you diagnose quickly
+    console.debug("[getActiveCompany] headerCookiePresent:", !!headerCookie, "headerCookiePreview:", headerCookie ? headerCookie.slice(0, 120) : null);
+    console.debug("[getActiveCompany] cookieStoreFound:", !!foundFromCookieStore, "valuePreview:", foundFromCookieStore ? String(foundFromCookieStore).slice(0, 40) : null);
+    console.debug("[getActiveCompany] canonical:", canonical, "finalFound:", !!found);
+
     if (!found) {
-      // no cookie available to forward
-      console.debug("[getActiveCompany] no session cookie found in incoming request");
+      console.debug("[getActiveCompany] no session cookie found — returning null");
       return null;
     }
 
     const base = await getApiBase();
     const url = `${base}/api/user/companies`;
 
-    // Forward the entire incoming cookie header (preserves real cookie name and signed cookies)
-    const hdrs = await headers();
-    const rawCookie = hdrs.get("cookie") ?? `${canonical}=${found}`;
+    // Prefer forwarding the raw header cookie when present to preserve exact names
+    const rawCookieToForward = headerCookie || `${canonical}=${found}`;
+
+    console.debug("[getActiveCompany] forwarding cookie preview:", rawCookieToForward.slice(0, 120), "to", url);
 
     const res = await fetch(url, {
       method: "GET",
       cache: "no-store",
       headers: {
-        cookie: rawCookie,
+        cookie: rawCookieToForward,
         Accept: "application/json",
       },
     });
 
     if (!res.ok) {
       const bodyText = await res.text().catch(() => "");
-      console.error("getActiveCompany: downstream API error", { url, status: res.status, bodyText });
+      console.error("[getActiveCompany] downstream API error", { url, status: res.status, bodyText });
       return null;
     }
 
     const data = await res.json().catch(() => null);
-    if (!data) return null;
+    if (!data) {
+      console.error("[getActiveCompany] failed to parse JSON from downstream", { url });
+      return null;
+    }
 
     const companies = data?.companies || [];
     const activeId = data?.active_company_id;
-    return companies.find((c: any) => c.id === activeId) || null;
+    const foundCompany = companies.find((c: any) => c.id === activeId) || null;
+
+    console.debug("[getActiveCompany] success", { activeId, companyFound: !!foundCompany });
+    return foundCompany;
   } catch (err) {
-    console.error("getActiveCompany error", err);
+    console.error("[getActiveCompany] unhandled error", err);
     return null;
   }
 }
+
 
 
 export default async function TenantDashboardPage() {
