@@ -41,7 +41,7 @@ export default function TenantDashboardPage() {
       try {
         const res = await fetch(url, {
           method: "GET",
-          credentials: "include", // sends sid cookie
+          credentials: "include", // sends sid cookie to hms-server-njlg.onrender.com
           headers: {
             Accept: "application/json",
           },
@@ -76,9 +76,7 @@ export default function TenantDashboardPage() {
           data.active_company_id || (companies[0] ? companies[0].id : null);
 
         const found =
-          companies.find((c) => c.id === activeId) ||
-          companies[0] ||
-          null;
+          companies.find((c) => c.id === activeId) || companies[0] || null;
 
         console.debug("[TenantDashboard] resolved active company", {
           activeId,
@@ -129,7 +127,8 @@ export default function TenantDashboardPage() {
   if (!company) {
     return (
       <div className="p-10 text-center text-red-400">
-        No company associated with this user. Complete signup / onboarding first.
+        No company associated with this user. Complete signup / onboarding
+        first.
       </div>
     );
   }
