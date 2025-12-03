@@ -6,30 +6,35 @@ import { MenuProvider } from "@/providers/MenuProvider";
 import { cookies } from "next/headers";
 
 export default async function TenantLayout({ children }: { children: React.ReactNode }) {
-  // await the cookie store (your Next version requires this)
+  // your Next version requires awaiting cookies()
   const cookieStore = await cookies();
 
-  // Build raw cookie header
-  const cookieHeader = cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`)
-    .join("; ");
+  // Forward only the session cookie (e.g. "sid") instead of every cookie
+  const sidCookie = cookieStore.get("sid");
+  const cookieHeader = sidCookie ? `sid=${sidCookie.value}` : "";
 
-  // Forward cookies to backend
-  const companiesRes = await fetch("https://hmsweb.onrender.com/api/user/companies", {
-    method: "GET",
-    headers: {
-      cookie: cookieHeader,
-      Accept: "application/json",
-    },
-    cache: "no-store",
-  });
+  let companies: any[] | null = null;
 
-  let companies = null;
-  if (companiesRes.ok) {
-    companies = await companiesRes.json();
-  } else {
-    console.error("companies fetch failed", companiesRes.status);
+  try {
+    const companiesRes = await fetch("https://hmsweb.onrender.com/api/user/companies", {
+      method: "GET",
+      headers: {
+        // only forward when we have a sid; otherwise backend will return 401 which is expected
+        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (companiesRes.ok) {
+      companies = await companiesRes.json();
+    } else {
+      console.error("companies fetch failed", companiesRes.status);
+      companies = []; // default to empty array so UI won't break
+    }
+  } catch (err) {
+    console.error("companies fetch error", err);
+    companies = [];
   }
 
   return (
