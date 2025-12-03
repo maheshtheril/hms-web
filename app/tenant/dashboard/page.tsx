@@ -1,5 +1,6 @@
 // app/tenant/dashboard/page.tsx
-// NOTE: reference schema (uploaded): file:///mnt/data/schema.sql
+"use server";
+
 import React from "react";
 import HospitalDashboard from "../../components/dashboards/HospitalDashboard";
 import EnterpriseDashboard from "../../components/dashboards/EnterpriseDashboard";
@@ -7,37 +8,51 @@ import { cookies, headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-async function getApiBase(): Promise<string> {
-  // Prefer explicit env var (recommended)
-  const envBase = process.env.BACKEND_URL || process.env.API_URL;
-  if (envBase && envBase.trim() !== "") {
-    return envBase.replace(/\/+$/, "");
-  }
+/**
+ * IMPORTANT: Always talk to the backend service, not the web host.
+ * Make sure this env is set on Render for the web app:
+ *
+ * NEXT_PUBLIC_BACKEND_URL = https://hms-server-njlg.onrender.com
+ */
+const BACKEND: string = (() => {
+  const v =
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.BACKEND_URL ||
+    process.env.API_URL;
 
-  // Fallback: attempt to build from incoming request headers (server-side)
-  const hdrs = await headers();
-  const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host");
-  if (!host) {
+  if (!v || v.trim() === "") {
     throw new Error(
-      "Unable to determine API base URL. Set BACKEND_URL in your environment."
+      "NEXT_PUBLIC_BACKEND_URL (or BACKEND_URL/API_URL) must be set to your server URL"
     );
   }
-  // prefer forwarded proto when present (Render / proxies), otherwise assume https
-  const proto = hdrs.get("x-forwarded-proto") ?? "https";
-  return `${proto}://${host}`.replace(/\/+$/, "");
+
+  // normalize: no trailing slash
+  return v.replace(/\/+$/, "");
+})();
+
+async function getApiBase(): Promise<string> {
+  return BACKEND;
 }
 
 async function getActiveCompany() {
   try {
     const cookieStore = await cookies();
-    const canonical = process.env.SESSION_COOKIE_NAME || "sid"; // prefer env override
-    const candidates = [canonical, "sid", "ssr_sid", "SESSION_ID", "session_id", "erp_session"];
 
-    // 1) Raw header cookie (authoritative for forwarding)
+    const canonical = process.env.SESSION_COOKIE_NAME || "sid";
+    const candidates = [
+      canonical,
+      "sid",
+      "ssr_sid",
+      "SESSION_ID",
+      "session_id",
+      "erp_session",
+    ];
+
+    // 1) Read raw header cookie (authoritative)
     const hdrs = await headers();
     const headerCookie = hdrs.get("cookie") ?? "";
 
-    // 2) Attempt structured cookie read (may not see HttpOnly)
+    // 2) Structured cookie read
     let foundFromCookieStore: string | null = null;
     for (const n of candidates) {
       const c = cookieStore.get(n);
@@ -47,35 +62,59 @@ async function getActiveCompany() {
       }
     }
 
-    // 3) Try to extract canonical from headerCookie if cookieStore didn't find it
+    // 3) Try to extract canonical name from header cookie if needed
     let found = foundFromCookieStore;
     if (!found && headerCookie) {
-      const esc = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+      const esc = (s: string) =>
+        s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
       const m = headerCookie.match(new RegExp(`${esc(canonical)}=([^;\\s]+)`));
-      if (m) found = m[1];
-      else {
+      if (m) {
+        found = m[1];
+      } else {
         const m2 = headerCookie.match(/sid=([^;\s]+)/);
         if (m2) found = m2[1];
       }
     }
 
-    // Logging to help you diagnose quickly
-    console.debug("[getActiveCompany] headerCookiePresent:", !!headerCookie, "headerCookiePreview:", headerCookie ? headerCookie.slice(0, 120) : null);
-    console.debug("[getActiveCompany] cookieStoreFound:", !!foundFromCookieStore, "valuePreview:", foundFromCookieStore ? String(foundFromCookieStore).slice(0, 40) : null);
-    console.debug("[getActiveCompany] canonical:", canonical, "finalFound:", !!found);
+    console.debug(
+      "[getActiveCompany] headerCookiePresent:",
+      !!headerCookie,
+      "headerCookiePreview:",
+      headerCookie ? headerCookie.slice(0, 120) : null
+    );
+    console.debug(
+      "[getActiveCompany] cookieStoreFound:",
+      !!foundFromCookieStore,
+      "valuePreview:",
+      foundFromCookieStore
+        ? String(foundFromCookieStore).slice(0, 40)
+        : null
+    );
+    console.debug(
+      "[getActiveCompany] canonical:",
+      canonical,
+      "finalFound:",
+      !!found
+    );
 
-    if (!found) {
-      console.debug("[getActiveCompany] no session cookie found — returning null");
+    if (!found && !headerCookie) {
+      console.debug(
+        "[getActiveCompany] no session cookie at all — treating as unauthenticated"
+      );
       return null;
     }
 
     const base = await getApiBase();
     const url = `${base}/api/user/companies`;
 
-    // Prefer forwarding the raw header cookie when present to preserve exact names
     const rawCookieToForward = headerCookie || `${canonical}=${found}`;
 
-    console.debug("[getActiveCompany] forwarding cookie preview:", rawCookieToForward.slice(0, 120), "to", url);
+    console.debug(
+      "[getActiveCompany] forwarding cookie preview:",
+      rawCookieToForward.slice(0, 120),
+      "to",
+      url
+    );
 
     const res = await fetch(url, {
       method: "GET",
@@ -88,21 +127,33 @@ async function getActiveCompany() {
 
     if (!res.ok) {
       const bodyText = await res.text().catch(() => "");
-      console.error("[getActiveCompany] downstream API error", { url, status: res.status, bodyText });
+      console.error("[getActiveCompany] downstream API error", {
+        url,
+        status: res.status,
+        bodyText,
+      });
       return null;
     }
 
     const data = await res.json().catch(() => null);
     if (!data) {
-      console.error("[getActiveCompany] failed to parse JSON from downstream", { url });
+      console.error("[getActiveCompany] failed to parse JSON from downstream", {
+        url,
+      });
       return null;
     }
 
     const companies = data?.companies || [];
-    const activeId = data?.active_company_id;
-    const foundCompany = companies.find((c: any) => c.id === activeId) || null;
+    const activeId =
+      data?.active_company_id || (companies.length > 0 ? companies[0].id : null);
+    const foundCompany =
+      companies.find((c: any) => c.id === activeId) || companies[0] || null;
 
-    console.debug("[getActiveCompany] success", { activeId, companyFound: !!foundCompany });
+    console.debug("[getActiveCompany] success", {
+      activeId,
+      companyFound: !!foundCompany,
+    });
+
     return foundCompany;
   } catch (err) {
     console.error("[getActiveCompany] unhandled error", err);
@@ -110,17 +161,16 @@ async function getActiveCompany() {
   }
 }
 
-
-
 export default async function TenantDashboardPage() {
   const company = await getActiveCompany();
 
   if (!company) {
     return (
       <div className="p-10 text-center text-red-400">
-        No active company found for this tenant. If you are signed in, ensure the
-        server's BACKEND_URL is configured and that the <code>sid</code>{" "}
-        cookie is present. Check server logs for details.
+        No active company found for this tenant. If you are signed in, ensure
+        the server&apos;s BACKEND_URL / NEXT_PUBLIC_BACKEND_URL is configured
+        and that the <code>sid</code> cookie is present. Check server logs for
+        details.
       </div>
     );
   }
