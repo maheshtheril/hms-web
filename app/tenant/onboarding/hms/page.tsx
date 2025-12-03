@@ -2,12 +2,13 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
+import { BACKEND } from "@/lib/env"; // 🧠 env-based backend URL
 
 export default function HospitalOnboardingWizard() {
   const router = useRouter();
   const [step, setStep] = useState(1);
 
-  // you said you don't want subIndustry — keep it local if you want, but we won't send it
+  // local only, not sent to backend
   const [subIndustry, setSubIndustry] = useState<string>("hospital");
   const [departments, setDepartments] = useState<string[]>([]);
   const [billingMode, setBillingMode] = useState<string>("cash");
@@ -48,22 +49,33 @@ export default function HospitalOnboardingWizard() {
   }
 
   async function finishOnboarding() {
-    if (loading) return; // prevent double submit
+    if (loading) return;
     setError(null);
+
+    if (!BACKEND) {
+      setError(
+        "Backend URL is not configured. Ask admin to set NEXT_PUBLIC_BACKEND_URL."
+      );
+      return;
+    }
+
     setLoading(true);
 
-    const url = "/api/onboarding/hms"; // <-- use backend path
+    const url = `${BACKEND}/api/onboarding/hms`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000); // 15s
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
 
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "include", // send sid cookie to backend
         body: JSON.stringify({
-          // user said no subIndustry — do not send it
+          // do NOT send subIndustry since you said you don't want it persisted
           departments,
           billingMode,
         }),
@@ -74,7 +86,6 @@ export default function HospitalOnboardingWizard() {
       const text = await res.text().catch(() => "");
 
       if (!res.ok) {
-        // backend might return JSON or HTML — handle both
         let detail = "";
         if (ct.includes("application/json")) {
           try {
@@ -91,12 +102,13 @@ export default function HospitalOnboardingWizard() {
         return;
       }
 
-      // success: try parse json, but don't crash if it's not JSON
       if (ct.includes("application/json")) {
         try {
           const j = JSON.parse(text);
           console.info("onboarding success:", j);
-        } catch {}
+        } catch {
+          // ignore JSON parse failure on success
+        }
       }
 
       router.push("/tenant/dashboard");
@@ -259,7 +271,8 @@ export default function HospitalOnboardingWizard() {
             <div className="text-center py-12">
               <h2 className="text-2xl font-bold">Your Hospital Is Ready</h2>
               <p className="text-white/60 mt-2">
-                Zyntra has configured all modules: OP, IP, Doctors, Pharmacy, Lab, Wards & Billing.
+                Zyntra has configured all modules: OP, IP, Doctors, Pharmacy, Lab, Wards &
+                Billing.
               </p>
 
               <button
