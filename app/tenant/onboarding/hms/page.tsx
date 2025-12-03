@@ -53,10 +53,9 @@ export default function HospitalOnboardingWizard() {
   setError(null);
   setLoading(true);
 
-  console.log("[HMS onboarding] BACKEND =", BACKEND);
-
-  const base = BACKEND || "https://hms-server-njlg.onrender.com";
-  const url = `${base}/api/onboarding/hms`;
+  // 👇 ZERO RELATIVE URL. ABSOLUTE BACKEND ONLY.
+  const url = "https://hms-server-njlg.onrender.com/api/onboarding/hms";
+  console.log("[HMS onboarding] calling:", url);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000); // 15s
@@ -114,8 +113,10 @@ export default function HospitalOnboardingWizard() {
   } finally {
     clearTimeout(timeout);
     setLoading(false);
+    clearTimeout(timeout);
   }
 }
+
 
 
   return (
