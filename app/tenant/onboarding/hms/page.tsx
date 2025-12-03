@@ -49,81 +49,74 @@ export default function HospitalOnboardingWizard() {
   }
 
   async function finishOnboarding() {
-    if (loading) return;
-    setError(null);
+  if (loading) return; // prevent double submit
+  setError(null);
+  setLoading(true);
 
-    if (!BACKEND) {
-      setError(
-        "Backend URL is not configured. Ask admin to set NEXT_PUBLIC_BACKEND_URL."
-      );
-      return;
-    }
+  console.log("[HMS onboarding] BACKEND =", BACKEND);
 
-    setLoading(true);
+  const base = BACKEND || "https://hms-server-njlg.onrender.com";
+  const url = `${base}/api/onboarding/hms`;
 
-    const url = `${BACKEND}/api/onboarding/hms`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000); // 15s
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        departments,
+        billingMode,
+      }),
+      signal: controller.signal,
+    });
 
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        credentials: "include", // send sid cookie to backend
-        body: JSON.stringify({
-          // do NOT send subIndustry since you said you don't want it persisted
-          departments,
-          billingMode,
-        }),
-        signal: controller.signal,
-      });
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const text = await res.text().catch(() => "");
 
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
-      const text = await res.text().catch(() => "");
-
-      if (!res.ok) {
-        let detail = "";
-        if (ct.includes("application/json")) {
-          try {
-            const j = JSON.parse(text);
-            detail = j?.error || j?.message || JSON.stringify(j);
-          } catch {
-            detail = "(json-parse-failed)";
-          }
-        } else {
-          detail = text ? text.slice(0, 400) : "(no-body)";
-        }
-        setError(`Onboarding failed: ${res.status} ${detail}`);
-        console.warn("onboarding failed:", res.status, detail);
-        return;
-      }
-
+    if (!res.ok) {
+      let detail = "";
       if (ct.includes("application/json")) {
         try {
           const j = JSON.parse(text);
-          console.info("onboarding success:", j);
+          detail = j?.error || j?.message || JSON.stringify(j);
         } catch {
-          // ignore JSON parse failure on success
+          detail = "(json-parse-failed)";
         }
-      }
-
-      router.push("/tenant/dashboard");
-    } catch (err: any) {
-      if (err?.name === "AbortError") {
-        setError("Onboarding request timed out. Try again.");
       } else {
-        setError(err?.message || "Network error during onboarding");
+        detail = text ? text.slice(0, 400) : "(no-body)";
       }
-      console.error("finishOnboarding error:", err);
-    } finally {
-      clearTimeout(timeout);
-      setLoading(false);
+      setError(`Onboarding failed: ${res.status} ${detail}`);
+      console.warn("onboarding failed:", res.status, detail);
+      return;
     }
+
+    if (ct.includes("application/json")) {
+      try {
+        const j = JSON.parse(text);
+        console.info("onboarding success:", j);
+      } catch {}
+    }
+
+    router.push("/tenant/dashboard");
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      setError("Onboarding request timed out. Try again.");
+    } else {
+      setError(err?.message || "Network error during onboarding");
+    }
+    console.error("finishOnboarding error:", err);
+  } finally {
+    clearTimeout(timeout);
+    setLoading(false);
   }
+}
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#071226] to-[#071321] p-10 text-white">
