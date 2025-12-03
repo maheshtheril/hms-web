@@ -6,34 +6,55 @@ import { MenuProvider } from "@/providers/MenuProvider";
 import { cookies } from "next/headers";
 
 export default async function TenantLayout({ children }: { children: React.ReactNode }) {
-  // your Next version requires awaiting cookies()
   const cookieStore = await cookies();
 
-  // Forward only the session cookie (e.g. "sid") instead of every cookie
-  const sidCookie = cookieStore.get("sid");
-  const cookieHeader = sidCookie ? `sid=${sidCookie.value}` : "";
+  // DEBUG: show what cookies the server received for this request
+  const allCookies = cookieStore.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
+  console.log("tenant layout - incoming cookies:", allCookies);
 
-  let companies: any[] | null = null;
+  // Prefer forwarding only sid when present
+  const sid = cookieStore.get?.("sid")?.value ?? "";
+  const cookieHeader = sid ? `sid=${sid}` : "";
 
+  if (!sid) {
+    // No sid — DON'T call backend (avoids 401 spam). Use empty companies so UI still renders.
+    console.warn("TenantLayout: no sid cookie found on request; skipping companies fetch.");
+    return (
+      <MenuProvider initialCompanies={[]}>
+        <div className="min-h-screen bg-erp-bg text-white relative">
+          <Sidebar />
+          <Topbar />
+          <main className="ml-64 pt-16 min-h-screen">
+            <div className="max-w-[1400px] mx-auto px-6 py-6">{children}</div>
+          </main>
+        </div>
+      </MenuProvider>
+    );
+  }
+
+  let companies: any[] = [];
   try {
+    console.log("TenantLayout: forwarding sid to backend (first 8 chars):", sid.slice(0, 8));
     const companiesRes = await fetch("https://hmsweb.onrender.com/api/user/companies", {
       method: "GET",
       headers: {
-        // only forward when we have a sid; otherwise backend will return 401 which is expected
-        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+        cookie: cookieHeader,
         Accept: "application/json",
       },
       cache: "no-store",
     });
 
+    console.log("TenantLayout: backend companies status:", companiesRes.status);
+
     if (companiesRes.ok) {
-      companies = await companiesRes.json();
+      const data = await companiesRes.json();
+      companies = data.companies || [];
     } else {
-      console.error("companies fetch failed", companiesRes.status);
-      companies = []; // default to empty array so UI won't break
+      console.error("TenantLayout: companies fetch failed, status:", companiesRes.status);
+      companies = [];
     }
   } catch (err) {
-    console.error("companies fetch error", err);
+    console.error("TenantLayout: companies fetch error:", err);
     companies = [];
   }
 
