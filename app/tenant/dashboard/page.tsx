@@ -1,5 +1,4 @@
 // app/tenant/dashboard/page.tsx
-"use server";
 
 import React from "react";
 import HospitalDashboard from "../../components/dashboards/HospitalDashboard";
@@ -14,24 +13,20 @@ export const dynamic = "force-dynamic";
  *
  * NEXT_PUBLIC_BACKEND_URL = https://hms-server-njlg.onrender.com
  */
-const BACKEND: string = (() => {
-  const v =
-    process.env.NEXT_PUBLIC_BACKEND_URL ||
-    process.env.BACKEND_URL ||
-    process.env.API_URL;
+const BACKEND = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.BACKEND_URL ||
+  process.env.API_URL
+) as string;
 
-  if (!v || v.trim() === "") {
-    throw new Error(
-      "NEXT_PUBLIC_BACKEND_URL (or BACKEND_URL/API_URL) must be set to your server URL"
-    );
-  }
-
-  // normalize: no trailing slash
-  return v.replace(/\/+$/, "");
-})();
+if (!BACKEND) {
+  throw new Error(
+    "NEXT_PUBLIC_BACKEND_URL (or BACKEND_URL/API_URL) must be set to your server URL"
+  );
+}
 
 async function getApiBase(): Promise<string> {
-  return BACKEND;
+  return BACKEND.replace(/\/+$/, "");
 }
 
 async function getActiveCompany() {
@@ -71,7 +66,7 @@ async function getActiveCompany() {
       if (m) {
         found = m[1];
       } else {
-        const m2 = headerCookie.match(/sid=([^;\s]+)/);
+        const m2 = headerCookie.match(/sid=([^;\\s]+)/);
         if (m2) found = m2[1];
       }
     }
@@ -168,8 +163,8 @@ export default async function TenantDashboardPage() {
     return (
       <div className="p-10 text-center text-red-400">
         No active company found for this tenant. If you are signed in, ensure
-        the server&apos;s BACKEND_URL / NEXT_PUBLIC_BACKEND_URL is configured
-        and that the <code>sid</code> cookie is present. Check server logs for
+        the server&apos;s BACKEND_URL / NEXT_PUBLIC_BACKEND_URL is configured and
+        that the <code>sid</code> cookie is present. Check server logs for
         details.
       </div>
     );
