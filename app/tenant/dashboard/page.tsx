@@ -1,171 +1,135 @@
 // app/tenant/dashboard/page.tsx
+"use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import HospitalDashboard from "../../components/dashboards/HospitalDashboard";
 import EnterpriseDashboard from "../../components/dashboards/EnterpriseDashboard";
-import { cookies, headers } from "next/headers";
-
-export const dynamic = "force-dynamic";
+import { Company } from "@/types/company";
 
 /**
- * IMPORTANT: Always talk to the backend service, not the web host.
- * Make sure this env is set on Render for the web app:
+ * IMPORTANT:
+ * On Render (web app), set:
  *
- * NEXT_PUBLIC_BACKEND_URL = https://hms-server-njlg.onrender.com
+ *   NEXT_PUBLIC_BACKEND_URL = https://hms-server-njlg.onrender.com
  */
-const BACKEND = (
+const RAW_BACKEND =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   process.env.BACKEND_URL ||
-  process.env.API_URL
-) as string;
+  process.env.API_URL ||
+  "";
 
-if (!BACKEND) {
-  throw new Error(
-    "NEXT_PUBLIC_BACKEND_URL (or BACKEND_URL/API_URL) must be set to your server URL"
-  );
-}
+const BACKEND = RAW_BACKEND.replace(/\/+$/, "");
 
-async function getApiBase(): Promise<string> {
-  return BACKEND.replace(/\/+$/, "");
-}
+export default function TenantDashboardPage() {
+  const [company, setCompany] = useState<Company | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-async function getActiveCompany() {
-  try {
-    const cookieStore = await cookies();
-
-    const canonical = process.env.SESSION_COOKIE_NAME || "sid";
-    const candidates = [
-      canonical,
-      "sid",
-      "ssr_sid",
-      "SESSION_ID",
-      "session_id",
-      "erp_session",
-    ];
-
-    // 1) Read raw header cookie (authoritative)
-    const hdrs = await headers();
-    const headerCookie = hdrs.get("cookie") ?? "";
-
-    // 2) Structured cookie read
-    let foundFromCookieStore: string | null = null;
-    for (const n of candidates) {
-      const c = cookieStore.get(n);
-      if (c?.value) {
-        foundFromCookieStore = c.value;
-        break;
-      }
-    }
-
-    // 3) Try to extract canonical name from header cookie if needed
-    let found = foundFromCookieStore;
-    if (!found && headerCookie) {
-      const esc = (s: string) =>
-        s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
-      const m = headerCookie.match(new RegExp(`${esc(canonical)}=([^;\\s]+)`));
-      if (m) {
-        found = m[1];
-      } else {
-        const m2 = headerCookie.match(/sid=([^;\\s]+)/);
-        if (m2) found = m2[1];
-      }
-    }
-
-    console.debug(
-      "[getActiveCompany] headerCookiePresent:",
-      !!headerCookie,
-      "headerCookiePreview:",
-      headerCookie ? headerCookie.slice(0, 120) : null
-    );
-    console.debug(
-      "[getActiveCompany] cookieStoreFound:",
-      !!foundFromCookieStore,
-      "valuePreview:",
-      foundFromCookieStore
-        ? String(foundFromCookieStore).slice(0, 40)
-        : null
-    );
-    console.debug(
-      "[getActiveCompany] canonical:",
-      canonical,
-      "finalFound:",
-      !!found
-    );
-
-    if (!found && !headerCookie) {
-      console.debug(
-        "[getActiveCompany] no session cookie at all — treating as unauthenticated"
+  useEffect(() => {
+    if (!BACKEND) {
+      setError(
+        "NEXT_PUBLIC_BACKEND_URL is not set. It must point to your backend server."
       );
-      return null;
+      setLoading(false);
+      return;
     }
 
-    const base = await getApiBase();
-    const url = `${base}/api/user/companies`;
+    const url = `${BACKEND}/api/user/companies`;
+    console.debug("[TenantDashboard] fetching companies from", url);
 
-    const rawCookieToForward = headerCookie || `${canonical}=${found}`;
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          credentials: "include", // sends sid cookie
+          headers: {
+            Accept: "application/json",
+          },
+        });
 
-    console.debug(
-      "[getActiveCompany] forwarding cookie preview:",
-      rawCookieToForward.slice(0, 120),
-      "to",
-      url
+        if (res.status === 401) {
+          setError("unauthenticated");
+          setLoading(false);
+          return;
+        }
+
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          console.error("[TenantDashboard] /api/user/companies error", {
+            status: res.status,
+            body: txt,
+          });
+          setError("server_error");
+          setLoading(false);
+          return;
+        }
+
+        const data = await res.json().catch(() => null);
+        if (!data) {
+          setError("bad_response");
+          setLoading(false);
+          return;
+        }
+
+        const companies: Company[] = data.companies || [];
+        const activeId =
+          data.active_company_id || (companies[0] ? companies[0].id : null);
+
+        const found =
+          companies.find((c) => c.id === activeId) ||
+          companies[0] ||
+          null;
+
+        console.debug("[TenantDashboard] resolved active company", {
+          activeId,
+          found: !!found,
+        });
+
+        setCompany(found);
+        setLoading(false);
+      } catch (err) {
+        console.error("[TenantDashboard] unhandled error", err);
+        setError("network_error");
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-10 text-center text-slate-300">
+        Loading your dashboard...
+      </div>
     );
-
-    const res = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      headers: {
-        cookie: rawCookieToForward,
-        Accept: "application/json",
-      },
-    });
-
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      console.error("[getActiveCompany] downstream API error", {
-        url,
-        status: res.status,
-        bodyText,
-      });
-      return null;
-    }
-
-    const data = await res.json().catch(() => null);
-    if (!data) {
-      console.error("[getActiveCompany] failed to parse JSON from downstream", {
-        url,
-      });
-      return null;
-    }
-
-    const companies = data?.companies || [];
-    const activeId =
-      data?.active_company_id || (companies.length > 0 ? companies[0].id : null);
-    const foundCompany =
-      companies.find((c: any) => c.id === activeId) || companies[0] || null;
-
-    console.debug("[getActiveCompany] success", {
-      activeId,
-      companyFound: !!foundCompany,
-    });
-
-    return foundCompany;
-  } catch (err) {
-    console.error("[getActiveCompany] unhandled error", err);
-    return null;
   }
-}
 
-export default async function TenantDashboardPage() {
-  const company = await getActiveCompany();
+  if (error === "unauthenticated") {
+    return (
+      <div className="p-10 text-center text-red-400">
+        You are not signed in. Please{" "}
+        <a
+          href="/signup"
+          className="underline text-red-300 hover:text-red-200"
+        >
+          sign up / log in again
+        </a>
+        .
+      </div>
+    );
+  }
+
+  if (error && !company) {
+    return (
+      <div className="p-10 text-center text-red-400">
+        Something went wrong loading your company: <code>{error}</code>
+      </div>
+    );
+  }
 
   if (!company) {
     return (
       <div className="p-10 text-center text-red-400">
-        No active company found for this tenant. If you are signed in, ensure
-        the server&apos;s BACKEND_URL / NEXT_PUBLIC_BACKEND_URL is configured and
-        that the <code>sid</code> cookie is present. Check server logs for
-        details.
+        No company associated with this user. Complete signup / onboarding first.
       </div>
     );
   }

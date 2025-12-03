@@ -1,10 +1,12 @@
 // app/components/dashboards/EnterpriseDashboard.tsx
 // NOTE: reference schema (uploaded): file:///mnt/data/schema.sql
+
 import React from "react";
 import KPIGrid from "./KPIGrid";
 import { cookies, headers } from "next/headers";
 
-type Company = { id: string; name: string; industry?: string; logo_url?: string };
+// ✅ Use ONE GLOBAL TYPE everywhere
+import { Company } from "@/types/company";
 
 async function getApiBase(): Promise<string> {
   const envBase = process.env.BACKEND_URL || process.env.API_URL;
@@ -48,7 +50,11 @@ async function fetchTenantEnterpriseKPIs(companyId: string) {
   }
 }
 
-export default async function EnterpriseDashboard({ company }: { company: Company }) {
+export default async function EnterpriseDashboard({
+  company,
+}: {
+  company: Company;
+}) {
   const data = (await fetchTenantEnterpriseKPIs(company.id)) ?? {};
 
   const kpis = [
@@ -94,7 +100,9 @@ export default async function EnterpriseDashboard({ company }: { company: Compan
               {(data.modules ?? []).map((m: any) => (
                 <li key={m.name}>
                   {m.name} —{" "}
-                  <span className={m.enabled ? "text-emerald-400" : "text-neutral-400"}>
+                  <span
+                    className={m.enabled ? "text-emerald-400" : "text-neutral-400"}
+                  >
                     {m.enabled ? "Enabled" : "Disabled"}
                   </span>
                 </li>
@@ -121,7 +129,9 @@ export default async function EnterpriseDashboard({ company }: { company: Compan
               <div className="flex justify-between">
                 <div>
                   <div className="font-semibold">{c.name}</div>
-                  <div className="text-sm text-neutral-400">{c.industry ?? "—"}</div>
+                  <div className="text-sm text-neutral-400">
+                    {c.industry ?? "—"}
+                  </div>
                 </div>
                 <div className="text-sm text-neutral-300 text-right">
                   <div>Revenue: {c.metrics?.revenue_30d ?? "—"}</div>
