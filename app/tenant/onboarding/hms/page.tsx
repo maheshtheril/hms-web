@@ -49,59 +49,80 @@ export default function HospitalOnboardingWizard() {
   }
 
   async function finishOnboarding() {
-  if (loading) return; // prevent double submit
+  if (loading) return;
   setError(null);
   setLoading(true);
 
-  // 👇 ZERO RELATIVE URL. ABSOLUTE BACKEND ONLY.
-  const url = "https://hms-server-njlg.onrender.com/api/onboarding/hms";
+  const url = `${BACKEND}/api/onboarding/hms`;
   console.log("[HMS onboarding] calling:", url);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000); // 15s
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({
-        departments,
-        billingMode,
-      }),
-      signal: controller.signal,
-    });
+    // Prefer token-based auth. If token present, send Authorization and DO NOT use credentials.
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const fetchOpts: RequestInit = {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ departments, billingMode }),
+      signal: controller.signal,
+    };
+
+    // If no token, send credentials for cookie-based sessions (legacy)
+    if (!token) (fetchOpts as any).credentials = "include";
+
+    const res = await fetch(url, fetchOpts);
+
+    // Parse response body robustly
     const ct = (res.headers.get("content-type") || "").toLowerCase();
-    const text = await res.text().catch(() => "");
+    let data: any = null;
+    if (ct.includes("application/json")) {
+      try {
+        data = await res.json();
+      } catch (e) {
+        // fallback: text parse
+        const raw = await res.text().catch(() => "");
+        try { data = JSON.parse(raw); } catch { data = { raw }; }
+      }
+    } else {
+      data = await res.text().catch(() => null);
+    }
+
+    if (res.status === 401) {
+      // Session/token invalid — force sign-out and redirect to login
+      console.warn("onboarding unauthorized:", data);
+      // clear local token if any:
+      localStorage.removeItem("token");
+      // optional: show message then redirect
+      setError("Session expired. Please sign in again.");
+      router.push("/auth/login");
+      return;
+    }
 
     if (!res.ok) {
-      let detail = "";
-      if (ct.includes("application/json")) {
-        try {
-          const j = JSON.parse(text);
-          detail = j?.error || j?.message || JSON.stringify(j);
-        } catch {
-          detail = "(json-parse-failed)";
-        }
-      } else {
-        detail = text ? text.slice(0, 400) : "(no-body)";
-      }
+      const detail =
+        data && typeof data === "object"
+          ? data.error || data.message || JSON.stringify(data)
+          : (String(data) || "(no-body)").slice(0, 500);
       setError(`Onboarding failed: ${res.status} ${detail}`);
       console.warn("onboarding failed:", res.status, detail);
       return;
     }
 
-    if (ct.includes("application/json")) {
-      try {
-        const j = JSON.parse(text);
-        console.info("onboarding success:", j);
-      } catch {}
+    // success: if backend returns token (in case onboarding created or updated auth), save it
+    if (data && data.token) {
+      localStorage.setItem("token", data.token);
     }
 
+    console.info("onboarding success:", data);
     router.push("/tenant/dashboard");
   } catch (err: any) {
     if (err?.name === "AbortError") {
@@ -113,9 +134,9 @@ export default function HospitalOnboardingWizard() {
   } finally {
     clearTimeout(timeout);
     setLoading(false);
-    clearTimeout(timeout);
   }
 }
+
 
 
 
