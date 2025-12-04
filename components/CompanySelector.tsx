@@ -4,7 +4,8 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_ORIGIN || "https://hmsweb.onrender.com";
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_ORIGIN || process.env.BACKEND_URL || "";
+
 
 export default function CompanySelector() {
   const router = useRouter();
