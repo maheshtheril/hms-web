@@ -102,40 +102,26 @@ export default function HospitalOnboardingWizard(): JSX.Element {
     const timeout = setTimeout(() => controller.abort(), 15000); // 15s
 
     try {
-      // Prefer token-based auth. If token present, send Authorization and DO NOT use credentials.
-      const token =
-        typeof window !== "undefined"
-          ? (localStorage.getItem("token") || null)
-          : null;
-
+      // DO NOT use localStorage here. Rely on cookie-based sessions.
+      // Always send credentials so browser cookies (HttpOnly sid) are included.
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json",
       };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const fetchOpts: RequestInit = {
         method: "POST",
         headers,
         body: JSON.stringify({ departments, billingMode, subIndustry }),
         signal: controller.signal,
+        credentials: "include", // ensure cookies are sent for session auth
       };
-
-      // If no token, send credentials for cookie-based sessions (legacy)
-      if (!token) (fetchOpts as any).credentials = "include";
 
       const res = await fetch(url, fetchOpts);
       const data = await parseResponse(res);
 
       if (res.status === 401) {
-        // Session/token invalid — force sign-out and redirect to login
-        if (typeof window !== "undefined") {
-          try {
-            localStorage.removeItem("token");
-          } catch {
-            /* ignore */
-          }
-        }
+        // Session invalid — redirect to login
         setError("Session expired. Please sign in again.");
         router.push("/auth/login");
         return;
@@ -151,16 +137,8 @@ export default function HospitalOnboardingWizard(): JSX.Element {
         return;
       }
 
-      // success: if backend returns token (in case onboarding created or updated auth), save it
-      if (data && typeof data === "object" && typeof data.token === "string" && data.token.length > 10) {
-        try {
-          localStorage.setItem("token", data.token);
-        } catch {
-          // ignore localStorage errors (e.g. in strict browsers)
-        }
-      }
-
-      // move to dashboard
+      // Success: backend should set HttpOnly cookie if auth was created/updated.
+      // Do NOT store tokens in localStorage. Rely on cookie-based session.
       router.push("/tenant/dashboard");
     } catch (err: any) {
       if (err?.name === "AbortError") {
