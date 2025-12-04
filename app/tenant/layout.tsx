@@ -1,3 +1,4 @@
+// web/app/tenant/layout.tsx
 // Server Component (NO "use client")
 import React from "react";
 import Sidebar from "@/components/Sidebar/Sidebar";
@@ -5,20 +6,94 @@ import Topbar from "@/components/Topbar/Topbar";
 import { MenuProvider } from "@/providers/MenuProvider";
 import { cookies } from "next/headers";
 
+const BACKEND =
+  (process.env.BACKEND || process.env.CLIENT_API_BASE || "").replace(/\/$/, "") ||
+  "https://hms-server-njlg.onrender.com";
+
+/**
+ * safeFetchWithRetry
+ * - single retry on network errors (keeps pressure low)
+ * - applies a timeout using AbortController
+ */
+async function safeFetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  retries = 1,
+  timeoutMs = 10000
+): Promise<Response> {
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastError = err;
+      if (attempt < retries) {
+        const backoff = 200 * (attempt + 1);
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, backoff));
+        continue;
+      }
+      throw lastError;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * parseResponseSafely
+ * - tries to parse JSON when safe (small content-length)
+ * - otherwise returns null or a small snippet to avoid buffering huge bodies
+ */
+async function parseResponseSafely(res: Response): Promise<any> {
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  const cl = res.headers.get("content-length");
+  const maxAcceptBytes = 2_000_000; // 2 MB guard
+
+  // If content-length exists and is large, avoid full parsing to reduce memory pressure
+  if (cl && Number(cl) > maxAcceptBytes) {
+    return null;
+  }
+
+  try {
+    if (ct.includes("application/json")) {
+      return await res.json();
+    }
+    return await res.text();
+  } catch (e) {
+    // fallback: attempt small snippet read from stream if available
+    try {
+      // read only first chunk to avoid buffering whole body
+      const reader = res.body?.getReader();
+      if (!reader) return null;
+      const { value } = await reader.read();
+      if (!value) return null;
+      const s = new TextDecoder().decode(value);
+      return s.slice(0, 1024);
+    } catch {
+      return null;
+    }
+  }
+}
+
 export default async function TenantLayout({ children }: { children: React.ReactNode }) {
+  // Await cookies() — in your environment cookies() is a Promise
   const cookieStore = await cookies();
 
-  // DEBUG: show what cookies the server received for this request
+  // DEBUG: log only cookie names (no sensitive values)
+  const cookieNames = cookieStore.getAll().map((c) => c.name).join(", ");
+  console.log("tenant layout - incoming cookie keys:", cookieNames || "(none)");
+
+  // Build header forwarding the full cookie string (server->server)
   const allCookies = cookieStore.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
-  console.log("tenant layout - incoming cookies:", allCookies);
+  const cookieHeader = allCookies || "";
 
-  // Prefer forwarding only sid when present
-  const sid = cookieStore.get?.("sid")?.value ?? "";
-  const cookieHeader = sid ? `sid=${sid}` : "";
-
-  if (!sid) {
-    // No sid — DON'T call backend (avoids 401 spam). Use empty companies so UI still renders.
-    console.warn("TenantLayout: no sid cookie found on request; skipping companies fetch.");
+  if (!cookieHeader) {
+    console.warn("TenantLayout: no cookies found on request; skipping companies fetch.");
     return (
       <MenuProvider initialCompanies={[]}>
         <div className="min-h-screen bg-erp-bg text-white relative">
@@ -33,28 +108,53 @@ export default async function TenantLayout({ children }: { children: React.React
   }
 
   let companies: any[] = [];
+  const endpoint = `${BACKEND}/api/user/companies`;
+
   try {
-    console.log("TenantLayout: forwarding sid to backend (first 8 chars):", sid.slice(0, 8));
-    const companiesRes = await fetch("https://hmsweb.onrender.com/api/user/companies", {
-      method: "GET",
-      headers: {
-        cookie: cookieHeader,
-        Accept: "application/json",
+    // Log only a small sid snippet (if present) for debugging
+    const sidSnippet = cookieHeader.match(/sid=([^;]+)/)?.[1]?.slice(0, 8) ?? null;
+    console.log(`TenantLayout: forwarding cookie to backend (sid first8): ${sidSnippet ?? "(no sid)"}`);
+
+    const res = await safeFetchWithRetry(
+      endpoint,
+      {
+        method: "GET",
+        headers: {
+          Cookie: cookieHeader,
+          Accept: "application/json",
+        },
+        cache: "no-store",
       },
-      cache: "no-store",
-    });
+      1, // single retry
+      10000 // 10s timeout
+    );
 
-    console.log("TenantLayout: backend companies status:", companiesRes.status);
+    console.log("TenantLayout: backend companies status:", res.status);
 
-    if (companiesRes.ok) {
-      const data = await companiesRes.json();
-      companies = data.companies || [];
-    } else {
-      console.error("TenantLayout: companies fetch failed, status:", companiesRes.status);
+    if (res.status === 401) {
+      console.warn("TenantLayout: backend returned 401 for companies. cookie forwarded:", !!cookieHeader);
       companies = [];
+    } else if (!res.ok) {
+      const bodySnippet = await parseResponseSafely(res);
+      console.error("TenantLayout: companies fetch failed", {
+        status: res.status,
+        snippet: typeof bodySnippet === "string" ? bodySnippet.slice(0, 400) : bodySnippet,
+      });
+      companies = [];
+    } else {
+      const data = await parseResponseSafely(res);
+      if (Array.isArray(data)) {
+        companies = data;
+      } else if (data && typeof data === "object") {
+        companies = data.companies ?? data.items ?? [];
+      } else {
+        companies = [];
+      }
     }
-  } catch (err) {
-    console.error("TenantLayout: companies fetch error:", err);
+  } catch (err: any) {
+    const name = err?.name ?? "unknown";
+    const message = err?.message ?? String(err);
+    console.error("TenantLayout: companies fetch error:", { name, message, endpoint, time: new Date().toISOString() });
     companies = [];
   }
 
