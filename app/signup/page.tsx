@@ -771,13 +771,12 @@ export default function SignupPage(): JSX.Element {
 
       setSuccess(true);
 
-      setTimeout(() => {
-        if (form.industry === "hospital") {
-          router.push("/tenant/onboarding/hms");
-        } else {
-          router.push("/tenant");
-        }
-      }, 350);
+      // --- IMPORTANT: do a full navigation so browser applies cookie before protected requests ---
+      const redirectUrl = payload?.redirect || (form.industry === "hospital" ? "/tenant/onboarding/hms" : "/tenant");
+      // If backend returned a sid, it's available in payload?.sid for debugging
+      console.debug("[signup] server sid:", payload?.sid, "redirect:", redirectUrl);
+      // Full-page navigation ensures the browser stores the Set-Cookie before subsequent fetches.
+      window.location.href = redirectUrl;
     } catch (err: unknown) {
       if (err instanceof Error) setError(err.message);
       else setError("Signup failed - try again or contact support.");
