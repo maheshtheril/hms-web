@@ -6,9 +6,24 @@ import Topbar from "@/components/Topbar/Topbar";
 import { MenuProvider } from "@/providers/MenuProvider";
 import { cookies } from "next/headers";
 
-const BACKEND =
-  (process.env.BACKEND || process.env.CLIENT_API_BASE || "").replace(/\/$/, "") ||
-  "https://hms-server-njlg.onrender.com";
+/**
+ * BACKEND resolution (server-side)
+ * - prefer explicit server runtime var BACKEND_ORIGIN
+ * - fallback to NEXT_PUBLIC_BACKEND_URL (helpful for local / unified config)
+ * - do NOT fallback to any hardcoded host (e.g. hmsweb). If missing, we log loudly.
+ */
+const BACKEND = (
+  (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_BACKEND_URL || "").replace(/\/$/, "")
+);
+
+if (!BACKEND) {
+  // Loud log so you see it in Render / server logs and fix env quickly.
+  // We don't throw here to avoid crashing pages while envs are being fixed,
+  // but you can change to throw in production if you prefer.
+  console.error(
+    "[TenantLayout] WARNING: BACKEND not configured. Set BACKEND_ORIGIN (server) or NEXT_PUBLIC_BACKEND_URL (client)."
+  );
+}
 
 /**
  * safeFetchWithRetry
@@ -108,7 +123,15 @@ export default async function TenantLayout({ children }: { children: React.React
   }
 
   let companies: any[] = [];
-  const endpoint = `${BACKEND}/api/user/companies`;
+
+  // Choose endpoint:
+  // - Prefer explicit BACKEND (server runtime). If missing, fall back to a relative proxy route
+  //   so deployed Next server can forward to the correct backend if configured.
+  const endpoint = BACKEND ? `${BACKEND}/api/user/companies` : `/api/user/companies`;
+
+  // Debug log to help verify what we're calling (remove in prod)
+  console.log("[TenantLayout] resolved BACKEND:", BACKEND || "(none)");
+  console.log("[TenantLayout] companies endpoint:", endpoint);
 
   try {
     // Log only a small sid snippet (if present) for debugging
