@@ -1,73 +1,59 @@
 // web/app/api/user/companies/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND = process.env.BACKEND || process.env.CLIENT_API_BASE || "https://hms-server-njlg.onrender.com";
+/**
+ * Resolve backend origin from environment only.
+ * No hardcoded host here — prefer render/runtime config:
+ *  - BACKEND_ORIGIN (recommended)
+ *  - NEXT_PUBLIC_BACKEND_URL (for client builds)
+ *  - BACKEND (fallback)
+ */
+const BACKEND = (
+  process.env.BACKEND_ORIGIN ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.BACKEND ||
+  ""
+).replace(/\/$/, ""); // remove trailing slash if present
 
-async function safeFetchWithRetry(url: string, init: RequestInit = {}, retries = 2, timeoutMs = 15000) {
-  let lastErr: any = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { ...init, signal: controller.signal });
-      clearTimeout(timer);
-      return res;
-    } catch (err) {
-      clearTimeout(timer);
-      lastErr = err;
-      // rapid backoff
-      if (attempt < retries) await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
-      else throw lastErr;
-    }
+export async function GET(req: NextRequest) {
+  // If backend not configured, return 500 with clear message.
+  if (!BACKEND) {
+    console.error("API proxy /api/user/companies: BACKEND is not configured in env.");
+    return NextResponse.json(
+      { error: "backend_not_configured", message: "Set BACKEND_ORIGIN or NEXT_PUBLIC_BACKEND_URL" },
+      { status: 500 }
+    );
   }
-  throw lastErr;
-}
 
-export async function GET(req: Request) {
-  const url = `${BACKEND.replace(/\/$/, "")}/api/user/companies`;
-  const incomingCookie = req.headers.get("cookie") || "";
+  // forward cookie header from incoming request
+  const cookieHeader = req.headers.get("cookie") || "";
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
-  if (incomingCookie) headers["Cookie"] = incomingCookie;
+  const backendUrl = `${BACKEND}/api/user/companies`;
 
   try {
-    const res = await safeFetchWithRetry(url, {
+    const backendRes = await fetch(backendUrl, {
       method: "GET",
-      headers,
-      cache: "no-store",
-    }, 2, 15000);
-
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    let body: any;
-    try {
-      body = ct.includes("application/json") ? await res.json() : await res.text();
-    } catch {
-      body = "(unparsable body)";
-    }
-
-    if (res.status === 401) {
-      console.warn(`[proxy/companies] backend 401 — cookieForwarded=${!!incomingCookie}`);
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
-
-    if (!res.ok) {
-      console.error(`[proxy/companies] backend ${res.status}`, { url, snippet: typeof body === "string" ? body.slice(0, 400) : body });
-      return NextResponse.json({ error: "backend_error", status: res.status, body: String(body).slice(0,500) }, { status: 502 });
-    }
-
-    return NextResponse.json(body, { status: 200 });
-  } catch (err: any) {
-    const name = err?.name || "unknown";
-    const msg = err?.message || String(err);
-    console.error(`[proxy/companies] fetch failed: ${name} — ${msg}`, {
-      url,
-      cookieForwarded: !!incomingCookie,
-      time: new Date().toISOString()
+      headers: {
+        cookie: cookieHeader,
+        Accept: "application/json",
+      },
+      // do NOT include any credentials here; server fetch uses headers explicitly
     });
 
-    return NextResponse.json({ error: "fetch_failed", message: msg }, { status: 502 });
+    // read as text and mirror status + content-type (safe and simple)
+    const text = await backendRes.text();
+    const resHeaders = new Headers();
+    const ct = backendRes.headers.get("content-type");
+    if (ct) resHeaders.set("Content-Type", ct);
+
+    return new NextResponse(text, {
+      status: backendRes.status,
+      headers: resHeaders,
+    });
+  } catch (err: any) {
+    console.error("Proxy /api/user/companies -> backend fetch failed:", err?.message || err);
+    return NextResponse.json({ error: "proxy_error", message: String(err?.message || err) }, { status: 502 });
   }
 }
+
+export const runtime = "nodejs";
