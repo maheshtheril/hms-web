@@ -2,16 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Logo from "@/components/Logo";
-import { setSid } from "@/lib/sessionClient"; // <-- NEW: frontend-only helper to store sid in memory
-
-/**
- * Final signup page — Option A country selector + full password typing/strength UX
- *
- * - Normalizes many server shapes into canonical Country objects:
- *   { id, name, iso2?, flag_emoji?, serverId? }
- * - FlagIcon prefers explicit emoji, then generates from iso2, then globe fallback.
- * - Ensures emoji fonts via inline style to avoid custom-font issues.
- */
+import { setSid } from "@/lib/sessionClient"; // <-- frontend-only helper to store sid in memory
 
 const LOGO_SRC = process.env.NEXT_PUBLIC_LOGO_SRC || "/assets/brand-logo.png";
 const BACKEND = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "";
@@ -701,6 +692,22 @@ export default function SignupPage(): JSX.Element {
 
   const { passed: passwordPassed } = usePasswordStrength(form.password);
 
+  // Helper: ping session endpoint and return boolean
+  async function pingSessionOnce(): Promise<boolean> {
+    try {
+      const r = await fetch((BACKEND || "") + "/api/session/ping", {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!r.ok) return false;
+      const j = await r.json().catch(() => ({}));
+      return !!j?.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function createAccount(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -732,7 +739,7 @@ export default function SignupPage(): JSX.Element {
       // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);
 
-      // ----- UPDATED: always prefer the canonical UUID (selected.id) -----
+      // always prefer the canonical UUID (selected.id)
       const payloadToSend = {
         name: form.name,
         company: form.company,
@@ -743,7 +750,6 @@ export default function SignupPage(): JSX.Element {
         industry: form.industry || null,
       };
 
-      // debug so you can confirm the exact countryId being sent
       console.debug("[signup-debug] payloadToSend:", payloadToSend, "URL:", url);
 
       const res = await fetch(url, {
@@ -772,13 +778,11 @@ export default function SignupPage(): JSX.Element {
 
       setSuccess(true);
 
-      // --- IMPORTANT: do a full navigation so browser applies cookie before protected requests ---
+      // Decide redirect
       const redirectUrl = payload?.redirect || (form.industry === "hospital" ? "/tenant/onboarding/hms" : "/tenant");
-      // If backend returned a sid, it's available in payload?.sid for debugging
       console.debug("[signup] server sid:", payload?.sid, "redirect:", redirectUrl);
 
-      // --- NEW: store sid in-memory for Authorization header fallback immediately ---
-      // keep sid in memory only (do not persist to localStorage)
+      // store sid in-memory (fallback for Authorization header use)
       if (payload?.sid) {
         try {
           setSid(payload.sid);
@@ -787,21 +791,47 @@ export default function SignupPage(): JSX.Element {
         }
       }
 
-      // --- Ensure cookie is committed before redirect ---
-      // 1) Try a credentials fetch to force cookie commit (most reliable)
-      try {
-        // relative path keeps host same; credentials include cookies and let browser receive Set-Cookie
-        await fetch("/api/session/ping", { credentials: "include" });
-      } catch (e) {
-        // ignore network errors — fallback below
-        console.warn("session ping failed", e);
+      // Poll session ping to ensure browser accepted cookie (HttpOnly cookies cannot be read by JS)
+      const maxAttempts = 6;
+      const delayMs = 400;
+      let ok = false;
+      for (let i = 0; i < maxAttempts; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        ok = await pingSessionOnce();
+        if (ok) break;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, delayMs));
       }
 
-      // 2) Short delay as safe fallback to avoid race
-      await new Promise((r) => setTimeout(r, 120));
+      if (ok) {
+        // cookie applied and backend recognizes session — navigate
+        window.location.assign(redirectUrl);
+      } else {
+        // fallback: try one final ping with absolute backend origin (if BACKEND set)
+        if (BACKEND) {
+          try {
+            const r = await fetch(`${BACKEND.replace(/\/$/, "")}/api/session/ping`, {
+              method: "GET",
+              credentials: "include",
+              headers: { Accept: "application/json" },
+            });
+            const j = await r.json().catch(() => ({}));
+            if (j?.ok) {
+              window.location.assign(redirectUrl);
+              return;
+            }
+          } catch (_) {
+            // noop
+          }
+        }
 
-      // 3) Navigate (use assign to replace current entry)
-      window.location.assign(redirectUrl);
+        // If we get here, cookie wasn't committed or was blocked by browser/CORS.
+        setError(
+          "Account created but the browser didn't accept the session cookie. " +
+            "Please check browser cookie settings or try signing in. If this keeps happening, use a different browser."
+        );
+        console.debug("[signup] ping failed, server sid (debug):", payload?.sid);
+      }
     } catch (err: unknown) {
       if (err instanceof Error) setError(err.message);
       else setError("Signup failed - try again or contact support.");
