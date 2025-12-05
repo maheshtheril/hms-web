@@ -787,8 +787,21 @@ export default function SignupPage(): JSX.Element {
         }
       }
 
-      // Full-page navigation ensures the browser stores the Set-Cookie before subsequent fetches.
-      window.location.href = redirectUrl;
+      // --- Ensure cookie is committed before redirect ---
+      // 1) Try a credentials fetch to force cookie commit (most reliable)
+      try {
+        // relative path keeps host same; credentials include cookies and let browser receive Set-Cookie
+        await fetch("/api/session/ping", { credentials: "include" });
+      } catch (e) {
+        // ignore network errors — fallback below
+        console.warn("session ping failed", e);
+      }
+
+      // 2) Short delay as safe fallback to avoid race
+      await new Promise((r) => setTimeout(r, 120));
+
+      // 3) Navigate (use assign to replace current entry)
+      window.location.assign(redirectUrl);
     } catch (err: unknown) {
       if (err instanceof Error) setError(err.message);
       else setError("Signup failed - try again or contact support.");
