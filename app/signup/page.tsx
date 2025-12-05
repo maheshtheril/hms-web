@@ -1047,7 +1047,7 @@ export default function SignupPage(): JSX.Element {
 
                       <button
                         type="button"
-                        onClick={() => router.push("/auth/login")}
+                        onClick={() => router.push("/login")}
                         className="text-sm text-white/60 hover:text-white/80"
                       >
                         Already have an account?

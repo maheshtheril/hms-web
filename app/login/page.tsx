@@ -30,7 +30,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         // Successful login — use replace to prevent back nav to login
-        router.replace("/dashboard");
+        router.replace("/tenant/dashboard");
       } else {
         // Try to parse backend reason if provided
         const data = await res.json().catch(() => ({}));
