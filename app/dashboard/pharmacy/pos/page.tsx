@@ -1,3 +1,4 @@
+"use client";
 // PharmacyPOS_with_batch_selection_and_reserve.tsx
 // React + TypeScript POS page with batch selection, stock validation, AND auto-reserve (pre-reserve) of batches.
 // Uses Neural Glass design patterns and focuses on avoiding race conditions for hot-selling pharmacy items.
