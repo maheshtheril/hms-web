@@ -1,18 +1,25 @@
+// web/types/menu.ts
 export interface MenuItem {
   id: string;
-  parent_id: string | null;
-  module_key: string;
+  parent_id?: string | null;
+  module_key?: string | null;
   key: string;
   label: string;
-  icon: string | null;
-  url: string | null;
-  sort_order: number;
+  url?: string | null;
+  icon?: string | null;
   permission_code?: string | null;
-  children?: MenuItem[];
+  is_global?: boolean | null;
+  sort_order?: number | null;
+
+  // optional fields for UI
+  badge?: string | number | null;
+  children?: MenuItem[] | null;
+  [k: string]: any;
 }
 
 export interface MenuResponse {
   ok: boolean;
-  modules: string[];
   items: MenuItem[];
+  modules?: string[];
+  meta?: Record<string, any>;
 }
