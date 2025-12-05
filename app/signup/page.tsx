@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Logo from "@/components/Logo";
+import { setSid } from "@/lib/sessionClient"; // <-- NEW: frontend-only helper to store sid in memory
 
 /**
  * Final signup page — Option A country selector + full password typing/strength UX
@@ -135,7 +136,7 @@ function FlagIcon({ country }: { country: Country | null }) {
   const isoRaw = country?.iso2 ?? "";
   const iso = typeof isoRaw === "string" ? isoRaw.trim().slice(0, 2).toUpperCase() : "";
 
-  const generatedEmoji = useMemo(() => {
+  const generatedEmoji = React.useMemo(() => {
     if (!iso || !/^[A-Z]{2}$/.test(iso)) return null;
     try {
       const base = 0x1f1e6;
@@ -775,6 +776,17 @@ export default function SignupPage(): JSX.Element {
       const redirectUrl = payload?.redirect || (form.industry === "hospital" ? "/tenant/onboarding/hms" : "/tenant");
       // If backend returned a sid, it's available in payload?.sid for debugging
       console.debug("[signup] server sid:", payload?.sid, "redirect:", redirectUrl);
+
+      // --- NEW: store sid in-memory for Authorization header fallback immediately ---
+      // keep sid in memory only (do not persist to localStorage)
+      if (payload?.sid) {
+        try {
+          setSid(payload.sid);
+        } catch (err) {
+          console.warn("setSid failed", err);
+        }
+      }
+
       // Full-page navigation ensures the browser stores the Set-Cookie before subsequent fetches.
       window.location.href = redirectUrl;
     } catch (err: unknown) {
