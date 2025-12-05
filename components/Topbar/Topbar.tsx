@@ -340,10 +340,10 @@ function ProfileMenu() {
   const handleLogout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-      window.location.href = "/auth/login";
+      window.location.href = "/login";
     } catch (err) {
       console.error("logout failed", err);
-      window.location.href = "/auth/login";
+      window.location.href = "/login";
     }
   }, []);
 
