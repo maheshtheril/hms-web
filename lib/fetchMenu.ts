@@ -1,113 +1,77 @@
 // web/lib/fetchMenu.ts
-import { MenuResponse } from "@/types/menu";
-import { BACKEND } from "@/lib/env"; // central backend URL (may be empty for same-origin proxy)
+import { MenuResponse, MenuItem } from "@/types/menu";
+import { BACKEND } from "@/lib/env";
 
 /**
- * Client-side menu fetch helper
- * - uses sessionStorage cache for fast UI
- * - background refresh to keep cache fresh
- * - timeout + single retry with small backoff
+ * Robust fetchMenu
+ * - accepts backend shapes: { menu: [...] } or { items: [...] } or an array
+ * - maps backend fields (path -> url, permission_code -> permission)
+ * - returns canonical MenuResponse: { ok, modules, items }
  */
 
-const MENU_CACHE_KEY = "erp:menu:v1";
-const DEFAULT_TIMEOUT_MS = 10000;
-const DEFAULT_RETRIES = 1;
+const MENU_URL = (BACKEND && BACKEND.length > 0) ? `${BACKEND.replace(/\/$/, "")}/api/menu` : `/api/menu`;
 
-/** low-level timeout fetch */
-async function timeoutFetch(input: RequestInfo, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(input, { ...init, signal: controller.signal });
-    clearTimeout(id);
-    return res;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
+function normalizeBackendItem(b: any): MenuItem {
+  return {
+    id: String(b.id ?? b.key ?? b.path ?? Math.random().toString(36).slice(2, 9)),
+    key: b.key ?? b.id ?? b.path ?? undefined,
+    label: b.label ?? b.name ?? b.title ?? "",
+    url: b.url ?? b.path ?? b.route ?? null, // map 'path' -> url
+    icon: b.icon ?? null,
+    permission: b.permission_code ?? b.permission ?? null,
+    children: Array.isArray(b.children) ? b.children.map(normalizeBackendItem) : [],
+    sort_order: typeof b.sort_order === "number" ? b.sort_order : 0,
+  };
 }
 
-/** retry wrapper */
-async function fetchWithRetries<T>(url: string, init: RequestInit = {}, retries = DEFAULT_RETRIES, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
-  let lastErr: any = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await timeoutFetch(url, init, timeoutMs);
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status} ${res.statusText} ${body ? `: ${body.slice(0,200)}` : ""}`);
-      }
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        return (await res.json()) as T;
-      }
-      // fallback try parse
-      const text = await res.text();
-      // @ts-ignore
-      return JSON.parse(text) as T;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < retries) {
-        // small backoff
-        await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
-        continue;
-      }
-      throw lastErr;
-    }
-  }
-  throw lastErr;
-}
-
-/** Resolve URL: prefer BACKEND if configured, otherwise same-origin proxy */
-function resolveMenuUrl(): string {
-  if (BACKEND && BACKEND.length > 0) {
-    return `${BACKEND.replace(/\/$/, "")}/api/menu`;
-  }
-  return `/api/menu`;
-}
-
-/**
- * fetchMenu
- * - returns a MenuResponse object. On error returns { ok: false, modules: [], items: [] }
- * - returns cached value quickly if available (sessionStorage), and triggers background refresh
- */
 export async function fetchMenu(): Promise<MenuResponse> {
-  const url = resolveMenuUrl();
-
   try {
-    // fast path: return cached if present, but kick off background refresh
-    const cached = typeof window !== "undefined" ? sessionStorage.getItem(MENU_CACHE_KEY) : null;
-    if (cached) {
-      // background refresh (non-blocking)
-      fetchWithRetries<MenuResponse>(url, { credentials: "include", headers: { Accept: "application/json" } }, 1)
-        .then((fresh) => {
-          if (fresh?.ok) {
-            try {
-              sessionStorage.setItem(MENU_CACHE_KEY, JSON.stringify(fresh));
-            } catch {}
-          }
-        })
-        .catch(() => {});
-      // return cached immediately
-      return JSON.parse(cached) as MenuResponse;
+    const res = await fetch(MENU_URL, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      console.error("[fetchMenu] backend responded", res.status);
+      return { ok: false, modules: [], items: [] };
     }
 
-    // no cache -> fetch and cache
-    const data = await fetchWithRetries<MenuResponse>(url, { credentials: "include", headers: { Accept: "application/json" } }, 1);
-    if (data?.ok) {
-      try {
-        sessionStorage.setItem(MENU_CACHE_KEY, JSON.stringify(data));
-      } catch {}
+    const data = await res.json().catch(() => null);
+    if (!data) return { ok: false, modules: [], items: [] };
+
+    // backend shapes handled:
+    // 1) { menu: [...] }
+    // 2) { items: [...] }
+    // 3) [ ... ] directly
+    const raw = data.menu ?? data.items ?? (Array.isArray(data) ? data : null);
+
+    if (!raw || !Array.isArray(raw)) {
+      // maybe wrapped: { ok: true, menu: [...] } or { ok: true, data: { menu: [...] } }
+      const alt = data.data?.menu ?? data.data?.items;
+      if (Array.isArray(alt)) {
+        return {
+          ok: true,
+          modules: data.modules ?? [],
+          items: alt.map(normalizeBackendItem),
+        };
+      }
+      console.warn("[fetchMenu] unexpected menu shape:", data);
+      return { ok: false, modules: [], items: [] };
     }
-    return data;
+
+    const items = raw.map(normalizeBackendItem);
+    return { ok: true, modules: data.modules ?? [], items };
   } catch (err) {
-    console.error("[fetchMenu] failed:", err);
+    console.error("[fetchMenu] network error:", err);
     return { ok: false, modules: [], items: [] };
   }
 }
 
+/** helper for clearing any client cache you use (if you use sessionStorage) */
 export function clearMenuCache() {
   try {
-    if (typeof window !== "undefined") sessionStorage.removeItem(MENU_CACHE_KEY);
+    if (typeof window !== "undefined") sessionStorage.removeItem("erp:menu:v1");
   } catch {}
 }

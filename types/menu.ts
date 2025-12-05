@@ -1,25 +1,22 @@
 // web/types/menu.ts
-export interface MenuItem {
+
+export type MenuItem = {
   id: string;
-  parent_id?: string | null;
-  module_key?: string | null;
-  key: string;
+  key?: string;
   label: string;
+  /** Canonical URL used by the frontend (we normalize backend `path` -> `url`) */
   url?: string | null;
   icon?: string | null;
-  permission_code?: string | null;
-  is_global?: boolean | null;
-  sort_order?: number | null;
+  permission?: string | null;
+  sort_order?: number;
+  children?: MenuItem[];
 
-  // optional fields for UI
+  /** optional badge (small number or short text) */
   badge?: string | number | null;
-  children?: MenuItem[] | null;
-  [k: string]: any;
-}
+};
 
-export interface MenuResponse {
+export type MenuResponse = {
   ok: boolean;
+  modules: string[];
   items: MenuItem[];
-  modules?: string[];
-  meta?: Record<string, any>;
-}
+};
