@@ -51,15 +51,36 @@ function cartReducer(state: State, action: Action): State {
 
 function currency(n: number) { return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
+/* ----- Session / context types (expected from /api/hms/me) ----- */
+type MeResponse = {
+  user: { id: string; name: string; email?: string };
+  tenant_id: string;
+  company_id: string;
+  default_location_id?: string | null;
+  companies?: { id: string; name: string }[];
+  locations?: { id: string; name: string }[]; // scoped to company
+};
+
 /* ----- Main component ----- */
 export default function PharmacyPOSWithReserve(): JSX.Element {
+  // session-derived IDs (no raw UUID inputs for users)
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
   const [tenantId, setTenantId] = useState("");
   const [companyId, setCompanyId] = useState("");
   const [createdBy, setCreatedBy] = useState("");
   const [locationId, setLocationId] = useState("");
+
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
+
+  // patient/doctor
   const [patientId, setPatientId] = useState("");
   const [doctorId, setDoctorId] = useState("");
 
+  // product search + cart state
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
@@ -69,17 +90,75 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   const [state, dispatch] = useReducer(cartReducer, { cart: [] });
   const { cart } = state;
 
+  // batch modal
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [batchProduct, setBatchProduct] = useState<Product | null>(null);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [batchQuantity, setBatchQuantity] = useState<number>(1);
 
+  // prescriptions
   const [loadedPrescription, setLoadedPrescription] = useState<PrescriptionPayload | null>(null);
   const [prescriptionModalOpen, setPrescriptionModalOpen] = useState(false);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
 
+  /* =========================
+     Session / context initialization
+     =========================
+     Best-practice: call a single endpoint that returns the session context.
+     Expected response shape: MeResponse
+     Endpoint: GET /api/hms/me
+  */
+  useEffect(() => {
+    let mounted = true;
+    async function loadSession() {
+      setSessionLoading(true);
+      setSessionError(null);
+      try {
+        const res = await fetch("/api/hms/me", { credentials: "include" });
+        if (!res.ok) {
+          throw new Error(`session_fetch_failed:${res.status}`);
+        }
+        const j: MeResponse = await res.json();
+        if (!mounted) return;
+
+        // populate contextual IDs
+        setTenantId(j.tenant_id);
+        setCompanyId(j.company_id);
+        setCreatedBy(j.user?.id ?? "");
+        setLocationId(j.default_location_id ?? "");
+        setCompanies(j.companies ?? []);
+        setLocations(j.locations ?? []);
+        setCurrentUserName(j.user?.name ?? null);
+
+        // if user has companies and no location, try to fetch locations for company
+        if ((!j.locations || j.locations.length === 0) && j.company_id) {
+          // attempt to fetch locations for company
+          try {
+            const locRes = await fetch(`/api/hms/locations?company_id=${encodeURIComponent(j.company_id)}`, { credentials: "include" });
+            if (locRes.ok) {
+              const locJson = await locRes.json();
+              setLocations(locJson?.data || []);
+              if (!j.default_location_id && (locJson?.data || []).length) setLocationId(locJson.data[0].id);
+            }
+          } catch (e) { /* ignore */ }
+        }
+      } catch (err: any) {
+        console.error("failed to load session", err);
+        if (!mounted) return;
+        setSessionError("Failed to fetch session. Please login again or contact admin.");
+      } finally {
+        if (mounted) setSessionLoading(false);
+      }
+    }
+    loadSession();
+    return () => { mounted = false; };
+  }, []);
+
+  /* =========================
+     Local storage restore for cart
+     ========================= */
   useEffect(() => {
     const key = "pos_cart_with_reservations_v1";
     const raw = localStorage.getItem(key);
@@ -88,6 +167,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   useEffect(() => { localStorage.setItem("pos_cart_with_reservations_v1", JSON.stringify(cart)); }, [cart]);
 
+  /* =========================
+     Product search
+     ========================= */
   useEffect(() => {
     if (!query || query.trim() === "") { setProducts([]); return; }
     const t = setTimeout(async () => {
@@ -101,10 +183,14 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     return () => clearTimeout(t);
   }, [query]);
 
+  /* =========================
+     Reservation helpers (use session company/location)
+     ========================= */
   async function reserveBatch(product_id: string, batch_id: string | null, quantity: number, prescription_line_id?: string | null) {
+    if (!companyId || !locationId) throw new Error("missing_company_or_location");
     try {
       const idempotencyKey = `${companyId}|${locationId}|reserve|${uuidv4()}`;
-      const body: any = { product_id, batch_id, quantity, location_id: locationId };
+      const body: any = { product_id, batch_id, quantity, location_id: locationId, company_id: companyId };
       if (patientId) body.patient_id = patientId;
       if (prescription_line_id) body.prescription_line_id = prescription_line_id;
       const res = await fetch(`/api/hms/reserve`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify(body) });
@@ -127,6 +213,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     } catch (err) { console.error("update reservation failed", err); throw err; }
   }
 
+  /* =========================
+     Adding / modifying lines
+     ========================= */
   async function handleAddClick(p: Product) {
     setMessage(null);
     if (p.has_multiple_batches) {
@@ -186,6 +275,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [cart]);
 
+  /* =========================
+     Stock validate before submit (unchanged)
+     ========================= */
   async function validateStockBeforeSubmit(): Promise<{ ok: boolean; problems?: string[] }> {
     const unique = cart.reduce((acc: { product_id: string; batch_id?: string | null }[], l) => {
       const key = `${l.product_id}::${l.batch_id ?? "DEFAULT"}`;
@@ -208,9 +300,16 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     return { ok: problems.length === 0, problems: problems.length ? problems : undefined };
   }
 
+  /* =========================
+     Submit Sale (uses session-scoped IDs)
+     ========================= */
   async function submitSale() {
     setMessage(null);
-    if (!tenantId || !companyId || !createdBy || !locationId) { setMessage("Missing tenant/company/user/location."); return; }
+
+    // session checks (opinionated: session must supply tenant/company/user/location)
+    if (sessionLoading) { setMessage("Authenticating..."); return; }
+    if (sessionError) { setMessage(sessionError); return; }
+    if (!tenantId || !companyId || !createdBy || !locationId) { setMessage("Missing organization context. Contact admin."); return; }
     if (!patientId) { setMessage("Patient is required for billing. Select or load from a prescription."); return; }
     if (!cart.length) { setMessage("Cart empty"); return; }
 
@@ -240,6 +339,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   const tax = useMemo(() => cart.reduce((s, l) => s + ((l.tax_rate || 0) / 100) * (l.unit_price * l.quantity - (l.discount_amount || 0)), 0), [cart]);
   const total = useMemo(() => subtotal + tax, [subtotal, tax]);
 
+  /* =========================
+     Prescription integration (unchanged)
+     ========================= */
   async function addPrescriptionLines(lines: PrescriptionLine[]) {
     setMessage(null);
     if (!lines.length) { setMessage("No lines selected"); return; }
@@ -270,6 +372,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     setPrescriptionModalOpen(false);
   }
 
+  /* =========================
+     UI render
+     ========================= */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900/20 to-slate-800/30 p-6 text-slate-100">
       <div className="max-w-7xl mx-auto">
@@ -280,11 +385,46 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
               <div className="text-sm text-slate-300">Neural Glass • Billing — Auto-reserve enabled</div>
             </div>
 
-            <div className="flex gap-2 items-center">
-              <input placeholder="Tenant UUID" className="ng-input" value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
-              <input placeholder="Company UUID" className="ng-input" value={companyId} onChange={(e) => setCompanyId(e.target.value)} />
-              <input placeholder="User UUID" className="ng-input" value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} />
-              <input placeholder="Location UUID" className="ng-input" value={locationId} onChange={(e) => setLocationId(e.target.value)} />
+            {/* Organization / user info (friendly, not raw UUIDs) */}
+            <div className="flex gap-3 items-center">
+              {sessionLoading ? (
+                <div className="text-sm text-slate-400">Loading session…</div>
+              ) : sessionError ? (
+                <div className="text-sm text-red-400">{sessionError}</div>
+              ) : (
+                <>
+                  <div className="text-sm text-slate-300">User: <span className="font-medium text-white">{currentUserName ?? "—"}</span></div>
+
+                  {/* company selector only when user has >1 company */}
+                  {companies && companies.length > 1 ? (
+                    <select className="ng-input" value={companyId} onChange={async (e) => {
+                      const newCompanyId = e.target.value;
+                      setCompanyId(newCompanyId);
+                      // fetch locations for this company
+                      try {
+                        const res = await fetch(`/api/hms/locations?company_id=${encodeURIComponent(newCompanyId)}`, { credentials: "include" });
+                        if (res.ok) {
+                          const j = await res.json();
+                          setLocations(j?.data || []);
+                          if ((j?.data || []).length) setLocationId(j.data[0].id);
+                        } else {
+                          setLocations([]);
+                        }
+                      } catch (err) { console.warn(err); setLocations([]); }
+                    }}>
+                      {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  ) : (
+                    <div className="text-sm text-slate-300">Company: <span className="font-medium text-white">{companies?.[0]?.name ?? "—"}</span></div>
+                  )}
+
+                  {/* location selector */}
+                  <select className="ng-input" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+                    <option value="">Select location</option>
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                </>
+              )}
             </div>
           </div>
 
@@ -294,6 +434,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
           </div>
         </header>
 
+        {/* Top controls: patient/doctor selector + prescription loader */}
         <div className="mb-4 flex items-start justify-between gap-6">
           <div>
             <PatientDoctorSelector patientId={patientId || undefined} doctorId={doctorId || undefined} onPatientChange={(id) => setPatientId(id ?? "")} onDoctorChange={(id) => setDoctorId(id ?? "")} />
@@ -317,6 +458,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
         </div>
 
         <main className="grid grid-cols-12 gap-6">
+          {/* Products */}
           <section className="col-span-7 bg-slate-900/25 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-slate-700/30">
             <div className="mb-3">
               <label className="block text-sm text-slate-300 mb-1">Search product or SKU — press / to focus</label>
@@ -339,6 +481,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
             </div>
           </section>
 
+          {/* Cart */}
           <aside className="col-span-5 bg-slate-900/25 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-slate-700/30 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-white">Cart</h2>
@@ -376,7 +519,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
               <div className="flex gap-2">
                 <button onClick={() => dispatch({ type: "CLEAR" })} className="flex-1 px-4 py-2 rounded-lg border border-slate-700 text-slate-200">Clear</button>
-                <button onClick={submitSale} disabled={submitting} className={`flex-1 px-4 py-2 rounded-lg ${submitting ? "bg-green-400/60" : "bg-green-600"} text-white`}>{submitting ? "Processing…" : `Pay ₹ ${currency(total)}`}</button>
+                <button onClick={submitSale} disabled={submitting || sessionLoading} className={`flex-1 px-4 py-2 rounded-lg ${submitting ? "bg-green-400/60" : "bg-green-600"} text-white`}>{submitting ? "Processing…" : `Pay ₹ ${currency(total)}`}</button>
               </div>
 
               {message && <div className="mt-3 text-sm text-red-400">{message}</div>}
@@ -384,6 +527,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
           </aside>
         </main>
 
+        {/* Batch modal */}
         {batchModalOpen && batchProduct && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setBatchModalOpen(false)} />
@@ -417,6 +561,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
           </div>
         )}
 
+        {/* Prescription modal */}
         {prescriptionModalOpen && loadedPrescription && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={() => setPrescriptionModalOpen(false)} />
