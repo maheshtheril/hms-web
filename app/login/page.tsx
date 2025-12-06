@@ -20,27 +20,36 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+
     try {
       const res = await fetch("/auth/login", {
-        credentials: "include",
-method: "POST",
+        method: "POST",
+        credentials: "include", // <-- only once, required so browser stores/sends cookies
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      if (res.ok) {
-        // Successful login — use replace to prevent back nav to login
-        router.replace("/tenant/dashboard");
-      } else {
-        // Try to parse backend reason if provided
-        const data = await res.json().catch(() => ({}));
-        setError(
-          data?.error || "Invalid credentials. Please check your email or password."
-        );
+      // DEBUG: optional - helpful when backend sets X-Debug-Set-Cookie in dev
+      const debugSetCookie = res.headers.get("x-debug-set-cookie");
+      if (debugSetCookie && process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug("[login] debug set-cookie header:", debugSetCookie);
       }
-    } catch {
-      setError("Unexpected error. Try again.");
+
+      if (res.ok) {
+        // Successful login — navigate to tenant dashboard
+        // use replace to prevent back nav to login
+        router.replace("/tenant/dashboard");
+        return;
+      }
+
+      // Try to parse backend reason if provided
+      const data = await res.json().catch(() => ({}));
+      const msg = data?.error || data?.message || "Invalid credentials. Please check your email or password.";
+      setError(String(msg));
+    } catch (err: any) {
+      // show a helpful message
+      setError(err?.message ? `Network error: ${err.message}` : "Unexpected error. Try again.");
     } finally {
       setLoading(false);
     }
