@@ -22,7 +22,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/auth/login", {
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
+
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         credentials: "include", // <-- only once, required so browser stores/sends cookies
         headers: { "Content-Type": "application/json" },
