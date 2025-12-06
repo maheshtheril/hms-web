@@ -24,7 +24,7 @@ export default function LoginPage() {
     try {
       const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
         credentials: "include", // <-- only once, required so browser stores/sends cookies
         headers: { "Content-Type": "application/json" },
