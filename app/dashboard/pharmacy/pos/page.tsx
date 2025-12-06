@@ -73,7 +73,7 @@ function cartReducer(state: State, action: Action): State {
 
 function currency(n: number) { return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-/* ----- Session / context types (expected from /api/hms/me) ----- */
+/* ----- Session / context types (expected from /api/me) ----- */
 type MeResponse = {
   user?: { id: string; name?: string; email?: string };
   tenant_id?: string;
@@ -128,7 +128,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   /* =========================
      Session / context initialization
      Best-practice: call a single endpoint that returns the session context.
-     Endpoint used: GET /api/hms/me
+     Endpoint used: GET /api/me
   ========================= */
   useEffect(() => {
     let mounted = true;
@@ -136,7 +136,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
       setSessionLoading(true);
       setSessionError(null);
       try {
-        const res = await fetch("/api/hms/me", { credentials: "include" });
+        const res = await fetch("/api/me", { credentials: "include" });
         if (!res.ok) {
           const j = await res.json().catch(() => ({}));
           throw new Error(j?.error || `HTTP ${res.status}`);
