@@ -7,9 +7,31 @@ import PatientDoctorSelector from "@/components/PatientDoctorSelector";
 import PrescriptionUploader, { PrescriptionLine, PrescriptionPayload } from "@/components/PrescriptionUploader";
 
 /* ----- Types ----- */
-type Product = { id: string; name: string; sku?: string; price?: number; tax_rate?: number; default_batch_id?: string | null; stock?: number | null; has_multiple_batches?: boolean; };
+type Product = {
+  id: string;
+  name: string;
+  sku?: string;
+  price?: number;
+  tax_rate?: number;
+  default_batch_id?: string | null;
+  stock?: number | null;
+  has_multiple_batches?: boolean;
+};
 type Batch = { id: string; batch_number: string; expiry?: string | null; available_qty: number; };
-type CartLine = { id: string; product_id: string; batch_id?: string | null; quantity: number; unit_price: number; discount_amount?: number; tax_rate?: number; name?: string; sku?: string; reservation_id?: string | null; reservation_expires_at?: string | null; prescription_line_id?: string | null };
+type CartLine = {
+  id: string;
+  product_id: string;
+  batch_id?: string | null;
+  quantity: number;
+  unit_price: number;
+  discount_amount?: number;
+  tax_rate?: number;
+  name?: string;
+  sku?: string;
+  reservation_id?: string | null;
+  reservation_expires_at?: string | null;
+  prescription_line_id?: string | null;
+};
 
 type State = { cart: CartLine[] };
 type Action =
@@ -53,9 +75,9 @@ function currency(n: number) { return n.toLocaleString("en-IN", { minimumFractio
 
 /* ----- Session / context types (expected from /api/hms/me) ----- */
 type MeResponse = {
-  user: { id: string; name: string; email?: string };
-  tenant_id: string;
-  company_id: string;
+  user?: { id: string; name?: string; email?: string };
+  tenant_id?: string;
+  company_id?: string;
   default_location_id?: string | null;
   companies?: { id: string; name: string }[];
   locations?: { id: string; name: string }[]; // scoped to company
@@ -105,11 +127,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      Session / context initialization
-     =========================
      Best-practice: call a single endpoint that returns the session context.
-     Expected response shape: MeResponse
-     Endpoint: GET /api/hms/me
-  */
+     Endpoint used: GET /api/hms/me
+  ========================= */
   useEffect(() => {
     let mounted = true;
     async function loadSession() {
@@ -118,23 +138,23 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
       try {
         const res = await fetch("/api/hms/me", { credentials: "include" });
         if (!res.ok) {
-          throw new Error(`session_fetch_failed:${res.status}`);
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.error || `HTTP ${res.status}`);
         }
         const j: MeResponse = await res.json();
         if (!mounted) return;
 
-        // populate contextual IDs
-        setTenantId(j.tenant_id);
-        setCompanyId(j.company_id);
-        setCreatedBy(j.user?.id ?? "");
-        setLocationId(j.default_location_id ?? "");
+        // populate contextual IDs (tolerant to missing fields)
+        if (j.tenant_id) setTenantId(j.tenant_id);
+        if (j.company_id) setCompanyId(j.company_id);
+        if (j.user?.id) setCreatedBy(j.user.id);
+        if (j.default_location_id) setLocationId(j.default_location_id);
         setCompanies(j.companies ?? []);
         setLocations(j.locations ?? []);
         setCurrentUserName(j.user?.name ?? null);
 
-        // if user has companies and no location, try to fetch locations for company
+        // fetch locations if not present but company exists
         if ((!j.locations || j.locations.length === 0) && j.company_id) {
-          // attempt to fetch locations for company
           try {
             const locRes = await fetch(`/api/hms/locations?company_id=${encodeURIComponent(j.company_id)}`, { credentials: "include" });
             if (locRes.ok) {
@@ -158,18 +178,23 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      Local storage restore for cart
-     ========================= */
+  ========================= */
   useEffect(() => {
     const key = "pos_cart_with_reservations_v1";
     const raw = localStorage.getItem(key);
-    if (raw) { try { const parsed: CartLine[] = JSON.parse(raw); if (Array.isArray(parsed)) dispatch({ type: "SET_CART", cart: parsed }); } catch {} }
+    if (raw) {
+      try {
+        const parsed: CartLine[] = JSON.parse(raw);
+        if (Array.isArray(parsed)) dispatch({ type: "SET_CART", cart: parsed });
+      } catch {}
+    }
   }, []);
 
   useEffect(() => { localStorage.setItem("pos_cart_with_reservations_v1", JSON.stringify(cart)); }, [cart]);
 
   /* =========================
-     Product search
-     ========================= */
+     Product search (debounced)
+  ========================= */
   useEffect(() => {
     if (!query || query.trim() === "") { setProducts([]); return; }
     const t = setTimeout(async () => {
@@ -185,7 +210,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      Reservation helpers (use session company/location)
-     ========================= */
+  ========================= */
   async function reserveBatch(product_id: string, batch_id: string | null, quantity: number, prescription_line_id?: string | null) {
     if (!companyId || !locationId) throw new Error("missing_company_or_location");
     try {
@@ -193,7 +218,12 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
       const body: any = { product_id, batch_id, quantity, location_id: locationId, company_id: companyId };
       if (patientId) body.patient_id = patientId;
       if (prescription_line_id) body.prescription_line_id = prescription_line_id;
-      const res = await fetch(`/api/hms/reserve`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify(body) });
+      const res = await fetch(`/api/hms/reserve`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(body),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || json?.message || `HTTP ${res.status}`);
       return { reservation_id: json?.data?.reservation_id || json?.reservation_id, expires_at: json?.data?.expires_at || json?.expires_at };
@@ -201,7 +231,9 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   }
 
   async function releaseReservation(reservation_id: string) {
-    try { await fetch(`/api/hms/reserve/${encodeURIComponent(reservation_id)}/release`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } }); } catch (err) { console.warn("failed to release reservation", reservation_id, err); }
+    try {
+      await fetch(`/api/hms/reserve/${encodeURIComponent(reservation_id)}/release`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } });
+    } catch (err) { console.warn("failed to release reservation", reservation_id, err); }
   }
 
   async function updateReservation(reservation_id: string, quantity: number) {
@@ -215,7 +247,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      Adding / modifying lines
-     ========================= */
+  ========================= */
   async function handleAddClick(p: Product) {
     setMessage(null);
     if (p.has_multiple_batches) {
@@ -230,7 +262,22 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     }
     try {
       const r = await reserveBatch(p.id, p.default_batch_id ?? null, 1, null);
-      dispatch({ type: "ADD_LINE", line: { id: uuidv4(), product_id: p.id, batch_id: p.default_batch_id ?? null, quantity: 1, unit_price: p.price ?? 0, discount_amount: 0, tax_rate: p.tax_rate ?? 0, name: p.name, sku: p.sku, reservation_id: r.reservation_id, reservation_expires_at: r.expires_at } });
+      dispatch({
+        type: "ADD_LINE",
+        line: {
+          id: uuidv4(),
+          product_id: p.id,
+          batch_id: p.default_batch_id ?? null,
+          quantity: 1,
+          unit_price: p.price ?? 0,
+          discount_amount: 0,
+          tax_rate: p.tax_rate ?? 0,
+          name: p.name,
+          sku: p.sku,
+          reservation_id: r.reservation_id,
+          reservation_expires_at: r.expires_at,
+        },
+      });
     } catch (err: any) { setMessage(err?.message || "Failed to reserve item"); }
   }
 
@@ -242,7 +289,22 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     if (batchQuantity > avail) { setMessage(`Insufficient stock. Available: ${avail}`); return; }
     try {
       const r = await reserveBatch(batchProduct.id, chosen?.id ?? null, batchQuantity, null);
-      dispatch({ type: "ADD_LINE", line: { id: uuidv4(), product_id: batchProduct.id, batch_id: chosen?.id ?? null, quantity: batchQuantity, unit_price: batchProduct.price ?? 0, discount_amount: 0, tax_rate: batchProduct.tax_rate ?? 0, name: batchProduct.name, sku: batchProduct.sku, reservation_id: r.reservation_id, reservation_expires_at: r.expires_at } });
+      dispatch({
+        type: "ADD_LINE",
+        line: {
+          id: uuidv4(),
+          product_id: batchProduct.id,
+          batch_id: chosen?.id ?? null,
+          quantity: batchQuantity,
+          unit_price: batchProduct.price ?? 0,
+          discount_amount: 0,
+          tax_rate: batchProduct.tax_rate ?? 0,
+          name: batchProduct.name,
+          sku: batchProduct.sku,
+          reservation_id: r.reservation_id,
+          reservation_expires_at: r.expires_at,
+        },
+      });
       setBatchModalOpen(false);
     } catch (err: any) { setMessage(err?.message || "Failed to reserve batch"); }
   }
@@ -252,11 +314,15 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
     const line = cart.find((l) => l.id === lineId);
     if (!line) return;
     if (line.reservation_id) {
-      try { const r = await updateReservation(line.reservation_id, qty); dispatch({ type: "UPDATE_LINE", lineId, patch: { quantity: qty, reservation_expires_at: r.expires_at } }); }
-      catch (err: any) { setMessage(err?.message || "Failed to update reservation"); }
+      try {
+        const r = await updateReservation(line.reservation_id, qty);
+        dispatch({ type: "UPDATE_LINE", lineId, patch: { quantity: qty, reservation_expires_at: r.expires_at } });
+      } catch (err: any) { setMessage(err?.message || "Failed to update reservation"); }
     } else {
-      try { const r = await reserveBatch(line.product_id, line.batch_id ?? null, qty, line.prescription_line_id ?? null); dispatch({ type: "UPDATE_LINE", lineId, patch: { quantity: qty, reservation_id: r.reservation_id, reservation_expires_at: r.expires_at } }); }
-      catch (err: any) { setMessage(err?.message || "Failed to reserve for new quantity"); }
+      try {
+        const r = await reserveBatch(line.product_id, line.batch_id ?? null, qty, line.prescription_line_id ?? null);
+        dispatch({ type: "UPDATE_LINE", lineId, patch: { quantity: qty, reservation_id: r.reservation_id, reservation_expires_at: r.expires_at } });
+      } catch (err: any) { setMessage(err?.message || "Failed to reserve for new quantity"); }
     }
   }
 
@@ -276,8 +342,8 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   }, [cart]);
 
   /* =========================
-     Stock validate before submit (unchanged)
-     ========================= */
+     Stock validate before submit
+  ========================= */
   async function validateStockBeforeSubmit(): Promise<{ ok: boolean; problems?: string[] }> {
     const unique = cart.reduce((acc: { product_id: string; batch_id?: string | null }[], l) => {
       const key = `${l.product_id}::${l.batch_id ?? "DEFAULT"}`;
@@ -302,7 +368,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      Submit Sale (uses session-scoped IDs)
-     ========================= */
+  ========================= */
   async function submitSale() {
     setMessage(null);
 
@@ -319,13 +385,36 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
     const idempotencyKey = `${companyId}|${locationId}|pos|${uuidv4()}`;
     const payload = {
-      tenant_id: tenantId, company_id: companyId, created_by: createdBy, patient_id: patientId, doctor_id: doctorId || null, location_id: locationId,
-      items: cart.map((c) => ({ product_id: c.product_id, batch_id: c.batch_id || null, quantity: c.quantity, unit_price: c.unit_price, discount_amount: c.discount_amount ?? 0, tax_rate: c.tax_rate ?? 0, reservation_id: c.reservation_id ?? null, prescription_line_id: c.prescription_line_id ?? null })),
-      payment: { amount: Number(cart.reduce((s, l) => s + l.unit_price * l.quantity, 0).toFixed(2)), method: "cash", reference: `POS-${Date.now()}` },
+      tenant_id: tenantId,
+      company_id: companyId,
+      created_by: createdBy,
+      patient_id: patientId,
+      doctor_id: doctorId || null,
+      location_id: locationId,
+      items: cart.map((c) => ({
+        product_id: c.product_id,
+        batch_id: c.batch_id || null,
+        quantity: c.quantity,
+        unit_price: c.unit_price,
+        discount_amount: c.discount_amount ?? 0,
+        tax_rate: c.tax_rate ?? 0,
+        reservation_id: c.reservation_id ?? null,
+        prescription_line_id: c.prescription_line_id ?? null,
+      })),
+      payment: {
+        amount: Number(cart.reduce((s, l) => s + l.unit_price * l.quantity, 0).toFixed(2)),
+        method: "cash",
+        reference: `POS-${Date.now()}`,
+      },
     };
 
     try {
-      const res = await fetch("/api/hms/pharmacy/billing/fulfill", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload) });
+      const res = await fetch("/api/hms/pharmacy/billing/fulfill", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || json?.message || `HTTP ${res.status}`);
       const inv = json.data?.invoice_number || json.invoice_number || null;
@@ -340,8 +429,8 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
   const total = useMemo(() => subtotal + tax, [subtotal, tax]);
 
   /* =========================
-     Prescription integration (unchanged)
-     ========================= */
+     Prescription integration
+  ========================= */
   async function addPrescriptionLines(lines: PrescriptionLine[]) {
     setMessage(null);
     if (!lines.length) { setMessage("No lines selected"); return; }
@@ -358,7 +447,23 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
           if (search && Array.isArray(search?.data) && search.data.length) productId = search.data[0].id;
         }
         if (!productId) {
-          dispatch({ type: "ADD_LINE", line: { id: uuidv4(), product_id: `__unmapped__:${ln.product_name}:${Date.now()}`, batch_id: null, quantity: ln.qty ?? 1, unit_price: 0, discount_amount: 0, tax_rate: 0, name: ln.product_name, sku: undefined, reservation_id: null, reservation_expires_at: null, prescription_line_id: ln.id ?? null } });
+          dispatch({
+            type: "ADD_LINE",
+            line: {
+              id: uuidv4(),
+              product_id: `__unmapped__:${ln.product_name}:${Date.now()}`,
+              batch_id: null,
+              quantity: ln.qty ?? 1,
+              unit_price: 0,
+              discount_amount: 0,
+              tax_rate: 0,
+              name: ln.product_name,
+              sku: undefined,
+              reservation_id: null,
+              reservation_expires_at: null,
+              prescription_line_id: ln.id ?? null,
+            },
+          });
           continue;
         }
         const prodResp = await fetch(`/api/hms/products/${encodeURIComponent(productId)}`, { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null);
@@ -366,7 +471,23 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
         const defaultBatch = prod?.default_batch_id ?? null;
         const unitPrice = prod?.price ?? 0;
         const reserveResp = await reserveBatch(productId, defaultBatch, ln.qty ?? 1, ln.id ?? null);
-        dispatch({ type: "ADD_LINE", line: { id: uuidv4(), product_id: productId, batch_id: defaultBatch, quantity: ln.qty ?? 1, unit_price: unitPrice, discount_amount: 0, tax_rate: prod?.tax_rate ?? 0, name: prod?.name ?? ln.product_name, sku: prod?.sku, reservation_id: reserveResp.reservation_id, reservation_expires_at: reserveResp.expires_at, prescription_line_id: ln.id ?? null } });
+        dispatch({
+          type: "ADD_LINE",
+          line: {
+            id: uuidv4(),
+            product_id: productId,
+            batch_id: defaultBatch,
+            quantity: ln.qty ?? 1,
+            unit_price: unitPrice,
+            discount_amount: 0,
+            tax_rate: prod?.tax_rate ?? 0,
+            name: prod?.name ?? ln.product_name,
+            sku: prod?.sku,
+            reservation_id: reserveResp.reservation_id,
+            reservation_expires_at: reserveResp.expires_at,
+            prescription_line_id: ln.id ?? null,
+          },
+        });
       } catch (err: any) { console.warn("failed to add prescription line", ln, err); setMessage((err?.message || "Failed to add some prescription lines") + ""); }
     }
     setPrescriptionModalOpen(false);
@@ -374,7 +495,7 @@ export default function PharmacyPOSWithReserve(): JSX.Element {
 
   /* =========================
      UI render
-     ========================= */
+  ========================= */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900/20 to-slate-800/30 p-6 text-slate-100">
       <div className="max-w-7xl mx-auto">
