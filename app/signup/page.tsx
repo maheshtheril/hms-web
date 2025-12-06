@@ -734,7 +734,7 @@ export default function SignupPage(): JSX.Element {
     setLoading(true);
     try {
       const base = BACKEND || "";
-      const url = base ? `${base}/api/auth/signup` : "/api/auth/signup";
+      const url = base ? `${base}/auth/signup` : "/auth/signup";
 
       // pick selected country object to find serverId / iso2
       const selected = countries.find((c) => c.id === form.countryId);

@@ -13,7 +13,7 @@ export async function POST(req: Request) {
 
   try {
     const cookie = req.headers.get("cookie") ?? "";
-    const backendRes = await fetch(`${BACKEND.replace(/\/$/, "")}/api/auth/logout`, {
+    const backendRes = await fetch(`${BACKEND.replace(/\/$/, "")}/auth/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: cookie },
       body: await req.text().catch(() => null),
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     if (setCookie) res.headers.set("set-cookie", setCookie);
     return res;
   } catch (err) {
-    console.error("Proxy /api/auth/logout failed:", err);
+    console.error("Proxy /auth/logout failed:", err);
     return NextResponse.json({ ok: false, error: "proxy_failed" }, { status: 502 });
   }
 }

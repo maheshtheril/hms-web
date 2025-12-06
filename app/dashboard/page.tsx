@@ -67,7 +67,7 @@ function useAuthTolerant() {
       await delay(200);
       async function tryMe(): Promise<boolean> {
         try {
-          const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+          const r = await fetch("/auth/me", { credentials: "include", cache: "no-store" });
           if (!r.ok) return false;
           const data = (await r.json().catch(() => ({}))) as MeResponse | {};
           if (!alive) return true;
@@ -145,7 +145,7 @@ const fetchTodaysFromServer = async (): Promise<number | null> => {
     if (r.status === 401) {
       // check if user session exists
       try {
-        const me = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        const me = await fetch("/auth/me", { credentials: "include", cache: "no-store" });
         if (!me.ok) {
           // no session: redirect to login (preserves current UX)
           console.warn("[useKpis] session missing -> redirect to /login");
@@ -153,7 +153,7 @@ const fetchTodaysFromServer = async (): Promise<number | null> => {
           if (typeof window !== "undefined") window.location.replace("/login");
           return null;
         }
-        // If /api/auth/me is ok but kpis returned 401, return null and log
+        // If /auth/me is ok but kpis returned 401, return null and log
         console.warn("[useKpis] /api/kpis/todays returned 401 even though auth/me is OK");
         return null;
       } catch (e) {

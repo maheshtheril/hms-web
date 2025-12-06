@@ -19,7 +19,7 @@ export default function ForgotPasswordPage() {
 
     try {
       // Replace with your real API route later
-      const res = await fetch("/api/auth/forgot-password", {
+      const res = await fetch("/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim() }),

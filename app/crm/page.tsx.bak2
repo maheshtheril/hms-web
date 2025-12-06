@@ -62,7 +62,7 @@ function buildQS(searchParams: Record<string, string | string[] | undefined>) {
 
 async function fetchMe(ssrSid: string) {
   try {
-    const r = await fetch(`/api/auth/me`, {
+    const r = await fetch(`/auth/me`, {
       headers: { cookie: `sid=${ssrSid}; ssr_sid=${ssrSid}` }, // send both
       cache: "no-store",
     });

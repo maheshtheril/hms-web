@@ -101,7 +101,7 @@ export default function TopNav({
 
   const logout = useCallback(async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/auth/logout", { method: "POST" });
     } catch {}
     window.location.href = "/login";
   }, []);

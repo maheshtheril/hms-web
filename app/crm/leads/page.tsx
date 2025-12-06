@@ -359,7 +359,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
   if (!cookieHeader) { /* redirect disabled */ };
 
   const spObj: ResolvedSearch = (await searchParams) ?? {};
-  const me = await getJSON("/api/auth/me", cookieHeader);
+  const me = await getJSON("/auth/me", cookieHeader);
   if (!me.ok || !me.data?.user) { /* redirect disabled */ };
 
   const wantTrash = getParam(spObj, "filter") === "deleted";
@@ -616,7 +616,7 @@ export default async function LeadsPage({ searchParams }: PageProps) {
         <div className="mt-3 text-xs opacity-60 flex items-center gap-3 flex-wrap">
           <span>Debug:</span>
           <a className="underline" href="/api/leads" target="_blank">open /api/leads</a>
-          <a className="underline" href="/api/auth/me" target="_blank">open /api/auth/me</a>
+          <a className="underline" href="/auth/me" target="_blank">open /auth/me</a>
           <a className="underline" href={mk({ sort: "exp", dir: "desc", page: "1" })}>sort=exp</a>
           <a className="underline" href={mk({ filter: "overdue", page: "1" })}>filter=overdue</a>
           <a className="underline" href={mk({ filter: "deleted", page: "1" })}>filter=deleted</a>

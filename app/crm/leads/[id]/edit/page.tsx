@@ -89,7 +89,7 @@ export default async function LeadEdit({ params, searchParams }: PageProps) {
   const cookieHeader = await buildAuthCookieHeader();
   if (!cookieHeader) { /* redirect disabled */ };
 
-  const me = await getJSON("/api/auth/me", cookieHeader);
+  const me = await getJSON("/auth/me", cookieHeader);
   if (!me.ok || !me.data?.user) { /* redirect disabled */ };
 
   const res = await getJSON(`/api/leads/${encodeURIComponent(id)}`, cookieHeader);

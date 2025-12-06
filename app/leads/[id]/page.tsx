@@ -21,7 +21,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
   if (!sid) { /* redirect disabled */ };
 
   // auth check (optional if /api/leads/:id already enforces auth)
-  const meRes = await fetch(`${ORIGIN}/api/auth/me`, {
+  const meRes = await fetch(`${ORIGIN}/auth/me`, {
     headers: { cookie: `ssr_sid=${sid}` },
     cache: "no-store",
   });
