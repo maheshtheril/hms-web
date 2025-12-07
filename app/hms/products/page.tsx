@@ -1,4 +1,4 @@
-// app/hms/products/ProductsPage.tsx
+// app/hms/products/Page.tsx
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -8,6 +8,7 @@ import { useToast } from "@/components/toast/ToastProvider";
 import ProductForm from "./ProductEditor";
 import ReceiveForm from "./ReceiveForm";
 import SellWithBarcode from "./SellWithBarcode";
+import ConfirmModal from "@/components/ConfirmModal";
 import { useRouter } from "next/navigation";
 import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
@@ -38,43 +39,74 @@ export default function ProductsPage(): JSX.Element {
   const [showSellModalFor, setShowSellModalFor] = useState<{ productId?: string; companyId: string } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<number | null>(null);
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
 
-  const fetchProducts = useCallback(async () => {
+  // confirm modal state
+  const [confirming, setConfirming] = useState<{ product: Product } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  /* ---------------- helpers ---------------- */
+  const formatCurrency = (val?: number, cur = "INR") => {
+    if (val == null) return "—";
     try {
-      setLoading(true);
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-      if (!company) {
-        setProducts([]);
-        toast.info("Please select a company to load products.");
-        return;
-      }
-
-      const params = new URLSearchParams();
-      if (query) params.append("q", query);
-      params.append("company_id", company.id);
-
-      const signal = abortRef.current.signal;
-      const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
-      setProducts((res.data?.data ?? []) as Product[]);
-    } catch (err: any) {
-      if (err?.name === "CanceledError" || err?.message === "canceled" || err?.name === "AbortError") {
-        return;
-      }
-      console.error("fetchProducts", err);
-      toast.error(err?.message ?? "Failed to load products", "Load failed");
-    } finally {
-      setLoading(false);
+      return new Intl.NumberFormat("en-IN", { style: "currency", currency: cur }).format(val);
+    } catch {
+      return `${Number(val).toFixed(2)} ${cur}`;
     }
-  }, [company, query, toast]);
+  };
+
+  /* ---------------- fetch products (debounced + abort) ---------------- */
+  const fetchProducts = useCallback(
+    async (opts: { force?: boolean } = {}) => {
+      try {
+        if (!company) {
+          setProducts([]);
+          toast.info("Please select a company to load products.");
+          return;
+        }
+
+        // debounce unless forced
+        if (!opts.force) {
+          if (debounceRef.current) window.clearTimeout(debounceRef.current);
+          debounceRef.current = window.setTimeout(() => fetchProducts({ force: true }), 300);
+          return;
+        }
+
+        setLoading(true);
+        // abort previous
+        abortRef.current?.abort();
+        abortRef.current = new AbortController();
+        const signal = abortRef.current.signal;
+
+        const params = new URLSearchParams();
+        if (query) params.append("q", query);
+        params.append("company_id", company.id);
+
+        const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
+        const rows = (res?.data?.data ?? []) as Product[];
+        setProducts(rows);
+      } catch (err: any) {
+        // ignore aborts
+        if (err?.name === "CanceledError" || err?.name === "AbortError" || err?.message === "canceled") return;
+        console.error("fetchProducts", err);
+        toast.error(err?.message ?? "Failed to load products", "Load failed");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [company, query, toast]
+  );
 
   useEffect(() => {
     fetchProducts();
     return () => {
       abortRef.current?.abort();
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
   }, [fetchProducts]);
 
+  /* ---------------- actions ---------------- */
   const openCreate = () => {
     setEditing(null);
     setShowForm(true);
@@ -99,15 +131,45 @@ export default function ProductsPage(): JSX.Element {
     setShowSellModalFor({ productId, companyId: company.id });
   };
 
-  const remove = async (p: Product) => {
-    if (!confirm(`Delete product ${p.name} (${p.sku})?`)) return;
+  /* open confirm modal for delete */
+  const onDeleteConfirm = (p: Product) => {
+    setConfirming({ product: p });
+  };
+
+  /* actual delete handler triggered by modal confirm (optimistic + rollback) */
+  const handleDelete = async () => {
+    if (!confirming || !company) {
+      setConfirming(null);
+      return;
+    }
+    const p = confirming.product;
+
+    setConfirmLoading(true);
+    setDeleting((s) => ({ ...s, [p.id]: true }));
+
+    const prev = products;
     try {
+      // optimistic UI update
+      setProducts((cur) => cur.filter((x) => x.id !== p.id));
+
+      // call API
       await apiClient.delete(`/hms/products/${encodeURIComponent(p.id)}`, { data: { company_id: company!.id } });
+
+      // success UI
+      setConfirming(null);
       toast.success("Deleted", "Success");
-      await fetchProducts();
     } catch (err: any) {
+      // rollback on error
+      setProducts(prev);
       console.error("delete product", err);
       toast.error(err?.message ?? "Delete failed");
+    } finally {
+      setConfirmLoading(false);
+      setDeleting((s) => {
+        const next = { ...s };
+        delete next[p.id];
+        return next;
+      });
     }
   };
 
@@ -133,14 +195,22 @@ export default function ProductsPage(): JSX.Element {
         <div className="flex flex-wrap md:flex-nowrap items-center gap-3 w-full md:w-auto">
           <div className="flex items-center gap-3 flex-1 md:flex-none backdrop-blur-md bg-white/30 border border-white/20 rounded-3xl px-4 py-2 shadow-inner">
             <Search className="w-4 h-4 text-slate-500" />
-            <input placeholder="Search name or SKU" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchProducts()} className="flex-1 bg-transparent outline-none text-sm text-slate-800 placeholder:text-slate-400" />
-            <button onClick={() => fetchProducts()} className="rounded-xl px-3 py-1 text-sm bg-blue-600/80 hover:bg-blue-600 text-white shadow-md transition-all">Go</button>
+            <input
+              placeholder="Search name or SKU"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && fetchProducts({ force: true })}
+              className="flex-1 bg-transparent outline-none text-sm text-slate-800 placeholder:text-slate-400"
+            />
+            <button onClick={() => fetchProducts({ force: true })} className="rounded-xl px-3 py-1 text-sm bg-blue-600/80 hover:bg-blue-600 text-white shadow-md transition-all">
+              Go
+            </button>
           </div>
 
           <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-xl hover:scale-[1.02] transition-transform">
             <Plus className="w-4 h-4" /> New Product
           </button>
-          <button onClick={() => fetchProducts()} className="p-2 rounded-2xl border border-white/30 bg-white/40 shadow-inner hover:bg-white/60" aria-label="Refresh">
+          <button onClick={() => fetchProducts({ force: true })} className="p-2 rounded-2xl border border-white/30 bg-white/40 shadow-inner hover:bg-white/60" aria-label="Refresh">
             <RefreshCw className="w-4 h-4 text-slate-700" />
           </button>
           <button onClick={() => sell(undefined)} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md hover:scale-[1.02]">
@@ -149,7 +219,7 @@ export default function ProductsPage(): JSX.Element {
         </div>
       </motion.header>
 
-      <main className="relative z-10 max-w-7xl mx-auto space-y-8">
+      <main className="relative z-10 max-w-7xl mx-auto space-y-8" aria-busy={loading}>
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-pulse">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -169,9 +239,9 @@ export default function ProductsPage(): JSX.Element {
                     <h2 className="text-lg font-semibold text-slate-900 drop-shadow-sm">{p.name}</h2>
                     <p className="text-xs text-slate-500">{p.sku}</p>
                   </div>
-                  <div className="text-right text-slate-700 font-semibold">{p.price ? `${Number(p.price).toFixed(2)} ${p.currency ?? 'USD'}` : '—'}</div>
+                  <div className="text-right text-slate-700 font-semibold">{formatCurrency(p.price, p.currency ?? "INR")}</div>
                 </div>
-                <p className="mt-2 text-sm text-slate-700 line-clamp-3 flex-1">{p.description ?? 'No description provided.'}</p>
+                <p className="mt-2 text-sm text-slate-700 line-clamp-3 flex-1">{p.description ?? "No description provided."}</p>
 
                 <div className="mt-4 flex justify-between items-center">
                   <div className="flex gap-2">
@@ -190,8 +260,14 @@ export default function ProductsPage(): JSX.Element {
                     <button onClick={() => sell(p.id)} className="px-3 py-1 rounded-xl bg-amber-500/90 text-white text-sm shadow-md hover:bg-amber-600" aria-label={`Sell ${p.name}`}>
                       Sell
                     </button>
-                    <button onClick={() => remove(p)} className="p-2 rounded-full bg-rose-500 text-white shadow-md hover:bg-rose-600" aria-label={`Delete ${p.name}`}>
-                      <Trash2 className="w-4 h-4" />
+                    <button
+                      disabled={!!deleting[p.id]}
+                      onClick={() => onDeleteConfirm(p)}
+                      className={`p-2 rounded-full ${deleting[p.id] ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-rose-500 text-white"} shadow-md`}
+                      aria-label={`Delete ${p.name}`}
+                      title={deleting[p.id] ? "Deleting…" : `Delete ${p.name}`}
+                    >
+                      {deleting[p.id] ? <span className="w-4 h-4 inline-block">…</span> : <Trash2 className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
@@ -201,9 +277,30 @@ export default function ProductsPage(): JSX.Element {
         )}
       </main>
 
-      {showForm && <ProductForm initial={editing ?? undefined} onClose={() => { setShowForm(false); setEditing(null); fetchProducts(); }} onSaved={fetchProducts} />}
-      {showReceiveModalFor && <ReceiveForm productId={showReceiveModalFor.productId} companyId={showReceiveModalFor.companyId} onClose={() => setShowReceiveModalFor(null)} onReceived={fetchProducts} />}
-      {showSellModalFor && <SellWithBarcode companyId={showSellModalFor.companyId} onClose={() => setShowSellModalFor(null)} onSold={fetchProducts} />}
+      <ConfirmModal
+        open={!!confirming}
+        title="Delete product"
+        description={confirming ? `Delete ${confirming.product.name} (${confirming.product.sku ?? "no SKU"})? This action cannot be undone.` : "Delete product?"}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        loading={confirmLoading}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirming(null)}
+      />
+
+      {showForm && (
+        <ProductForm
+          productId={editing?.id ?? undefined}
+          onClose={() => {
+            setShowForm(false);
+            setEditing(null);
+            fetchProducts({ force: true });
+          }}
+          onSaved={() => fetchProducts({ force: true })}
+        />
+      )}
+      {showReceiveModalFor && <ReceiveForm productId={showReceiveModalFor.productId} companyId={showReceiveModalFor.companyId} onClose={() => setShowReceiveModalFor(null)} onReceived={() => fetchProducts({ force: true })} />}
+      {showSellModalFor && <SellWithBarcode companyId={showSellModalFor.companyId} onClose={() => setShowSellModalFor(null)} onSold={() => fetchProducts({ force: true })} />}
     </div>
   );
 }

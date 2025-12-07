@@ -64,10 +64,12 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const abortRef = useRef<AbortController | null>(null);
 
   // --- Defaults derived from company settings (currency, tax_inclusive)
+  // company from provider may have a minimal type; cast to any for safe access
   const defaults = useMemo(() => {
+    const compAny = company as any;
     return {
-      currency: company?.settings?.default_currency ?? "USD",
-      tax_inclusive: company?.settings?.tax_inclusive_by_default ?? false,
+      currency: compAny?.settings?.default_currency ?? "USD",
+      tax_inclusive: compAny?.settings?.tax_inclusive_by_default ?? false,
     };
   }, [company]);
 
@@ -114,6 +116,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
       }
       try {
         // Prepare body: send nulls only for fields intentionally set to null
+        // ensure company_id present for creation
         const body: any = { ...payload, company_id: company.id };
 
         let res;
@@ -122,11 +125,17 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         } else {
           res = await apiClient.post(`/hms/products`, body);
         }
-        const savedRaw = res.data?.data ?? payload;
-        const saved = normalizeDraftForEditor(savedRaw);
+
+        // prefer canonical server record if returned
+        const savedRaw = res?.data?.data ?? null;
+        const canonical = savedRaw ? { ...payload, ...savedRaw } : { ...payload };
+        const saved = normalizeDraftForEditor(canonical);
         setDraft(saved);
         setDirty(false);
-        queryClient.invalidateQueries({ queryKey: ["products", company.id] });
+
+        // invalidate product list cache for current company
+        if (company?.id) queryClient.invalidateQueries({ queryKey: ["products", company.id] });
+
         onSaved?.(saved);
         toast.success("Saved");
         return saved;
@@ -138,7 +147,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     [company, onSaved, queryClient, toast]
   );
 
-  // Autosave debounce
+  // Autosave debounce (cancelable)
   const debouncedSave = useDebouncedCallback(async (nextDraft: ProductDraft) => {
     try {
       await saveDraft(nextDraft);
@@ -147,9 +156,16 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     }
   }, 1800);
 
+  // trigger autosave when dirty, cancel on unmount or when draft changes
   useEffect(() => {
     if (!dirty) return;
     debouncedSave(draft);
+
+    return () => {
+      // cancel pending debounced save when component unmounts / draft changes
+      const maybeCancel = (debouncedSave as any)?.cancel;
+      if (typeof maybeCancel === "function") maybeCancel();
+    };
   }, [draft, dirty, debouncedSave]);
 
   const updateDraft = (patch: Partial<ProductDraft>) => {
@@ -231,16 +247,17 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => onClose?.()}
+              onClick={() => {
+                if (dirty && !confirm("You have unsaved changes. Discard?")) return;
+                onClose?.();
+              }}
               className="p-2 rounded-full bg-white/60 hover:bg-white/80 border border-white/10"
               aria-label="Close editor"
             >
               <ArrowLeft className="w-4 h-4 text-slate-700" />
             </button>
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">
-                {productId ? "Edit product" : "Create product"}
-              </h3>
+              <h3 className="text-lg font-semibold text-slate-900">{productId ? "Edit product" : "Create product"}</h3>
               <p className="text-xs text-slate-500">Neural Glass — advanced product editor</p>
             </div>
           </div>
@@ -254,9 +271,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                 onClick={onManualSave}
                 disabled={loading || !dirty}
                 className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm ${
-                  loading || !dirty
-                    ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                    : "bg-gradient-to-br from-blue-600 to-indigo-600 text-white"
+                  loading || !dirty ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-gradient-to-br from-blue-600 to-indigo-600 text-white"
                 }`}
                 title="Save (Ctrl/Cmd+S)"
               >
@@ -286,9 +301,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                     {({ selected }) => (
                       <button
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${
-                          selected
-                            ? "bg-white/80 ring-1 ring-blue-300 shadow"
-                            : "bg-white/60 hover:bg-white/70"
+                          selected ? "bg-white/80 ring-1 ring-blue-300 shadow" : "bg-white/60 hover:bg-white/70"
                         }`}
                       >
                         <t.icon className="w-4 h-4 text-slate-700" />
@@ -330,18 +343,13 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                 <Tab.Panels>
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading General…</div>}>
-                      <GeneralTab
-                        draft={draft}
-                        onChange={(update) => updateDraft(update)}
-                        onRequestSave={() => onManualSave()}
-                        defaults={defaults}
-                      />
+                      <GeneralTab draft={draft} onChange={(update) => updateDraft(update)} onRequestSave={() => onManualSave()} />
                     </Suspense>
                   </Tab.Panel>
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Inventory…</div>}>
-                      <InventoryTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
+                      <InventoryTab draft={draft} onChange={(update) => updateDraft(update)} />
                     </Suspense>
                   </Tab.Panel>
 
@@ -353,13 +361,13 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Pricing…</div>}>
-                      <PricingTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
+                      <PricingTab draft={draft} onChange={(update) => updateDraft(update)} />
                     </Suspense>
                   </Tab.Panel>
 
                   <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading Accounting…</div>}>
-                      <AccountingTab draft={draft} onChange={(update) => updateDraft(update)} defaults={defaults} />
+                      <AccountingTab draft={draft} onChange={(update) => updateDraft(update)} />
                     </Suspense>
                   </Tab.Panel>
 
