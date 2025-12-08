@@ -7,11 +7,12 @@ import { Tab } from "@headlessui/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDebouncedCallback } from "use-debounce";
 import { useToast } from "@/components/toast/ToastProvider";
-import { ArrowLeft, Save, Zap, Layers, Truck, DollarSign, CreditCard } from "lucide-react";
+import { ArrowLeft, Save, Zap, Layers, Truck, DollarSign } from "lucide-react";
 import apiClient from "@/lib/api-client";
 import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
 import type { ProductDraft } from "./types"; // centralized shared type
+import ConfirmModal from "@/components/ConfirmModal";
 
 // Helper: ensure editor state never contains `null` for string fields.
 // Accepts raw object (API may return nulls) and returns a ProductDraft
@@ -42,7 +43,6 @@ const GeneralTab = React.lazy(() => import("./GeneralTab"));
 const InventoryTab = React.lazy(() => import("./InventoryTab"));
 const VariantsTab = React.lazy(() => import("./VariantsTab"));
 const PricingTab = React.lazy(() => import("./PricingTab"));
-const AccountingTab = React.lazy(() => import("./AccountingTab"));
 const AIAssistTab = React.lazy(() => import("./AIAssistTab"));
 
 interface ProductEditorProps {
@@ -63,8 +63,11 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const [dirty, setDirty] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Confirm modal for unsaved changes
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const pendingCloseRef = useRef<(() => void) | null>(null);
+
   // --- Defaults derived from company settings (currency, tax_inclusive)
-  // company from provider may have a minimal type; cast to any for safe access
   const defaults = useMemo(() => {
     const compAny = company as any;
     return {
@@ -78,8 +81,8 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     let mounted = true;
     (async () => {
       if (!productId) {
-        // creating new product -> clear draft
-        setDraft({});
+        // creating new product -> clear draft with sensible defaults
+        setDraft({ currency: defaults.currency, is_stockable: true });
         setDirty(false);
         return;
       }
@@ -105,7 +108,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
       mounted = false;
       abortRef.current?.abort();
     };
-  }, [productId, toast]);
+  }, [productId, toast, defaults.currency]);
 
   // Save (create or update)
   const saveDraft = useCallback(
@@ -162,7 +165,6 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     debouncedSave(draft);
 
     return () => {
-      // cancel pending debounced save when component unmounts / draft changes
       const maybeCancel = (debouncedSave as any)?.cancel;
       if (typeof maybeCancel === "function") maybeCancel();
     };
@@ -171,7 +173,6 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const updateDraft = (patch: Partial<ProductDraft>) => {
     setDraft((d) => {
       const merged = { ...d, ...patch };
-      // ensure string nulls are converted to undefined for editor consistency
       const normalized = normalizeDraftForEditor(merged as Record<string, any>);
       return normalized;
     });
@@ -199,25 +200,41 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     return () => window.removeEventListener("keydown", onKey);
   }, [dirty, loading, onManualSave]);
 
+  // Tabs (ACCOUNTING removed)
   const tabs = useMemo(
     () => [
       { name: "General", icon: Zap },
       { name: "Inventory", icon: Truck },
       { name: "Variants", icon: Layers },
       { name: "Pricing", icon: DollarSign },
-      { name: "Accounting", icon: CreditCard },
       { name: "AI Assist", icon: Zap },
     ],
     []
   );
 
+  // Close handler with unsaved check
+  const handleCloseAttempt = () => {
+    if (dirty) {
+      pendingCloseRef.current = onClose ?? null;
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    onClose?.();
+  };
+
+  const confirmDiscard = () => {
+    setConfirmDiscardOpen(false);
+    setDirty(false);
+    const toCall = pendingCloseRef.current;
+    pendingCloseRef.current = null;
+    toCall?.();
+  };
+
   return (
     <div className="fixed inset-0 z-[2000] flex items-start justify-center p-6 overflow-auto" style={{ background: "rgba(15,23,42,0.55)" }}>
       <style>{`
         :root {
-          --glass-surface: rgba(255,255,255,0.9);
-          --glass-accent: rgba(79,70,229,1); /* indigo-600 */
-          --glass-muted: rgba(15,23,42,0.45);
+          --glass-surface: rgba(255,255,255,0.92);
           --glass-border: rgba(15,23,42,0.06);
         }
         .product-editor * { color: #0f172a; }
@@ -231,7 +248,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         }
         .product-editor input::placeholder,
         .product-editor textarea::placeholder {
-          color: var(--glass-muted) !important;
+          color: rgba(15,23,42,0.45) !important;
         }
       `}</style>
 
@@ -247,10 +264,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
-                if (dirty && !confirm("You have unsaved changes. Discard?")) return;
-                onClose?.();
-              }}
+              onClick={handleCloseAttempt}
               className="p-2 rounded-full bg-white/60 hover:bg-white/80 border border-white/10"
               aria-label="Close editor"
             >
@@ -258,7 +272,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
             </button>
             <div>
               <h3 className="text-lg font-semibold text-slate-900">{productId ? "Edit product" : "Create product"}</h3>
-              <p className="text-xs text-slate-500">Neural Glass — advanced product editor</p>
+              <p className="text-xs text-slate-500">Neural Glass — product editor</p>
             </div>
           </div>
 
@@ -279,7 +293,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
               </button>
               <button
                 onClick={() => {
-                  setDraft({});
+                  setDraft({ currency: defaults.currency, is_stockable: true });
                   setDirty(false);
                   toast.info("Cleared fields");
                 }}
@@ -291,7 +305,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
           </div>
         </div>
 
-        {/* Layout - SINGLE Tab.Group wrapping both List and Panels */}
+        {/* Tabs */}
         <Tab.Group selectedIndex={activeIndex} onChange={setActiveIndex}>
           <div className="mt-4 grid grid-cols-12 gap-6">
             <aside className="col-span-3">
@@ -366,12 +380,6 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                   </Tab.Panel>
 
                   <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading Accounting…</div>}>
-                      <AccountingTab draft={draft} onChange={(update) => updateDraft(update)} />
-                    </Suspense>
-                  </Tab.Panel>
-
-                  <Tab.Panel>
                     <Suspense fallback={<div className="p-6 text-slate-600">Loading AI Assist…</div>}>
                       <AIAssistTab draft={draft} onChange={(update) => updateDraft(update)} />
                     </Suspense>
@@ -382,6 +390,18 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
           </div>
         </Tab.Group>
       </motion.div>
+
+      {/* Discard confirm modal */}
+      <ConfirmModal
+        open={confirmDiscardOpen}
+        title="Discard changes?"
+        description="You have unsaved changes. Discard and close the editor?"
+        confirmLabel="Discard"
+        cancelLabel="Cancel"
+        loading={false}
+        onConfirm={confirmDiscard}
+        onCancel={() => setConfirmDiscardOpen(false)}
+      />
     </div>
   );
 }
