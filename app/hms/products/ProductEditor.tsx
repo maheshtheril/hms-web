@@ -13,32 +13,29 @@ import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
 import type { ProductDraft } from "./types"; // centralized shared type
 import ConfirmModal from "@/components/ConfirmModal";
+import { v4 as uuidv4 } from "uuid";
 
-// Helper: ensure editor state never contains `null` for string fields.
-// Accepts raw object (API may return nulls) and returns a ProductDraft
+/* -------------------------
+ * normalize helper
+ * ------------------------ */
 function normalizeDraftForEditor(raw: Record<string, any> | undefined | null): ProductDraft {
   const out: any = {};
-  if (!raw || typeof raw !== "object") {
-    return out;
-  }
+  if (!raw || typeof raw !== "object") return out;
 
-  // Copy everything first
   Object.assign(out, raw);
 
-  // String fields that should be undefined (not null)
   const stringKeys: (keyof ProductDraft)[] = ["name", "sku", "description", "currency"];
   for (const k of stringKeys) {
     if (out[k] === null) out[k] = undefined;
   }
 
-  // boolean/number fields: prefer undefined for editor state
   if (out.price === null) out.price = undefined;
   if (out.is_stockable === null) out.is_stockable = undefined;
 
   return out as ProductDraft;
 }
 
-// --- Lazy tabs (correct relative paths)
+/* --- Lazy tabs --- */
 const GeneralTab = React.lazy(() => import("./GeneralTab"));
 const InventoryTab = React.lazy(() => import("./InventoryTab"));
 const VariantsTab = React.lazy(() => import("./VariantsTab"));
@@ -57,17 +54,26 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const { company } = useCompany();
 
   const [activeIndex, setActiveIndex] = useState<number>(0);
-  // keep editor draft typed to shared ProductDraft
   const [draft, setDraft] = useState<ProductDraft>({});
   const [loading, setLoading] = useState(false);
   const [dirty, setDirty] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // save lock + abort for save operations (prevents concurrent POST/PUT)
+  const saveLockRef = useRef(false);
+  const saveAbortRef = useRef<AbortController | null>(null);
+
+  // idempotency key for new product creates (stable during the modal lifetime)
+  const idempotencyKeyRef = useRef<string | null>(null);
+
+  // structured validation errors returned from server (field -> message)
+  const [validationErrors, setValidationErrors] = useState<Record<string, string> | null>(null);
+
   // Confirm modal for unsaved changes
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const pendingCloseRef = useRef<(() => void) | null>(null);
 
-  // --- Defaults derived from company settings (currency, tax_inclusive)
+  // defaults derived from company settings
   const defaults = useMemo(() => {
     const compAny = company as any;
     return {
@@ -76,30 +82,35 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     };
   }, [company]);
 
-  // Load product if editing
+  /* -------------- Load product (edit) or initialize new draft -------------- */
+  useEffect(() => {
+    idempotencyKeyRef.current = idempotencyKeyRef.current ?? uuidv4(); // ensure key exists for the lifetime
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
+      // new product
       if (!productId) {
-        // creating new product -> clear draft with sensible defaults
         setDraft({ currency: defaults.currency, is_stockable: true });
         setDirty(false);
+        setValidationErrors(null);
         return;
       }
+
       setLoading(true);
       abortRef.current?.abort();
       abortRef.current = new AbortController();
+
       try {
-        const res = await apiClient.get(`/hms/products/${encodeURIComponent(productId)}`, {
-          signal: abortRef.current.signal,
-        });
+        const res = await apiClient.get(`/hms/products/${encodeURIComponent(productId)}`, { signal: abortRef.current.signal });
         if (!mounted) return;
-        // Normalize API nulls to undefined for editor usage
         setDraft(normalizeDraftForEditor(res.data?.data ?? {}));
         setDirty(false);
+        setValidationErrors(null);
       } catch (err: any) {
-        if (err?.name !== "CanceledError" && err?.name !== "AbortError")
-          toast.error(err?.message ?? "Failed to load product");
+        if (err?.name === "CanceledError" || err?.name === "AbortError") return;
+        toast.error(err?.message ?? "Failed to load product");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -108,68 +119,115 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
       mounted = false;
       abortRef.current?.abort();
     };
-  }, [productId, toast, defaults.currency]);
+  }, [productId, defaults.currency, toast]);
 
-  // Save (create or update)
+  /* ---------------- Save (create or update) ---------------- */
   const saveDraft = useCallback(
-    async (payload: ProductDraft) => {
+    async (payload: ProductDraft, opts: { force?: boolean; closeAfter?: boolean } = {}) => {
       if (!company) {
+        setValidationErrors({ company_id: "Select a company first" });
         toast.error("Select company first");
         throw new Error("No company selected");
       }
+
+      // prevent concurrent saves
+      if (saveLockRef.current && !opts.force) {
+        // if a save is in progress, allow a forced save to wait for it
+        toast.info("Save in progress, waiting...");
+        return;
+      }
+
+      saveLockRef.current = true;
+      setValidationErrors(null);
+
+      // abort previous save if any
+      saveAbortRef.current?.abort();
+      saveAbortRef.current = new AbortController();
+      const signal = saveAbortRef.current.signal;
+
       try {
-        // Prepare body: send nulls only for fields intentionally set to null
-        // ensure company_id present for creation
         const body: any = { ...payload, company_id: company.id };
+
+        // include any initial inventory batches (if present on draft.inventory.batches)
+        // this is optional - backend will persist them into metadata.initial_batches atomically
+        if (payload.inventory?.batches && Array.isArray(payload.inventory.batches) && payload.inventory.batches.length) {
+          body.inventory = { batches: payload.inventory.batches };
+        }
+
+        // include idempotency key for create requests
+        const headers: Record<string, string> = {};
+        const isCreate = !payload.id;
+        if (isCreate && idempotencyKeyRef.current) {
+          headers["Idempotency-Key"] = idempotencyKeyRef.current;
+        }
 
         let res;
         if (payload.id) {
-          res = await apiClient.put(`/hms/products/${encodeURIComponent(payload.id)}`, body);
+          res = await apiClient.put(`/hms/products/${encodeURIComponent(payload.id)}`, body, { signal, headers });
         } else {
-          res = await apiClient.post(`/hms/products`, body);
+          res = await apiClient.post(`/hms/products`, body, { signal, headers });
         }
 
-        // prefer canonical server record if returned
         const savedRaw = res?.data?.data ?? null;
         const canonical = savedRaw ? { ...payload, ...savedRaw } : { ...payload };
         const saved = normalizeDraftForEditor(canonical);
+
         setDraft(saved);
         setDirty(false);
+        setValidationErrors(null);
 
-        // invalidate product list cache for current company
         if (company?.id) queryClient.invalidateQueries({ queryKey: ["products", company.id] });
-
         onSaved?.(saved);
         toast.success("Saved");
+
+        if (opts.closeAfter) {
+          onClose?.();
+        }
         return saved;
       } catch (err: any) {
-        toast.error(err?.message ?? "Save failed");
+        // handle structured validation errors from server
+        const serverErrors = err?.response?.data?.errors ?? null;
+        if (Array.isArray(serverErrors)) {
+          const map: Record<string, string> = {};
+          for (const e of serverErrors) {
+            if (e?.field && e?.message) map[e.field] = e.message;
+          }
+          setValidationErrors(map);
+          // show a compact summary toast
+          const firstMsg = serverErrors[0]?.message ?? "Validation failed";
+          toast.error(firstMsg);
+        } else {
+          const message = err?.response?.data?.error ?? err?.message ?? "Save failed";
+          toast.error(String(message));
+        }
         throw err;
+      } finally {
+        saveLockRef.current = false;
       }
     },
-    [company, onSaved, queryClient, toast]
+    [company, onSaved, queryClient, toast, onClose]
   );
 
-  // Autosave debounce (cancelable)
+  /* ---------------- Autosave (debounced) ---------------- */
   const debouncedSave = useDebouncedCallback(async (nextDraft: ProductDraft) => {
     try {
       await saveDraft(nextDraft);
     } catch {
-      /* handled by saveDraft toast */
+      /* handled by saveDraft toasts/errors */
     }
   }, 1800);
 
-  // trigger autosave when dirty, cancel on unmount or when draft changes
   useEffect(() => {
     if (!dirty) return;
+    // don't call if save is locked (to avoid piling up requests) — but still schedule
     debouncedSave(draft);
-
     return () => {
       const maybeCancel = (debouncedSave as any)?.cancel;
       if (typeof maybeCancel === "function") maybeCancel();
     };
   }, [draft, dirty, debouncedSave]);
 
+  /* ---------------- helpers ---------------- */
   const updateDraft = (patch: Partial<ProductDraft>) => {
     setDraft((d) => {
       const merged = { ...d, ...patch };
@@ -182,13 +240,13 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
   const onManualSave = async () => {
     setLoading(true);
     try {
-      await saveDraft(draft);
+      await saveDraft(draft, { force: true });
     } finally {
       setLoading(false);
     }
   };
 
-  // Keyboard shortcut: Ctrl/Cmd+S
+  // Ctrl/Cmd+S
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -200,7 +258,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     return () => window.removeEventListener("keydown", onKey);
   }, [dirty, loading, onManualSave]);
 
-  // Tabs (ACCOUNTING removed)
+  // Tabs (no accounting)
   const tabs = useMemo(
     () => [
       { name: "General", icon: Zap },
@@ -212,7 +270,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     []
   );
 
-  // Close handler with unsaved check
+  /* ---------------- Close handling ---------------- */
   const handleCloseAttempt = () => {
     if (dirty) {
       pendingCloseRef.current = onClose ?? null;
@@ -230,6 +288,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     toCall?.();
   };
 
+  /* ---------------- UI ---------------- */
   return (
     <div className="fixed inset-0 z-[2000] flex items-start justify-center p-6 overflow-auto" style={{ background: "rgba(15,23,42,0.55)" }}>
       <style>{`
@@ -263,11 +322,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         {/* Header */}
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleCloseAttempt}
-              className="p-2 rounded-full bg-white/60 hover:bg-white/80 border border-white/10"
-              aria-label="Close editor"
-            >
+            <button onClick={handleCloseAttempt} className="p-2 rounded-full bg-white/60 hover:bg-white/80 border border-white/10" aria-label="Close editor">
               <ArrowLeft className="w-4 h-4 text-slate-700" />
             </button>
             <div>
@@ -283,10 +338,8 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
             <div className="flex items-center gap-2">
               <button
                 onClick={onManualSave}
-                disabled={loading || !dirty}
-                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm ${
-                  loading || !dirty ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-gradient-to-br from-blue-600 to-indigo-600 text-white"
-                }`}
+                disabled={loading || !dirty || saveLockRef.current}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm ${loading || !dirty ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-gradient-to-br from-blue-600 to-indigo-600 text-white"}`}
                 title="Save (Ctrl/Cmd+S)"
               >
                 <Save className="w-4 h-4" /> Save
@@ -295,6 +348,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                 onClick={() => {
                   setDraft({ currency: defaults.currency, is_stockable: true });
                   setDirty(false);
+                  setValidationErrors(null);
                   toast.info("Cleared fields");
                 }}
                 className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700"
@@ -305,6 +359,20 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
           </div>
         </div>
 
+        {/* validation banner */}
+        {validationErrors && (
+          <div className="mt-3 rounded-lg p-3 bg-rose-50 border border-rose-100 text-rose-700">
+            <div className="font-medium">Validation errors</div>
+            <ul className="mt-1 ml-3 list-disc text-sm">
+              {Object.entries(validationErrors).map(([k, v]) => (
+                <li key={k}>
+                  <strong className="capitalize">{k}</strong>: {v}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Tabs */}
         <Tab.Group selectedIndex={activeIndex} onChange={setActiveIndex}>
           <div className="mt-4 grid grid-cols-12 gap-6">
@@ -313,11 +381,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
                 {tabs.map((t) => (
                   <Tab as={React.Fragment} key={t.name}>
                     {({ selected }) => (
-                      <button
-                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${
-                          selected ? "bg-white/80 ring-1 ring-blue-300 shadow" : "bg-white/60 hover:bg-white/70"
-                        }`}
-                      >
+                      <button className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${selected ? "bg-white/80 ring-1 ring-blue-300 shadow" : "bg-white/60 hover:bg-white/70"}`}>
                         <t.icon className="w-4 h-4 text-slate-700" />
                         <span className="flex-1 text-slate-900">{t.name}</span>
                         {selected && <span className="ml-auto text-xs text-slate-500">●</span>}
@@ -330,24 +394,8 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
               <div className="mt-6 p-3 rounded-xl bg-white/75 border border-slate-100">
                 <div className="text-xs text-slate-600">Quick actions</div>
                 <div className="mt-3 flex flex-col gap-2">
-                  <button
-                    onClick={() => {
-                      setActiveIndex(0);
-                      toast.info("Jumped to General");
-                    }}
-                    className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900"
-                  >
-                    Edit basic info
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveIndex(2);
-                      toast.info("Jumped to Variants");
-                    }}
-                    className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900"
-                  >
-                    Manage variants
-                  </button>
+                  <button onClick={() => { setActiveIndex(0); toast.info("Jumped to General"); }} className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900">Edit basic info</button>
+                  <button onClick={() => { setActiveIndex(2); toast.info("Jumped to Variants"); }} className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900">Manage variants</button>
                 </div>
               </div>
             </aside>
