@@ -29,19 +29,19 @@ type Product = {
   barcode?: string | null;
   name: string;
   description?: string;
-  price?: number;
-  currency?: string;
-  default_cost?: number;
-  uom?: string;
+  price?: number | null;
+  currency?: string | null;
+  default_cost?: number | null;
+  uom?: string | null;
   is_stockable?: boolean;
   is_service?: boolean;
   stock_qty?: number | null; // total available
   low_stock?: boolean; // server-calculated flag
-  nearest_expiry_days?: number | null; // optional hint
+  nearest_expiry_days?: number | null;
   metadata?: Record<string, any> | null;
 };
 
-export default function ProductsPage(): JSX.Element {
+export default function Page(): JSX.Element {
   const toast = useToast();
   const router = useRouter();
   const { company } = useCompany();
@@ -58,8 +58,9 @@ export default function ProductsPage(): JSX.Element {
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [batchesLoading, setBatchesLoading] = useState(false);
 
+  // Use ReturnType<typeof setTimeout> to avoid NodeJS/browser conflicts
   const abortRef = useRef<AbortController | null>(null);
-  const debounceRef = useRef<number | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deleting, setDeleting] = useState<Record<string, boolean>>({});
 
   // confirm modal state
@@ -67,7 +68,7 @@ export default function ProductsPage(): JSX.Element {
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   /* ---------------- helpers ---------------- */
-  const formatCurrency = (val?: number, cur = "INR") => {
+  const formatCurrency = (val?: number | null, cur = "INR") => {
     if (val == null) return "—";
     try {
       return new Intl.NumberFormat("en-IN", { style: "currency", currency: cur }).format(val);
@@ -87,8 +88,8 @@ export default function ProductsPage(): JSX.Element {
 
         // debounce unless forced
         if (!opts.force) {
-          if (debounceRef.current) window.clearTimeout(debounceRef.current);
-          debounceRef.current = window.setTimeout(() => fetchProducts({ force: true }), 300);
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(() => fetchProducts({ force: true }), 300);
           return;
         }
 
@@ -101,15 +102,18 @@ export default function ProductsPage(): JSX.Element {
         const params = new URLSearchParams();
         if (query) params.append("q", query);
         params.append("company_id", company.id);
-        // Request stock summary inline (server: include_stock -> returns stock_qty, low_stock, nearest_expiry_days)
         params.append("include_stock", "true");
 
+        // NOTE: ensure apiClient is an axios-like instance that accepts `signal`
         const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
         const rows = (res?.data?.data ?? []) as Product[];
         setProducts(rows);
       } catch (err: any) {
-        // ignore aborts
-        if (err?.name === "CanceledError" || err?.name === "AbortError" || err?.message === "canceled") return;
+        // axios / fetch cancellation handling — ignore canceled requests
+        const name = err?.name ?? err?.code ?? null;
+        if (name === "CanceledError" || name === "AbortError" || err?.message === "canceled") {
+          return;
+        }
         console.error("fetchProducts", err);
         toast.error(err?.message ?? "Failed to load products", "Load failed");
       } finally {
@@ -123,7 +127,7 @@ export default function ProductsPage(): JSX.Element {
     fetchProducts();
     return () => {
       abortRef.current?.abort();
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [fetchProducts]);
 
@@ -232,7 +236,6 @@ export default function ProductsPage(): JSX.Element {
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 drop-shadow-sm">Products</h1>
             <p className="text-sm text-slate-600 mt-1">Your catalog — stock, SKU, and smart batch management</p>
           </div>
-          {/* Always visible selector — mobile & desktop */}
           <div className="bg-white/6 rounded-xl p-2 shadow-sm border border-white/6 z-40">
             <CompanySelector />
           </div>
@@ -285,14 +288,13 @@ export default function ProductsPage(): JSX.Element {
                     <h2 className="text-lg font-semibold text-slate-900 drop-shadow-sm">{p.name}</h2>
                     <p className="text-xs text-slate-500">{p.sku}</p>
                   </div>
-                  <div className="text-right text-slate-700 font-semibold">{formatCurrency(p.price, p.currency ?? "INR")}</div>
+                  <div className="text-right text-slate-700 font-semibold">{formatCurrency(p.price ?? null, p.currency ?? "INR")}</div>
                 </div>
                 <p className="mt-2 text-sm text-slate-700 line-clamp-3 flex-1">{p.description ?? "No description provided."}</p>
 
                 <div className="mt-4 flex justify-between items-center">
                   <div className="flex gap-2 items-center">
                     <StockPill qty={p.stock_qty ?? null} low={!!p.low_stock} expiryDays={p.nearest_expiry_days ?? null} />
-                    {/* quick batch view */}
                     <button onClick={() => openBatchModal(p.id, p.name)} className="inline-flex items-center gap-2 px-2 py-1 text-xs rounded-md border border-white/8 bg-white/4 hover:bg-white/6">
                       <Layers className="w-4 h-4" /> Stock
                     </button>
@@ -341,6 +343,7 @@ export default function ProductsPage(): JSX.Element {
 
       {showForm && (
         <ProductForm
+          // NOTE: ProductForm must accept `productId?: string` and callbacks below
           productId={editing?.id ?? undefined}
           onClose={() => {
             setShowForm(false);
@@ -350,8 +353,21 @@ export default function ProductsPage(): JSX.Element {
           onSaved={() => fetchProducts({ force: true })}
         />
       )}
-      {showReceiveModalFor && <ReceiveForm productId={showReceiveModalFor.productId} companyId={showReceiveModalFor.companyId} onClose={() => setShowReceiveModalFor(null)} onReceived={() => fetchProducts({ force: true })} />}
-      {showSellModalFor && <SellWithBarcode companyId={showSellModalFor.companyId} onClose={() => setShowSellModalFor(null)} onSold={() => fetchProducts({ force: true })} />}
+      {showReceiveModalFor && (
+        <ReceiveForm
+          productId={showReceiveModalFor.productId}
+          companyId={showReceiveModalFor.companyId}
+          onClose={() => setShowReceiveModalFor(null)}
+          onReceived={() => fetchProducts({ force: true })}
+        />
+      )}
+      {showSellModalFor && (
+        <SellWithBarcode
+          companyId={showSellModalFor.companyId}
+          onClose={() => setShowSellModalFor(null)}
+          onSold={() => fetchProducts({ force: true })}
+        />
+      )}
 
       {/* Batch modal */}
       {batchModalFor && (
