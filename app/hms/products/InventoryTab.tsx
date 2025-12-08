@@ -1,10 +1,11 @@
 // app/hms/products/product-editor/InventoryTab.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Loader2, PlusCircle, MinusCircle, Archive, Clock } from "lucide-react";
+import ConfirmModal from "@/components/ConfirmModal";
 import type { ProductDraft } from "./types"; // <- use the canonical shared type
 
 type InventoryBatch = {
@@ -39,8 +40,20 @@ export default function InventoryTab({ draft, onChange }: Props) {
   const [adjustAmount, setAdjustAmount] = useState<number>(0);
   const [adjustNote, setAdjustNote] = useState<string>("");
 
+  // confirm modal state for destructive actions
+  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState<{ open: boolean; batchId?: string }>({ open: false });
+
+  // per-call abort controller ref
+  const apiAbortRef = useRef<AbortController | null>(null);
+
   // derived safe state (ensure we always have usable defaults)
-  const inventory = draft?.inventory ?? {
+  const inventory = (draft?.inventory as {
+    on_hand?: number;
+    reserved?: number;
+    incoming?: number;
+    batches?: InventoryBatch[];
+    history?: InventoryHistoryEntry[];
+  }) ?? {
     on_hand: 0,
     reserved: 0,
     incoming: 0,
@@ -56,25 +69,36 @@ export default function InventoryTab({ draft, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.is_stockable]);
 
-  // Quick receive: add a batch locally then optionally persist
+  // ------------------ Helpers ------------------
+  const totals = useMemo(() => {
+    const on_hand = inventory.on_hand ?? 0;
+    const reserved = inventory.reserved ?? 0;
+    const incoming = inventory.incoming ?? 0;
+    const available = on_hand - (reserved ?? 0);
+    return { on_hand, reserved, incoming, available };
+  }, [inventory]);
+
+  // ------------------ Receive batch ------------------
   async function receiveBatch(keepPersist = true) {
+    // Local-only receive when product not saved yet
     if (!draft?.id) {
-      // product not saved yet — just update draft locally
+      const qty = Number(localBatchQty || 0);
+      if (!qty || qty <= 0) return toast.error("Enter a valid quantity to receive");
       const nextBatch: InventoryBatch = {
         id: `local-${Date.now()}`,
         reference: localBatchRef || `RCV-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-        qty: localBatchQty,
+        qty,
         expiry: localExpiry || null,
         location: localLocation || null,
         received_at: new Date().toISOString(),
       };
       const nextBatches = [...(inventory.batches ?? []), nextBatch];
-      const nextOnHand = (inventory.on_hand ?? 0) + localBatchQty;
+      const nextOnHand = (inventory.on_hand ?? 0) + qty;
 
       const entry: InventoryHistoryEntry = {
         id: `hist-${Date.now()}`,
         type: "receive",
-        change: nextBatch.qty,
+        change: qty,
         note: nextBatch.reference,
         when: nextBatch.received_at ?? new Date().toISOString(),
       };
@@ -88,8 +112,7 @@ export default function InventoryTab({ draft, onChange }: Props) {
         },
       });
 
-      toast.success("Batch added to draft");
-      // clear inputs
+      toast.success(`Added ${qty} (local draft)`);
       setLocalBatchQty(1);
       setLocalBatchRef("");
       setLocalExpiry("");
@@ -97,26 +120,40 @@ export default function InventoryTab({ draft, onChange }: Props) {
       return;
     }
 
+    // Persisted receive - product has id
     if (!draft?.id) return toast.error("Save product first to receive stock");
 
+    const qty = Number(localBatchQty || 0);
+    if (!qty || qty <= 0) return toast.error("Enter a valid quantity to receive");
+
     setLoading(true);
+    apiAbortRef.current?.abort();
+    apiAbortRef.current = new AbortController();
+
     try {
-      // API contract: POST /hms/products/:id/receive { qty, reference, expiry, location }
-      const res = await apiClient.post(`/hms/products/${encodeURIComponent(draft.id)}/receive`, {
-        qty: localBatchQty,
+      const body = {
+        qty,
         reference: localBatchRef || undefined,
         expiry: localExpiry || undefined,
         location: localLocation || undefined,
+      };
+      const res = await apiClient.post(`/hms/products/${encodeURIComponent(draft.id)}/receive`, body, {
+        signal: apiAbortRef.current.signal,
       });
       const updatedInv = res.data?.inventory ?? res.data?.data?.inventory;
-      // optimistic — apply to draft
-      onChange({ inventory: updatedInv });
-      toast.success("Received");
+      if (updatedInv) {
+        onChange({ inventory: updatedInv });
+      } else {
+        // fallback: increment on_hand optimistically if server didn't return inventory object
+        onChange({ inventory: { ...(inventory ?? {}), on_hand: (inventory.on_hand ?? 0) + qty } });
+      }
+      toast.success(`Received ${qty}`);
       setLocalBatchQty(1);
       setLocalBatchRef("");
       setLocalExpiry("");
       setLocalLocation("");
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error("receiveBatch", err);
       toast.error(err?.message ?? "Receive failed");
     } finally {
@@ -124,14 +161,14 @@ export default function InventoryTab({ draft, onChange }: Props) {
     }
   }
 
-  // Quick adjustment (positive or negative)
+  // ------------------ Submit adjustment ------------------
   async function submitAdjustment() {
-    if (!adjustAmount) return toast.error("Provide an amount to adjust");
-    if (!draft?.id) {
-      // local adjust only
-      const amount = Number(adjustAmount);
-      const nextOnHand = (inventory.on_hand ?? 0) + amount;
+    const amount = Number(adjustAmount || 0);
+    if (!amount) return toast.error("Provide a non-zero amount to adjust");
 
+    // local adjust for unsaved product
+    if (!draft?.id) {
+      const nextOnHand = (inventory.on_hand ?? 0) + amount;
       const entry: InventoryHistoryEntry = {
         id: `local-adj-${Date.now()}`,
         type: "adjust",
@@ -139,7 +176,6 @@ export default function InventoryTab({ draft, onChange }: Props) {
         note: adjustNote,
         when: new Date().toISOString(),
       };
-
       onChange({
         inventory: {
           ...(inventory ?? {}),
@@ -154,18 +190,22 @@ export default function InventoryTab({ draft, onChange }: Props) {
     }
 
     setLoading(true);
+    apiAbortRef.current?.abort();
+    apiAbortRef.current = new AbortController();
+
     try {
-      // API: POST /hms/products/:id/adjust { change, note }
       const res = await apiClient.post(
         `/hms/products/${encodeURIComponent(draft.id)}/adjust`,
-        { change: Number(adjustAmount), note: adjustNote }
+        { change: amount, note: adjustNote },
+        { signal: apiAbortRef.current.signal }
       );
       const updatedInv = res.data?.inventory ?? res.data?.data?.inventory;
-      onChange({ inventory: updatedInv });
+      if (updatedInv) onChange({ inventory: updatedInv });
       setAdjustAmount(0);
       setAdjustNote("");
       toast.success("Adjustment saved");
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error("submitAdjustment", err);
       toast.error(err?.message ?? "Adjustment failed");
     } finally {
@@ -173,9 +213,18 @@ export default function InventoryTab({ draft, onChange }: Props) {
     }
   }
 
-  // Remove batch (local only or API)
-  async function removeBatch(batchId?: string) {
+  // ------------------ Remove batch ------------------
+  // triggers confirm modal first
+  function confirmRemoveBatch(batchId?: string) {
+    setConfirmRemoveOpen({ open: true, batchId });
+  }
+
+  async function removeBatchConfirmed() {
+    const batchId = confirmRemoveOpen.batchId;
+    setConfirmRemoveOpen({ open: false, batchId: undefined });
     if (!batchId) return;
+
+    // local removal for unsaved product
     if (!draft?.id) {
       const nextBatches = (inventory.batches ?? []).filter((b) => b.id !== batchId);
       const removedQty = (inventory.batches ?? []).find((b) => b.id === batchId)?.qty ?? 0;
@@ -186,15 +235,18 @@ export default function InventoryTab({ draft, onChange }: Props) {
     }
 
     setLoading(true);
+    apiAbortRef.current?.abort();
+    apiAbortRef.current = new AbortController();
     try {
-      // API: DELETE /hms/products/:id/batches/:batchId
       const res = await apiClient.delete(
-        `/hms/products/${encodeURIComponent(draft.id)}/batches/${encodeURIComponent(batchId)}`
+        `/hms/products/${encodeURIComponent(draft.id)}/batches/${encodeURIComponent(batchId)}`,
+        { signal: apiAbortRef.current.signal }
       );
       const updatedInv = res.data?.inventory ?? res.data?.data?.inventory;
-      onChange({ inventory: updatedInv });
+      if (updatedInv) onChange({ inventory: updatedInv });
       toast.success("Batch removed");
     } catch (err: any) {
+      if (err?.name === "AbortError") return;
       console.error("removeBatch", err);
       toast.error(err?.message ?? "Remove failed");
     } finally {
@@ -202,15 +254,21 @@ export default function InventoryTab({ draft, onChange }: Props) {
     }
   }
 
-  // Derived metrics
-  const totals = useMemo(() => {
-    const on_hand = inventory.on_hand ?? 0;
-    const reserved = inventory.reserved ?? 0;
-    const incoming = inventory.incoming ?? 0;
-    const available = on_hand - reserved;
-    return { on_hand, reserved, incoming, available };
-  }, [inventory]);
+  // ------------------ Small helpers ------------------
+  const incrementIncoming = () => {
+    onChange({ inventory: { ...(inventory ?? {}), incoming: (inventory.incoming ?? 0) + 1 } });
+  };
 
+  const decrementReserved = () => {
+    onChange({ inventory: { ...(inventory ?? {}), reserved: Math.max(0, (inventory.reserved ?? 0) - 1) } });
+  };
+
+  const clearLocalInventory = () => {
+    onChange({ inventory: { ...(inventory ?? {}), on_hand: 0, batches: [], history: [] } });
+    toast.info("Cleared local inventory");
+  };
+
+  // ------------------ UI ------------------
   return (
     <div className="p-4">
       <div className="grid grid-cols-12 gap-6">
@@ -237,9 +295,11 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   <input
                     type="number"
                     min={1}
+                    step={1}
                     value={localBatchQty}
                     onChange={(e) => setLocalBatchQty(Number(e.target.value || 0))}
                     className="w-24 rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                    aria-label="Receive quantity"
                   />
                 </div>
 
@@ -250,6 +310,7 @@ export default function InventoryTab({ draft, onChange }: Props) {
                     onChange={(e) => setLocalBatchRef(e.target.value)}
                     placeholder="PO / GRN ref"
                     className="w-full rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                    aria-label="Receive reference"
                   />
                 </div>
 
@@ -260,12 +321,15 @@ export default function InventoryTab({ draft, onChange }: Props) {
                     value={localExpiry}
                     onChange={(e) => setLocalExpiry(e.target.value)}
                     className="rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                    aria-label="Expiry date"
                   />
                 </div>
 
                 <button
                   onClick={() => receiveBatch(true)}
                   className="px-3 py-2 rounded-2xl bg-emerald-600 text-white inline-flex items-center gap-2"
+                  disabled={loading}
+                  aria-label="Receive batch"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlusCircle className="w-4 h-4" />} Receive
                 </button>
@@ -278,6 +342,7 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   onChange={(e) => setLocalLocation(e.target.value)}
                   placeholder="Warehouse A / Shelf 4"
                   className="w-full rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                  aria-label="Batch location"
                 />
               </div>
             </div>
@@ -290,16 +355,20 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   value={adjustAmount}
                   onChange={(e) => setAdjustAmount(Number(e.target.value || 0))}
                   className="w-28 rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                  aria-label="Adjustment amount"
                 />
                 <input
                   value={adjustNote}
                   onChange={(e) => setAdjustNote(e.target.value)}
                   placeholder="Reason / note"
                   className="flex-1 rounded-2xl px-3 py-2 border bg-white/60 outline-none"
+                  aria-label="Adjustment note"
                 />
                 <button
                   onClick={submitAdjustment}
                   className="px-3 py-2 rounded-2xl bg-rose-500 text-white inline-flex items-center gap-2"
+                  disabled={loading}
+                  aria-label="Apply adjustment"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MinusCircle className="w-4 h-4" />} Apply
                 </button>
@@ -312,28 +381,20 @@ export default function InventoryTab({ draft, onChange }: Props) {
             <h5 className="text-sm font-medium text-slate-800 mb-2">Inventory controls</h5>
             <div className="flex flex-col gap-2">
               <button
-                onClick={() => {
-                  onChange({ inventory: { ...(inventory ?? {}), incoming: (inventory.incoming ?? 0) + 1 } });
-                }}
+                onClick={incrementIncoming}
                 className="px-3 py-2 rounded-md bg-white/50 text-sm"
+                aria-label="Mark incoming plus one"
               >
                 Mark incoming +1
               </button>
               <button
-                onClick={() => {
-                  onChange({ inventory: { ...(inventory ?? {}), reserved: Math.max(0, (inventory.reserved ?? 0) - 1) } });
-                }}
+                onClick={decrementReserved}
                 className="px-3 py-2 rounded-md bg-white/50 text-sm"
+                aria-label="Unreserve one"
               >
                 Unreserve -1
               </button>
-              <button
-                onClick={() => {
-                  onChange({ inventory: { ...(inventory ?? {}), on_hand: 0, batches: [], history: [] } });
-                  toast.info("Cleared local inventory");
-                }}
-                className="px-3 py-2 rounded-md border text-sm"
-              >
+              <button onClick={clearLocalInventory} className="px-3 py-2 rounded-md border text-sm" aria-label="Clear local inventory">
                 Clear local
               </button>
             </div>
@@ -355,7 +416,11 @@ export default function InventoryTab({ draft, onChange }: Props) {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button onClick={() => removeBatch(b.id)} className="px-3 py-1 rounded-md border text-sm">
+                    <button
+                      onClick={() => confirmRemoveBatch(b.id)}
+                      className="px-3 py-1 rounded-md border text-sm"
+                      aria-label={`Remove batch ${b.reference ?? i + 1}`}
+                    >
                       Remove
                     </button>
                   </div>
@@ -373,7 +438,7 @@ export default function InventoryTab({ draft, onChange }: Props) {
               {(inventory.history ?? []).map((h, idx) => (
                 <div key={h.id ?? `h-${idx}`} className="flex items-center justify-between p-2 rounded-md bg-white/60">
                   <div>
-                    <div className="text-sm font-medium text-slate-900">{h.type?.toUpperCase() ?? "EVENT"}</div>
+                    <div className="text-sm font-medium text-slate-900">{(h.type ?? "event").toUpperCase()}</div>
                     <div className="text-xs text-slate-500">{h.note ?? ""}</div>
                   </div>
                   <div className="text-sm text-slate-700">{h.change > 0 ? `+${h.change}` : h.change}</div>
@@ -383,6 +448,18 @@ export default function InventoryTab({ draft, onChange }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Confirm modal for removing batch */}
+      <ConfirmModal
+        open={confirmRemoveOpen.open}
+        title="Remove batch"
+        description="Remove this batch permanently? This action cannot be undone."
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        loading={loading}
+        onConfirm={removeBatchConfirmed}
+        onCancel={() => setConfirmRemoveOpen({ open: false, batchId: undefined })}
+      />
     </div>
   );
 }

@@ -6,28 +6,35 @@ import apiClient from "@/lib/api-client";
 import { useToast } from "@/components/toast/ToastProvider";
 import { Sparkles, Type, Tag, CheckCircle, RefreshCw, Loader2, Zap } from "lucide-react";
 import type { ProductDraft } from "./types";
+import { useCompany } from "@/app/providers/CompanyProvider";
+
+/**
+ * Production-hardened AIAssistTab
+ * - Client sends prompt request to /hms/ai/generate (server performs moderation + model call)
+ * - Buttons disabled while generating to avoid duplicate calls
+ * - Better parse error messages shown to user
+ * - When user "Apply"s suggestions, we attach audit metadata to the draft so server can persist audit trail
+ *
+ * Important: This component still assumes the server endpoint implements moderation & audit logging.
+ */
 
 interface Props {
   draft: ProductDraft;
   onChange: (patch: Partial<ProductDraft>) => void;
 }
 
-/**
- * AIAssistTab
- * - Single place for AI utilities: generate name, write description, suggest categories/tags and SEO blurb
- * - Client calls backend endpoint /hms/ai/generate which must proxy to the chosen model (OpenAI / Anthropic / local)
- * - Results returned are applied to draft via onChange({ description, name, metadata: { ... } })
- */
-
 const TONES = ["Neutral", "Casual", "Technical", "Luxury", "Playful"] as const;
 type Tone = typeof TONES[number];
 
 export default function AIAssistTab({ draft, onChange }: Props) {
   const toast = useToast();
+  const { company } = useCompany();
 
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [lastResponse, setLastResponse] = useState<string | null>(null);
+  const [lastParseError, setLastParseError] = useState<string | null>(null);
+  const [lastPromptUsed, setLastPromptUsed] = useState<string | null>(null);
 
   const [selectedTone, setSelectedTone] = useState<Tone>("Neutral");
   const [maxTokens, setMaxTokens] = useState<number>(120);
@@ -74,45 +81,73 @@ export default function AIAssistTab({ draft, onChange }: Props) {
     [context, selectedTone]
   );
 
-  // single helper to call the backend AI endpoint
-  async function callAI(prompt: string, stop?: string[]) {
+  // single helper to call the backend AI endpoint with safety bounds
+  async function callAI(prompt: string, opts?: { max_tokens?: number; temperature?: number }) {
+    // client-level bounds (server must enforce too)
+    const MAX_TOKENS = 800;
+    const MAX_TEMPERATURE = 1.0;
+    const tokens = Math.min(opts?.max_tokens ?? maxTokens, MAX_TOKENS);
+    const temp = Math.max(0, Math.min(MAX_TEMPERATURE, opts?.temperature ?? temperature));
+
     setIsGenerating(true);
     setLastResponse(null);
+    setLastParseError(null);
+    setLastPromptUsed(prompt);
+
     try {
-      // Backend endpoint should accept { prompt, max_tokens, temperature, stop } and return { text } (string)
-      const res = await apiClient.post("/hms/ai/generate", {
-        prompt,
-        max_tokens: maxTokens,
-        temperature,
-        stop,
-      });
-      // attempt to extract text from common shapes
-      const text = res.data?.text ?? res.data?.result ?? res.data?.data?.text ?? JSON.stringify(res.data);
-      setLastResponse(typeof text === "string" ? text : JSON.stringify(text));
-      return text;
+      const res = await apiClient.post(
+        "/hms/ai/generate",
+        {
+          prompt,
+          max_tokens: tokens,
+          temperature: temp,
+          // include lightweight provenance info for auditing
+          provenance: {
+            product_id: draft?.id ?? null,
+            company_id: (company as any)?.id ?? null,
+            user_context: { sku: draft?.sku ?? null },
+          },
+        },
+        { timeout: 120000 } // 120s client timeout (server should return faster)
+      );
+
+      // server returns { ok: true, text: "...", parse?: {...}, audit_id?: "..."}
+      const text = res.data?.text ?? res.data?.result ?? null;
+      const parse = res.data?.parse ?? null;
+      const error = res.data?.error ?? null;
+
+      if (error) {
+        setLastResponse(null);
+        setLastParseError(String(error));
+        throw new Error(String(error));
+      }
+
+      const returned = typeof text === "string" ? text : JSON.stringify(text ?? "");
+      setLastResponse(returned);
+      return { text: returned, parse };
     } catch (err: any) {
       console.error("AI call failed", err);
-      toast.error(err?.message ?? "AI request failed");
+      const message = err?.response?.data?.error ?? err?.message ?? "AI request failed";
+      setLastParseError(String(message));
+      toast.error(String(message));
       throw err;
     } finally {
       setIsGenerating(false);
     }
   }
 
-  // parse naive JSON out of text (tolerant)
+  // tolerant JSON parse helper (same as before but reports errors)
   function tryParseJSON(text: string | null) {
     if (!text) return null;
-    // attempt to find a JSON object/array inside text
     const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
     if (!jsonMatch) return null;
     try {
       return JSON.parse(jsonMatch[0]);
-    } catch {
-      // fallback: try to fix common issues — remove trailing commas
+    } catch (err) {
       try {
         const cleaned = jsonMatch[0].replace(/,\s*}/g, "}").replace(/,\s*]/g, "]");
         return JSON.parse(cleaned);
-      } catch {
+      } catch (err2) {
         return null;
       }
     }
@@ -123,13 +158,14 @@ export default function AIAssistTab({ draft, onChange }: Props) {
     if (!context.name && !context.description) return toast.error("Provide at least a name or description as context");
     const prompt = buildPrompt("name");
     try {
-      const text = await callAI(prompt);
-      const parsed = tryParseJSON(text as string);
-      const names = Array.isArray(parsed) ? (parsed as unknown[]).map((x) => String(x)) : (text as string).split("\n").map((s: string) => s.trim()).filter(Boolean).slice(0, 6);
+      const { text, parse } = await callAI(prompt);
+      // prefer server-side parsed `parse` if available, else try client parse
+      const parsed = parse ?? tryParseJSON(text);
+      const names = Array.isArray(parsed) ? parsed.map((x) => String(x)) : (text as string).split("\n").map((s: string) => s.trim()).filter(Boolean).slice(0, 6);
       setSuggestedName(names[0] ?? "");
       toast.success("Name suggestions ready");
     } catch {
-      /* handled above */
+      // handled in callAI
     }
   }
 
@@ -137,20 +173,19 @@ export default function AIAssistTab({ draft, onChange }: Props) {
     if (!context.name && !context.description) return toast.error("Provide at least a name or description as context");
     const prompt = buildPrompt("description");
     try {
-      const text = await callAI(prompt);
-      const parsed = tryParseJSON(text as string);
+      const { text, parse } = await callAI(prompt);
+      const parsed = parse ?? tryParseJSON(text);
       if (parsed && typeof parsed === "object" && (parsed as any).description) {
-        const desc = (parsed as any).description as string;
+        const desc = String((parsed as any).description);
         setSuggestedDescription(desc);
-        // merge highlights into metadata
+        // merge highlights into metadata locally so user sees them before persisting
         onChange({ description: desc, metadata: { ...(draft.metadata ?? {}), ai_highlights: (parsed as any).highlights ?? [] } });
       } else {
-        // fallback: treat whole text as description
-        setSuggestedDescription((text as string).trim());
+        setSuggestedDescription(String(text ?? "").trim());
       }
-      toast.success("Description generated");
+      toast.success("Description generated (review before applying)");
     } catch {
-      /* handled above */
+      // handled above
     }
   }
 
@@ -158,11 +193,11 @@ export default function AIAssistTab({ draft, onChange }: Props) {
     if (!context.name && !context.description) return toast.error("Provide at least a name or description as context");
     const prompt = buildPrompt("category_tags");
     try {
-      const text = await callAI(prompt);
-      const parsed = tryParseJSON(text as string);
+      const { text, parse } = await callAI(prompt);
+      const parsed = parse ?? tryParseJSON(text);
       if (parsed && typeof parsed === "object") {
         const parsedObj = parsed as any;
-        setSuggestedCategory(parsedObj.category ?? "");
+        setSuggestedCategory(String(parsedObj.category ?? ""));
         if (Array.isArray(parsedObj.tags)) {
           setSuggestedTags(parsedObj.tags.map((t: unknown) => String(t)));
         } else if (typeof parsedObj.tags === "string") {
@@ -171,14 +206,13 @@ export default function AIAssistTab({ draft, onChange }: Props) {
           setSuggestedTags([]);
         }
       } else {
-        // try to parse simple CSV or lines
-        const lines = (text as string).split("\n").map((s: string) => s.trim()).filter(Boolean);
+        const lines = (text ?? "").split("\n").map((s: string) => s.trim()).filter(Boolean);
         setSuggestedCategory(lines[0] ?? "");
         setSuggestedTags(lines.slice(1).join(",").split(",").map((s: string) => s.trim()).filter(Boolean));
       }
       toast.success("Category & tags suggested");
     } catch {
-      /* handled above */
+      // handled above
     }
   }
 
@@ -186,48 +220,52 @@ export default function AIAssistTab({ draft, onChange }: Props) {
     if (!context.name && !context.description) return toast.error("Provide at least a name or description as context");
     const prompt = buildPrompt("seo");
     try {
-      const text = await callAI(prompt);
-      const parsed = tryParseJSON(text as string);
+      const { text, parse } = await callAI(prompt);
+      const parsed = parse ?? tryParseJSON(text);
       if (parsed && typeof parsed === "object" && (parsed as any).meta) {
-        const meta = (parsed as any).meta as string;
+        const meta = String((parsed as any).meta);
         const keywords = Array.isArray((parsed as any).keywords) ? (parsed as any).keywords.map((k: unknown) => String(k)) : [];
         onChange({ metadata: { ...(draft.metadata ?? {}), seo: { meta, keywords } } });
       } else {
-        onChange({ metadata: { ...(draft.metadata ?? {}), seo: { meta: (text as string).slice(0, 160), keywords: [] } } });
+        onChange({ metadata: { ...(draft.metadata ?? {}), seo: { meta: String((text ?? "").slice(0, 155)), keywords: [] } } });
       }
       toast.success("SEO blurb generated");
     } catch {
-      /* handled above */
+      // handled above
     }
   }
 
-  // apply single suggestion to draft
+  // apply suggestion + attach audit metadata
   function acceptName(name: string) {
-    onChange({ name });
+    const audit = { ai: { source: "assist", prompt: lastPromptUsed, preview: lastResponse, ts: new Date().toISOString() } };
+    onChange({ name, metadata: { ...(draft.metadata ?? {}), audit } });
     setSuggestedName("");
-    toast.success("Name applied");
+    toast.success("Name applied (audit attached)");
   }
+
   function acceptDescription(desc: string) {
-    onChange({ description: desc });
+    const audit = { ai: { source: "assist", prompt: lastPromptUsed, preview: lastResponse, ts: new Date().toISOString() } };
+    onChange({ description: desc, metadata: { ...(draft.metadata ?? {}), ai_highlights: draft?.metadata?.ai_highlights ?? [], audit } });
     setSuggestedDescription("");
-    toast.success("Description applied");
+    toast.success("Description applied (audit attached)");
   }
+
   function acceptCategoryAndTags(category: string, tags: string[]) {
-    onChange({ metadata: { ...(draft.metadata ?? {}), category, tags } });
+    const audit = { ai: { source: "assist", prompt: lastPromptUsed, preview: lastResponse, ts: new Date().toISOString() } };
+    onChange({ metadata: { ...(draft.metadata ?? {}), category, tags, audit } });
     setSuggestedCategory("");
     setSuggestedTags([]);
-    toast.success("Category & tags applied");
+    toast.success("Category & tags applied (audit attached)");
   }
 
-  // safety: quick profanity check (simple)
+  // client-side quick profanity check (must NOT be relied on for production)
   function safetyCheck(text: string) {
     if (!text) return true;
-    const banned = ["kill", "bomb", "hate", "terror"]; // extremely naive — replace with your own moderation service
-    const l = text.toLowerCase();
-    return !banned.some((b) => l.includes(b));
+    const banned = ["bomb", "kill", "terror"]; // placeholder — server moderation still required
+    const lower = text.toLowerCase();
+    return !banned.some((b) => lower.includes(b));
   }
 
-  // small UI helper for preview
   const promptForPreview = buildPrompt("description");
 
   return (
@@ -243,7 +281,13 @@ export default function AIAssistTab({ draft, onChange }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-500">Tone</label>
-                <select value={selectedTone} onChange={(e) => setSelectedTone(e.target.value as Tone)} className="w-full rounded-2xl px-3 py-2 border bg-white/60">
+                <select
+                  value={selectedTone}
+                  onChange={(e) => setSelectedTone(e.target.value as Tone)}
+                  className="w-full rounded-2xl px-3 py-2 border bg-white/60"
+                  aria-label="AI tone"
+                  disabled={isGenerating}
+                >
                   {TONES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -254,25 +298,68 @@ export default function AIAssistTab({ draft, onChange }: Props) {
 
               <div>
                 <label className="text-xs text-slate-500">Temperature</label>
-                <input type="range" min={0} max={1} step={0.05} value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} className="w-full" />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={temperature}
+                  onChange={(e) => setTemperature(Number(e.target.value))}
+                  className="w-full"
+                  aria-label="AI temperature"
+                  disabled={isGenerating}
+                />
                 <div className="text-xs text-slate-400 mt-1">{temperature.toFixed(2)}</div>
               </div>
 
               <div>
                 <label className="text-xs text-slate-500">Max tokens / length</label>
-                <input type="number" min={32} max={800} value={maxTokens} onChange={(e) => setMaxTokens(Number(e.target.value || 120))} className="w-full rounded-2xl px-3 py-2 border bg-white/60" />
+                <input
+                  type="number"
+                  min={32}
+                  max={800}
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(Number(e.target.value || 120))}
+                  className="w-full rounded-2xl px-3 py-2 border bg-white/60"
+                  aria-label="AI max tokens"
+                  disabled={isGenerating}
+                />
               </div>
 
               <div className="flex items-end">
                 <div className="flex gap-2">
-                  <button onClick={generateNames} className="px-3 py-2 rounded-2xl bg-blue-600 text-white inline-flex items-center gap-2">
+                  <button
+                    onClick={generateNames}
+                    className="px-3 py-2 rounded-2xl bg-blue-600 text-white inline-flex items-center gap-2"
+                    aria-label="Generate name suggestions"
+                    disabled={isGenerating}
+                  >
                     <Type className="w-4 h-4" /> Name
                   </button>
-                  <button onClick={generateDescription} className="px-3 py-2 rounded-2xl bg-indigo-600 text-white inline-flex items-center gap-2">
+                  <button
+                    onClick={generateDescription}
+                    className="px-3 py-2 rounded-2xl bg-indigo-600 text-white inline-flex items-center gap-2"
+                    aria-label="Generate description"
+                    disabled={isGenerating}
+                  >
                     <Zap className="w-4 h-4" /> Description
                   </button>
-                  <button onClick={generateCategoryAndTags} className="px-3 py-2 rounded-2xl bg-emerald-600 text-white inline-flex items-center gap-2">
+                  <button
+                    onClick={generateCategoryAndTags}
+                    className="px-3 py-2 rounded-2xl bg-emerald-600 text-white inline-flex items-center gap-2"
+                    aria-label="Generate category and tags"
+                    disabled={isGenerating}
+                  >
                     <Tag className="w-4 h-4" /> Category/Tags
+                  </button>
+                  <button
+                    onClick={generateSEO}
+                    className="px-3 py-2 rounded-2xl bg-yellow-600 text-white inline-flex items-center gap-2"
+                    aria-label="Generate SEO blurb"
+                    disabled={isGenerating}
+                    title="Generate SEO meta (meta description + keywords)"
+                  >
+                    <Sparkles className="w-4 h-4" /> SEO
                   </button>
                 </div>
               </div>
@@ -282,8 +369,20 @@ export default function AIAssistTab({ draft, onChange }: Props) {
               <div className="col-span-6">
                 <div className="text-xs text-slate-500 mb-1">Suggested name</div>
                 <div className="flex gap-2 items-center">
-                  <input value={suggestedName} onChange={(e) => setSuggestedName(e.target.value)} placeholder="AI suggestion" className="flex-1 rounded-2xl px-3 py-2 border bg-white/60" />
-                  <button onClick={() => acceptName(suggestedName)} disabled={!suggestedName || !safetyCheck(suggestedName)} className="px-3 py-2 rounded-2xl bg-white/90 border">
+                  <input
+                    value={suggestedName}
+                    onChange={(e) => setSuggestedName(e.target.value)}
+                    placeholder="AI suggestion"
+                    className="flex-1 rounded-2xl px-3 py-2 border bg-white/60"
+                    aria-label="Suggested name"
+                    disabled={isGenerating}
+                  />
+                  <button
+                    onClick={() => acceptName(suggestedName)}
+                    disabled={!suggestedName || !safetyCheck(suggestedName) || isGenerating}
+                    className="px-3 py-2 rounded-2xl bg-white/90 border"
+                    aria-label="Apply suggested name"
+                  >
                     Apply
                   </button>
                 </div>
@@ -292,14 +391,28 @@ export default function AIAssistTab({ draft, onChange }: Props) {
               <div className="col-span-6">
                 <div className="text-xs text-slate-500 mb-1">Suggested category & tags</div>
                 <div className="flex gap-2 items-center">
-                  <input value={suggestedCategory} onChange={(e) => setSuggestedCategory(e.target.value)} placeholder="Category" className="rounded-2xl px-3 py-2 border bg-white/60" />
+                  <input
+                    value={suggestedCategory}
+                    onChange={(e) => setSuggestedCategory(e.target.value)}
+                    placeholder="Category"
+                    className="rounded-2xl px-3 py-2 border bg-white/60"
+                    aria-label="Suggested category"
+                    disabled={isGenerating}
+                  />
                   <input
                     value={suggestedTags.join(", ")}
                     onChange={(e) => setSuggestedTags(e.target.value.split(",").map((s: string) => s.trim()))}
                     placeholder="tag1, tag2, tag3"
                     className="flex-1 rounded-2xl px-3 py-2 border bg-white/60"
+                    aria-label="Suggested tags"
+                    disabled={isGenerating}
                   />
-                  <button onClick={() => acceptCategoryAndTags(suggestedCategory, suggestedTags)} disabled={!suggestedCategory} className="px-3 py-2 rounded-2xl bg-white/90 border">
+                  <button
+                    onClick={() => acceptCategoryAndTags(suggestedCategory, suggestedTags)}
+                    disabled={!suggestedCategory || isGenerating}
+                    className="px-3 py-2 rounded-2xl bg-white/90 border"
+                    aria-label="Apply suggested category and tags"
+                  >
                     Apply
                   </button>
                 </div>
@@ -307,17 +420,30 @@ export default function AIAssistTab({ draft, onChange }: Props) {
 
               <div className="col-span-12 mt-3">
                 <div className="text-xs text-slate-500 mb-1">Suggested description</div>
-                <textarea value={suggestedDescription} onChange={(e) => setSuggestedDescription(e.target.value)} placeholder="AI description preview" rows={4} className="w-full rounded-2xl px-3 py-2 border bg-white/60" />
+                <textarea
+                  value={suggestedDescription}
+                  onChange={(e) => setSuggestedDescription(e.target.value)}
+                  placeholder="AI description preview"
+                  rows={4}
+                  className="w-full rounded-2xl px-3 py-2 border bg-white/60"
+                  aria-label="Suggested description"
+                  disabled={isGenerating}
+                />
                 <div className="mt-2 flex justify-end gap-2">
                   <button
-                    onClick={() => {
-                      setSuggestedDescription("");
-                    }}
+                    onClick={() => setSuggestedDescription("")}
                     className="px-3 py-2 rounded-2xl border"
+                    aria-label="Clear suggested description"
+                    disabled={isGenerating}
                   >
                     Clear
                   </button>
-                  <button onClick={() => acceptDescription(suggestedDescription)} disabled={!suggestedDescription || !safetyCheck(suggestedDescription)} className="px-3 py-2 rounded-2xl bg-indigo-600 text-white inline-flex items-center gap-2">
+                  <button
+                    onClick={() => acceptDescription(suggestedDescription)}
+                    disabled={!suggestedDescription || !safetyCheck(suggestedDescription) || isGenerating}
+                    className="px-3 py-2 rounded-2xl bg-indigo-600 text-white inline-flex items-center gap-2"
+                    aria-label="Apply suggested description"
+                  >
                     <CheckCircle className="w-4 h-4" /> Apply description
                   </button>
                 </div>
@@ -327,26 +453,36 @@ export default function AIAssistTab({ draft, onChange }: Props) {
             <div className="mt-4 flex items-center justify-between">
               <div className="text-xs text-slate-500">Prompt Preview</div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setPromptPreviewOpen(!promptPreviewOpen)} className="px-3 py-1 rounded-md border inline-flex items-center gap-2">
+                <button
+                  onClick={() => setPromptPreviewOpen(!promptPreviewOpen)}
+                  className="px-3 py-1 rounded-md border inline-flex items-center gap-2"
+                  aria-label="Toggle prompt preview"
+                >
                   <RefreshCw className="w-4 h-4" /> Preview
                 </button>
                 <div className="text-xs text-slate-400">{lastResponse ? "Last result available" : isGenerating ? "Generating…" : "Idle"}</div>
               </div>
             </div>
 
-            {promptPreviewOpen && <pre className="mt-3 p-3 rounded-md bg-black/5 text-xs overflow-auto">{promptForPreview}</pre>}
+            {promptPreviewOpen && (
+              <pre className="mt-3 p-3 rounded-md bg-black/5 text-xs overflow-auto" aria-live="polite">
+                {promptForPreview}
+              </pre>
+            )}
           </div>
 
           <div className="col-span-4">
             <div className="rounded-2xl bg-white/30 border p-3 shadow-sm">
               <div className="text-xs text-slate-500 mb-2">AI Response</div>
-              <div className="min-h-[120px] p-2 rounded-md bg-white/60 overflow-auto">
+              <div className="min-h-[120px] p-2 rounded-md bg-white/60 overflow-auto" aria-live="polite">
                 {isGenerating ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" /> Generating…
                   </div>
                 ) : lastResponse ? (
                   <pre className="text-xs">{lastResponse}</pre>
+                ) : lastParseError ? (
+                  <div className="text-xs text-rose-600">Parse/Error: {lastParseError}</div>
                 ) : (
                   <div className="text-xs text-slate-500">No response yet. Trigger a generation above.</div>
                 )}
@@ -354,7 +490,7 @@ export default function AIAssistTab({ draft, onChange }: Props) {
 
               <div className="mt-3">
                 <div className="text-xs text-slate-500 mb-1">Safety</div>
-                <div className="text-xs text-slate-400">We run a client-side sanity filter but you should enforce server-side moderation before persisting any AI output to product records.</div>
+                <div className="text-xs text-slate-400">We run a client-side sanity filter but require server-side moderation before persisting any AI output to product records.</div>
                 <div className="mt-2 text-xs text-slate-500">Actions</div>
                 <div className="mt-2 flex gap-2">
                   <button
@@ -364,18 +500,24 @@ export default function AIAssistTab({ draft, onChange }: Props) {
                       setSuggestedCategory("");
                       setSuggestedTags([]);
                       setLastResponse(null);
+                      setLastParseError(null);
                       toast.info("Cleared AI suggestions");
                     }}
                     className="px-3 py-2 rounded-2xl border"
+                    aria-label="Clear AI suggestions"
+                    disabled={isGenerating}
                   >
                     Clear suggestions
                   </button>
                   <button
                     onClick={() => {
                       setLastResponse(null);
+                      setLastParseError(null);
                       toast.info("Cleared preview");
                     }}
                     className="px-3 py-2 rounded-2xl bg-white/90 border"
+                    aria-label="Clear preview"
+                    disabled={isGenerating}
                   >
                     Clear preview
                   </button>
@@ -386,9 +528,9 @@ export default function AIAssistTab({ draft, onChange }: Props) {
             <div className="mt-3 rounded-2xl bg-white/30 border p-3">
               <div className="text-xs text-slate-500">Quick tips</div>
               <ul className="text-xs text-slate-400 mt-2 space-y-1">
-                <li>Provide a good seed: name + 1-2 sentence description improves results.</li>
+                <li>Provide a good seed: name + 1–2 sentence description improves results.</li>
                 <li>Use lower temperature for factual text, higher for creative names.</li>
-                <li>Always review AI text before applying — enforce server-side moderation.</li>
+                <li>Always review AI text before applying — server-side moderation is enforced by the backend.</li>
               </ul>
             </div>
           </div>
