@@ -12,16 +12,32 @@ import ConfirmModal from "@/components/ConfirmModal";
 import { useRouter } from "next/navigation";
 import CompanySelector from "@/components/CompanySelector";
 import { useCompany } from "@/app/providers/CompanyProvider";
-import { Search, Plus, RefreshCw, Edit2, Eye, Trash2, Box, DollarSign } from "lucide-react";
+import { Search, Plus, RefreshCw, Edit2, Eye, Trash2, Box, DollarSign, Layers } from "lucide-react";
+
+type Batch = {
+  batch_id: string;
+  batch_no: string;
+  expiry_date?: string | null;
+  qty: number;
+  mrp?: number | null;
+  cost?: number | null;
+};
 
 type Product = {
   id: string;
   sku: string;
+  barcode?: string | null;
   name: string;
   description?: string;
   price?: number;
   currency?: string;
+  default_cost?: number;
+  uom?: string;
   is_stockable?: boolean;
+  is_service?: boolean;
+  stock_qty?: number | null; // total available
+  low_stock?: boolean; // server-calculated flag
+  nearest_expiry_days?: number | null; // optional hint
   metadata?: Record<string, any> | null;
 };
 
@@ -37,6 +53,10 @@ export default function ProductsPage(): JSX.Element {
   const [editing, setEditing] = useState<Product | null>(null);
   const [showReceiveModalFor, setShowReceiveModalFor] = useState<{ productId: string; companyId: string } | null>(null);
   const [showSellModalFor, setShowSellModalFor] = useState<{ productId?: string; companyId: string } | null>(null);
+
+  const [batchModalFor, setBatchModalFor] = useState<{ productId: string; name: string } | null>(null);
+  const [batches, setBatches] = useState<Batch[] | null>(null);
+  const [batchesLoading, setBatchesLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -56,7 +76,6 @@ export default function ProductsPage(): JSX.Element {
     }
   };
 
-  /* ---------------- fetch products (debounced + abort) ---------------- */
   const fetchProducts = useCallback(
     async (opts: { force?: boolean } = {}) => {
       try {
@@ -82,6 +101,8 @@ export default function ProductsPage(): JSX.Element {
         const params = new URLSearchParams();
         if (query) params.append("q", query);
         params.append("company_id", company.id);
+        // Request stock summary inline (server: include_stock -> returns stock_qty, low_stock, nearest_expiry_days)
+        params.append("include_stock", "true");
 
         const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
         const rows = (res?.data?.data ?? []) as Product[];
@@ -152,7 +173,7 @@ export default function ProductsPage(): JSX.Element {
       // optimistic UI update
       setProducts((cur) => cur.filter((x) => x.id !== p.id));
 
-      // call API
+      // call API (soft delete recommended)
       await apiClient.delete(`/hms/products/${encodeURIComponent(p.id)}`, { data: { company_id: company!.id } });
 
       // success UI
@@ -173,27 +194,52 @@ export default function ProductsPage(): JSX.Element {
     }
   };
 
+  /* fetch batch-level stock when opening modal */
+  const openBatchModal = async (productId: string, name: string) => {
+    setBatchModalFor({ productId, name });
+    setBatches(null);
+    setBatchesLoading(true);
+    try {
+      const res = await apiClient.get(`/hms/products/${encodeURIComponent(productId)}/stock`, { params: { company_id: company?.id } });
+      setBatches(res?.data?.data ?? []);
+    } catch (err: any) {
+      console.error("fetch batches", err);
+      toast.error("Failed to load batch stock");
+    } finally {
+      setBatchesLoading(false);
+    }
+  };
+
+  /* pill helper for stock */
+  const StockPill: React.FC<{ qty?: number | null; low?: boolean; expiryDays?: number | null }> = ({ qty, low, expiryDays }) => {
+    const qtyText = qty == null ? "—" : `${Number(qty).toLocaleString()}`;
+    const base = "inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium shadow-sm";
+    if (low) return <span className={`${base} bg-rose-50 text-rose-700 border border-rose-100`}>Low: {qtyText}</span>;
+    if ((expiryDays ?? 999) <= 30) return <span className={`${base} bg-amber-50 text-amber-800 border border-amber-100`}>Exp: {qtyText}</span>;
+    return <span className={`${base} bg-emerald-50 text-emerald-800 border border-emerald-100`}>In stock: {qtyText}</span>;
+  };
+
   return (
-    <div className="relative min-h-screen p-6 lg:p-10 bg-gradient-to-br from-slate-100/70 via-white/60 to-slate-50/70 backdrop-blur-2xl overflow-hidden">
+    <div className="relative min-h-screen p-6 lg:p-10 bg-gradient-to-br from-slate-100/50 via-white/40 to-sky-50/40 backdrop-blur-2xl overflow-hidden">
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-400/20 blur-3xl" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[400px] h-[400px] rounded-full bg-violet-300/20 blur-3xl" />
+        <div className="absolute top-[-15%] right-[-10%] w-[520px] h-[520px] rounded-full bg-blue-400/10 blur-3xl" />
+        <div className="absolute bottom-[-8%] left-[-12%] w-[420px] h-[420px] rounded-full bg-violet-300/8 blur-3xl" />
       </div>
 
       <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 max-w-7xl mx-auto mb-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="backdrop-blur-xl bg-white/40 border border-white/30 rounded-3xl p-5 shadow-xl">
+          <div className="backdrop-blur-xl bg-white/10 border border-white/10 rounded-3xl p-5 shadow-xl">
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 drop-shadow-sm">Products</h1>
             <p className="text-sm text-slate-600 mt-1">Your catalog — stock, SKU, and smart batch management</p>
           </div>
           {/* Always visible selector — mobile & desktop */}
-          <div className="bg-white rounded-xl p-2 shadow-sm border z-40">
+          <div className="bg-white/6 rounded-xl p-2 shadow-sm border border-white/6 z-40">
             <CompanySelector />
           </div>
         </div>
 
         <div className="flex flex-wrap md:flex-nowrap items-center gap-3 w-full md:w-auto">
-          <div className="flex items-center gap-3 flex-1 md:flex-none backdrop-blur-md bg-white/30 border border-white/20 rounded-3xl px-4 py-2 shadow-inner">
+          <div className="flex items-center gap-3 flex-1 md:flex-none backdrop-blur-md bg-white/6 border border-white/6 rounded-3xl px-4 py-2 shadow-inner">
             <Search className="w-4 h-4 text-slate-500" />
             <input
               placeholder="Search name or SKU"
@@ -210,7 +256,7 @@ export default function ProductsPage(): JSX.Element {
           <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-xl hover:scale-[1.02] transition-transform">
             <Plus className="w-4 h-4" /> New Product
           </button>
-          <button onClick={() => fetchProducts({ force: true })} className="p-2 rounded-2xl border border-white/30 bg-white/40 shadow-inner hover:bg-white/60" aria-label="Refresh">
+          <button onClick={() => fetchProducts({ force: true })} className="p-2 rounded-2xl border border-white/10 bg-white/4 shadow-inner hover:bg-white/6" aria-label="Refresh">
             <RefreshCw className="w-4 h-4 text-slate-700" />
           </button>
           <button onClick={() => sell(undefined)} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md hover:scale-[1.02]">
@@ -223,17 +269,17 @@ export default function ProductsPage(): JSX.Element {
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-pulse">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-48 rounded-3xl bg-white/50 border border-white/20 shadow-inner" />
+              <div key={i} className="h-48 rounded-3xl bg-gradient-to-br from-white/6 to-white/4 border border-white/6 shadow-inner" />
             ))}
           </div>
         ) : products.length === 0 ? (
-          <div className="text-center p-10 backdrop-blur-md bg-white/50 border border-white/30 rounded-3xl shadow-xl text-slate-600">
+          <div className="text-center p-10 backdrop-blur-md bg-white/6 border border-white/8 rounded-3xl shadow-xl text-slate-600">
             {company ? "No products found. Add a new one to get started." : "Please select a company to load products."}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {products.map((p) => (
-              <motion.div key={p.id} whileHover={{ scale: 1.02 }} className="relative p-5 rounded-3xl backdrop-blur-xl bg-white/40 border border-white/20 shadow-lg hover:shadow-2xl transition-all flex flex-col">
+              <motion.div key={p.id} whileHover={{ scale: 1.02 }} className="relative p-5 rounded-3xl backdrop-blur-xl bg-gradient-to-br from-white/6 to-sky-50/6 border border-white/8 shadow-lg hover:shadow-2xl transition-all flex flex-col">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900 drop-shadow-sm">{p.name}</h2>
@@ -244,16 +290,21 @@ export default function ProductsPage(): JSX.Element {
                 <p className="mt-2 text-sm text-slate-700 line-clamp-3 flex-1">{p.description ?? "No description provided."}</p>
 
                 <div className="mt-4 flex justify-between items-center">
-                  <div className="flex gap-2">
-                    <button onClick={() => view(p.id)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/50 border border-white/20 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/70" aria-label={`View ${p.name}`}>
-                      <Eye className="w-4 h-4" /> View
-                    </button>
-                    <button onClick={() => openEdit(p)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/50 border border-white/20 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/70" aria-label={`Edit ${p.name}`}>
-                      <Edit2 className="w-4 h-4" /> Edit
+                  <div className="flex gap-2 items-center">
+                    <StockPill qty={p.stock_qty ?? null} low={!!p.low_stock} expiryDays={p.nearest_expiry_days ?? null} />
+                    {/* quick batch view */}
+                    <button onClick={() => openBatchModal(p.id, p.name)} className="inline-flex items-center gap-2 px-2 py-1 text-xs rounded-md border border-white/8 bg-white/4 hover:bg-white/6">
+                      <Layers className="w-4 h-4" /> Stock
                     </button>
                   </div>
 
                   <div className="flex gap-2">
+                    <button onClick={() => view(p.id)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`View ${p.name}`}>
+                      <Eye className="w-4 h-4" /> View
+                    </button>
+                    <button onClick={() => openEdit(p)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`Edit ${p.name}`}>
+                      <Edit2 className="w-4 h-4" /> Edit
+                    </button>
                     <button onClick={() => receive(p.id)} className="px-3 py-1 rounded-xl bg-emerald-500/90 text-white text-sm shadow-md flex items-center gap-1 hover:bg-emerald-600" aria-label={`Receive ${p.name}`}>
                       <Box className="w-4 h-4" /> Receive
                     </button>
@@ -301,6 +352,57 @@ export default function ProductsPage(): JSX.Element {
       )}
       {showReceiveModalFor && <ReceiveForm productId={showReceiveModalFor.productId} companyId={showReceiveModalFor.companyId} onClose={() => setShowReceiveModalFor(null)} onReceived={() => fetchProducts({ force: true })} />}
       {showSellModalFor && <SellWithBarcode companyId={showSellModalFor.companyId} onClose={() => setShowSellModalFor(null)} onSold={() => fetchProducts({ force: true })} />}
+
+      {/* Batch modal */}
+      {batchModalFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setBatchModalFor(null)} />
+          <div className="relative z-10 w-full max-w-3xl rounded-2xl p-6 bg-white/6 border border-white/8 backdrop-blur-xl shadow-xl">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold">Batch stock — {batchModalFor.name}</h3>
+                <p className="text-sm text-slate-500">Batch-wise quantities and expiry</p>
+              </div>
+              <div>
+                <button className="px-3 py-1 rounded-md bg-white/4 border border-white/8" onClick={() => setBatchModalFor(null)}>Close</button>
+              </div>
+            </div>
+
+            {batchesLoading ? (
+              <div className="text-center py-8">Loading…</div>
+            ) : !batches || batches.length === 0 ? (
+              <div className="text-center py-8">No batch information available.</div>
+            ) : (
+              <div className="grid gap-3">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-slate-600">
+                        <th className="py-2 pr-4">Batch</th>
+                        <th className="py-2 pr-4">Expiry</th>
+                        <th className="py-2 pr-4">Qty</th>
+                        <th className="py-2 pr-4">MRP</th>
+                        <th className="py-2 pr-4">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batches.map((b) => (
+                        <tr key={b.batch_id} className="border-t border-white/6">
+                          <td className="py-3 pr-4">{b.batch_no}</td>
+                          <td className="py-3 pr-4">{b.expiry_date ?? "—"}</td>
+                          <td className="py-3 pr-4">{Number(b.qty).toLocaleString()}</td>
+                          <td className="py-3 pr-4">{b.mrp ? formatCurrency(b.mrp) : "—"}</td>
+                          <td className="py-3 pr-4">{b.cost ? formatCurrency(b.cost) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
