@@ -82,7 +82,7 @@ export default function Page(): JSX.Element {
       try {
         if (!company) {
           setProducts([]);
-          toast.info("Please select a company to load products.");
+          //toast.info("Please select a company to load products.");
           return;
         }
 
