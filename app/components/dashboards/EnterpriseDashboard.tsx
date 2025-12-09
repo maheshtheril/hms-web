@@ -4,42 +4,64 @@ import React, { useEffect, useState } from "react";
 import KPIGrid from "./KPIGrid";
 import { Company } from "@/types/company";
 
-const BACKEND =
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  process.env.BACKEND_URL ||
-  process.env.API_URL ||
-  "";
-const API = BACKEND.replace(/\/+$/, "");
+/**
+ * Safer client-side backend resolution:
+ * - prefer NEXT_PUBLIC_BACKEND_URL if set and absolute
+ * - otherwise use relative same-origin endpoints
+ */
+const RAW_BACKEND =
+  (process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.BACKEND_URL ||
+    process.env.API_URL ||
+    "").trim();
+
+const BACKEND = RAW_BACKEND ? RAW_BACKEND.replace(/\/+$/, "") : "";
+
+function buildDashboardUrl(companyId: string) {
+  // prefer absolute backend if provided, otherwise relative path
+  if (BACKEND) return `${BACKEND}/api/company/dashboard?company_id=${encodeURIComponent(companyId)}`;
+  return `/api/company/dashboard?company_id=${encodeURIComponent(companyId)}`;
+}
 
 export default function EnterpriseDashboard({ company }: { company: Company }) {
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
     if (!company?.id) return;
+    const controller = new AbortController();
+    const signal = controller.signal;
 
     (async () => {
       try {
-        const url = `${API}/api/company/dashboard?company_id=${company.id}`;
-        console.debug("[EnterpriseDashboard] fetching:", url);
+        const url = buildDashboardUrl(company.id);
+        // Helpful debug: shows exactly what origin the client is calling
+        console.debug("[EnterpriseDashboard] fetching:", url, " BACKEND:", BACKEND || "(relative)");
 
         const res = await fetch(url, {
           credentials: "include",
           headers: { Accept: "application/json" },
+          signal,
         });
 
         if (!res.ok) {
-          console.error("EnterpriseDashboard failed:", res.status);
+          console.error("EnterpriseDashboard failed:", res.status, await res.text().catch(() => "<no body>"));
           setData({});
           return;
         }
 
         const json = await res.json().catch(() => ({}));
         setData(json);
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          // fetch canceled on unmount — ignore
+          return;
+        }
         console.error("EnterpriseDashboard error:", err);
         setData({});
       }
     })();
+
+    return () => controller.abort();
   }, [company?.id]);
 
   const kpis = [
@@ -69,8 +91,6 @@ export default function EnterpriseDashboard({ company }: { company: Company }) {
       <section>
         <KPIGrid items={kpis} />
       </section>
-
-      {/* ... rest of your UI unchanged ... */}
     </div>
   );
 }
