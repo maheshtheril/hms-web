@@ -44,11 +44,12 @@ const AIAssistTab = React.lazy(() => import("./AIAssistTab"));
 
 interface ProductEditorProps {
   productId?: string | null;
+  initial?: Record<string, any> | ProductDraft | null; // <-- ADDED optional initial prop for prefilled drafts
   onClose?: () => void;
   onSaved?: (p: ProductDraft) => void;
 }
 
-export default function ProductEditor({ productId = null, onClose, onSaved }: ProductEditorProps) {
+export default function ProductEditor({ productId = null, initial = null, onClose, onSaved }: ProductEditorProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const { company } = useCompany();
@@ -82,15 +83,29 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
     };
   }, [company]);
 
-  /* -------------- Load product (edit) or initialize new draft -------------- */
+  /* -------------- idempotency init -------------- */
   useEffect(() => {
     idempotencyKeyRef.current = idempotencyKeyRef.current ?? uuidv4(); // ensure key exists for the lifetime
   }, []);
 
+  /* -------------- Load product (edit) or initialize new draft -------------- */
   useEffect(() => {
     let mounted = true;
+
+    // If an `initial` draft was provided for a new product scenario, use it.
+    if (!productId && initial) {
+      try {
+        setDraft(normalizeDraftForEditor(initial as Record<string, any>));
+        setDirty(false);
+        setValidationErrors(null);
+        return;
+      } catch (e) {
+        // fall through to normal init if normalize fails
+      }
+    }
+
     (async () => {
-      // new product
+      // new product (no productId)
       if (!productId) {
         setDraft({ currency: defaults.currency, is_stockable: true });
         setDirty(false);
@@ -115,11 +130,12 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
         if (mounted) setLoading(false);
       }
     })();
+
     return () => {
       mounted = false;
       abortRef.current?.abort();
     };
-  }, [productId, defaults.currency, toast]);
+  }, [productId, initial, defaults.currency, toast]);
 
   /* ---------------- Save (create or update) ---------------- */
   const saveDraft = useCallback(
@@ -161,6 +177,7 @@ export default function ProductEditor({ productId = null, onClose, onSaved }: Pr
           headers["Idempotency-Key"] = idempotencyKeyRef.current;
         }
 
+        // NOTE: axios supports AbortSignal in recent versions; ensure your axios supports `signal`.
         let res;
         if (payload.id) {
           res = await apiClient.put(`/hms/products/${encodeURIComponent(payload.id)}`, body, { signal, headers });
