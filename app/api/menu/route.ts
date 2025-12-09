@@ -1,61 +1,125 @@
 // app/api/menu/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-const normalize = (raw?: string | null) => {
-  if (!raw) return undefined;
-  return String(raw).trim().replace(/\/+$/, "");
-};
+/**
+ * Menu proxy + sanitizer
+ *
+ * Purpose:
+ * - Forward the /api/menu request server->backend (preserve cookies)
+ * - If backend returns JSON menu items that include absolute frontend URLs,
+ *   convert them to relative paths to avoid the client prefetching the
+ *   frontend origin (which causes the repeated requests to hmsweb.onrender.com).
+ *
+ * NOTE: this intentionally avoids throwing if BACKEND is missing so you can
+ * deploy and see a clear server log message instead of crashing the app.
+ */
 
-const backendBase =
-  normalize(process.env.NEXT_PUBLIC_API_URL) ??
-  normalize(process.env.BACKEND_ORIGIN) ??
-  "https://hms-server-njlg.onrender.com";
+const BACKEND = (process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
 
-/** join base + path safely (avoid duplicate /api) */
-const joinPath = (base: string, path: string) => {
-  const b = base.replace(/\/+$/, "");
-  const p = path.replace(/^\/+/, "");
-  return `${b}/${p}`;
-};
+// If you want a default during local dev you can set NEXT_PUBLIC_BACKEND_URL in .env
+if (!BACKEND) {
+  // Loud server-side warning (appears in Render / server logs)
+  console.error("[menu.proxy] WARNING: BACKEND not configured. Set BACKEND_ORIGIN or NEXT_PUBLIC_BACKEND_URL.");
+}
 
-export async function GET(req: NextRequest) {
-  const cookieHeader = req.headers.get("cookie") ?? "";
-
-  const url = joinPath(backendBase, "/api/menu");
+function sanitizeHref(h: unknown): unknown {
+  if (!h || typeof h !== "string") return h;
+  // If it's already a relative path, leave it.
+  if (h.startsWith("/") || h.startsWith("#") || h.startsWith("mailto:") || h.startsWith("tel:")) return h;
 
   try {
-    const backendRes = await fetch(url, {
+    // Use URL to parse; allow missing scheme via base
+    const u = new URL(h, "http://example");
+    const host = (u.hostname || "").toLowerCase();
+
+    // Recognize likely frontend hosts: common patterns here
+    const frontendHosts = [
+      "hmsweb.onrender.com",
+      "your-frontend.onrender.com",
+      "localhost",
+      "127.0.0.1",
+    ];
+
+    // If it looks like a frontend host, convert to relative path
+    if (frontendHosts.some((fh) => host.includes(fh))) {
+      const rel = u.pathname + (u.search || "") + (u.hash || "");
+      return rel || "/";
+    }
+
+    // If it's an absolute backend API URL (or other safe host) leave it unchanged.
+    return h;
+  } catch {
+    return h;
+  }
+}
+
+function sanitizePayload(payload: any) {
+  if (!payload) return payload;
+
+  // Generic sanitizer for arrays of menu items
+  const sanitizeItem = (it: any) => {
+    if (!it || typeof it !== "object") return it;
+    const copy = { ...it };
+    if (copy.href) copy.href = sanitizeHref(copy.href);
+    // sometimes nested children/menus
+    if (Array.isArray(copy.items)) copy.items = copy.items.map(sanitizeItem);
+    if (Array.isArray(copy.children)) copy.children = copy.children.map(sanitizeItem);
+    return copy;
+  };
+
+  if (Array.isArray(payload)) {
+    return payload.map(sanitizeItem);
+  }
+
+  // object -> attempt to sanitize known keys
+  const out = { ...payload };
+  if (Array.isArray(out.menu)) out.menu = out.menu.map(sanitizeItem);
+  if (Array.isArray(out.items)) out.items = out.items.map(sanitizeItem);
+  if (Array.isArray(out.links)) out.links = out.links.map(sanitizeItem);
+  return out;
+}
+
+export async function GET(req: NextRequest) {
+  const cookieHeader = req.headers.get("cookie") || "";
+  const target = BACKEND ? `${BACKEND}/api/menu` : `/api/menu`;
+
+  try {
+    const backendRes = await fetch(target, {
       method: "GET",
       headers: {
-        cookie: cookieHeader,
-        Accept: "application/json, text/*, */*",
+        Cookie: cookieHeader,
+        Accept: "application/json",
       },
       cache: "no-store",
     });
 
-    // forward important headers (content-type, set-cookie)
+    // copy content-type if present
     const resHeaders = new Headers();
-    const contentType = backendRes.headers.get("content-type");
-    if (contentType) resHeaders.set("Content-Type", contentType);
+    const ct = backendRes.headers.get("content-type");
+    if (ct) resHeaders.set("Content-Type", ct);
 
-    // forward set-cookie if present (may be multiple)
-    const setCookie = backendRes.headers.get("set-cookie");
-    if (setCookie) resHeaders.set("Set-Cookie", setCookie);
+    const text = await backendRes.text();
 
-    // Forward other useful CORS/diagnostic headers if you want:
-    // const cacheControl = backendRes.headers.get("cache-control");
-    // if (cacheControl) resHeaders.set("Cache-Control", cacheControl);
+    // Try to parse JSON safely — if parsing fails, return raw text
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // not JSON — return raw response (unchanged)
+      return new NextResponse(text, { status: backendRes.status, headers: resHeaders });
+    }
 
-    const body = await backendRes.arrayBuffer(); // safe for json/text/binary
+    // If parsed is JSON, sanitize any hrefs and re-serialize
+    const sanitized = sanitizePayload(parsed);
+    const body = JSON.stringify(sanitized);
 
-    return new NextResponse(body, {
-      status: backendRes.status,
-      headers: resHeaders,
-    });
+    resHeaders.set("Content-Type", "application/json; charset=utf-8");
+    return new NextResponse(body, { status: backendRes.status, headers: resHeaders });
   } catch (err: any) {
-    // network / fetch failure
-    console.error("[menu proxy] fetch error", err);
-    const payload = { error: "Bad Gateway", detail: err?.message ?? String(err) };
-    return NextResponse.json(payload, { status: 502 });
+    // Network / fetch error — return a safe 502 with message and log server-side
+    console.error("[menu.proxy] fetch error:", err?.message ?? err);
+    const body = JSON.stringify({ error: "Failed to fetch menu from backend" });
+    const resHeaders = new Headers({ "Content-Type": "application/json; charset=utf-8" });
+    return new NextResponse(body, { status: 502, headers: resHeaders });
   }
 }
