@@ -35,8 +35,8 @@ type Product = {
   uom?: string | null;
   is_stockable?: boolean;
   is_service?: boolean;
-  stock_qty?: number | null; // total available
-  low_stock?: boolean; // server-calculated flag
+  stock_qty?: number | null;
+  low_stock?: boolean;
   nearest_expiry_days?: number | null;
   metadata?: Record<string, any> | null;
 };
@@ -58,14 +58,24 @@ export default function Page(): JSX.Element {
   const [batches, setBatches] = useState<Batch[] | null>(null);
   const [batchesLoading, setBatchesLoading] = useState(false);
 
-  // Use ReturnType<typeof setTimeout> to avoid NodeJS/browser conflicts
+  // Abort + debounce refs
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMounted = useRef(true);
   const [deleting, setDeleting] = useState<Record<string, boolean>>({});
 
   // confirm modal state
   const [confirming, setConfirming] = useState<{ product: Product } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      abortRef.current?.abort();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   /* ---------------- helpers ---------------- */
   const formatCurrency = (val?: number | null, cur = "INR") => {
@@ -77,12 +87,23 @@ export default function Page(): JSX.Element {
     }
   };
 
+  // Memoized StockPill to avoid re-creation on every render
+  const StockPill: React.FC<{ qty?: number | null; low?: boolean; expiryDays?: number | null }> = React.memo(
+    ({ qty, low, expiryDays }) => {
+      const qtyText = qty == null ? "—" : `${Number(qty).toLocaleString()}`;
+      const base = "inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium shadow-sm";
+      if (low) return <span className={`${base} bg-rose-50 text-rose-700 border border-rose-100`}>Low: {qtyText}</span>;
+      if ((expiryDays ?? 999) <= 30) return <span className={`${base} bg-amber-50 text-amber-800 border border-amber-100`}>Exp: {qtyText}</span>;
+      return <span className={`${base} bg-emerald-50 text-emerald-800 border border-emerald-100`}>In stock: {qtyText}</span>;
+    }
+  );
+
   const fetchProducts = useCallback(
     async (opts: { force?: boolean } = {}) => {
       try {
         if (!company) {
-          setProducts([]);
-          //toast.info("Please select a company to load products.");
+          if (isMounted.current) setProducts([]);
+          // toast.info("Please select a company to load products.");
           return;
         }
 
@@ -93,7 +114,8 @@ export default function Page(): JSX.Element {
           return;
         }
 
-        setLoading(true);
+        if (isMounted.current) setLoading(true);
+
         // abort previous
         abortRef.current?.abort();
         abortRef.current = new AbortController();
@@ -104,20 +126,23 @@ export default function Page(): JSX.Element {
         params.append("company_id", company.id);
         params.append("include_stock", "true");
 
-        // NOTE: ensure apiClient is an axios-like instance that accepts `signal`
-        const res = await apiClient.get(`/hms/products?${params.toString()}`, { signal });
+        // NOTE: apiClient must support `signal` option (axios v1.4+ or fetch wrapper)
+        const url = `/hms/products?${params.toString()}`;
+        const res = await apiClient.get(url, { signal });
         const rows = (res?.data?.data ?? []) as Product[];
+
+        if (!isMounted.current) return;
         setProducts(rows);
       } catch (err: any) {
-        // axios / fetch cancellation handling — ignore canceled requests
         const name = err?.name ?? err?.code ?? null;
         if (name === "CanceledError" || name === "AbortError" || err?.message === "canceled") {
+          // request canceled — no-op
           return;
         }
-        console.error("fetchProducts", err);
+        console.error("fetchProducts error:", err?.response?.status ?? err?.status ?? err);
         toast.error(err?.message ?? "Failed to load products", "Load failed");
       } finally {
-        setLoading(false);
+        if (isMounted.current) setLoading(false);
       }
     },
     [company, query, toast]
@@ -125,10 +150,7 @@ export default function Page(): JSX.Element {
 
   useEffect(() => {
     fetchProducts();
-    return () => {
-      abortRef.current?.abort();
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchProducts]);
 
   /* ---------------- actions ---------------- */
@@ -178,6 +200,7 @@ export default function Page(): JSX.Element {
       setProducts((cur) => cur.filter((x) => x.id !== p.id));
 
       // call API (soft delete recommended)
+      // axios accepts config.data for DELETE body; keep your apiClient configured.
       await apiClient.delete(`/hms/products/${encodeURIComponent(p.id)}`, { data: { company_id: company!.id } });
 
       // success UI
@@ -186,7 +209,7 @@ export default function Page(): JSX.Element {
     } catch (err: any) {
       // rollback on error
       setProducts(prev);
-      console.error("delete product", err);
+      console.error("delete product", err?.response ?? err);
       toast.error(err?.message ?? "Delete failed");
     } finally {
       setConfirmLoading(false);
@@ -204,23 +227,16 @@ export default function Page(): JSX.Element {
     setBatches(null);
     setBatchesLoading(true);
     try {
+      // keep consistent param usage
       const res = await apiClient.get(`/hms/products/${encodeURIComponent(productId)}/stock`, { params: { company_id: company?.id } });
+      if (!isMounted.current) return;
       setBatches(res?.data?.data ?? []);
     } catch (err: any) {
-      console.error("fetch batches", err);
+      console.error("fetch batches", err?.response ?? err);
       toast.error("Failed to load batch stock");
     } finally {
-      setBatchesLoading(false);
+      if (isMounted.current) setBatchesLoading(false);
     }
-  };
-
-  /* pill helper for stock */
-  const StockPill: React.FC<{ qty?: number | null; low?: boolean; expiryDays?: number | null }> = ({ qty, low, expiryDays }) => {
-    const qtyText = qty == null ? "—" : `${Number(qty).toLocaleString()}`;
-    const base = "inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium shadow-sm";
-    if (low) return <span className={`${base} bg-rose-50 text-rose-700 border border-rose-100`}>Low: {qtyText}</span>;
-    if ((expiryDays ?? 999) <= 30) return <span className={`${base} bg-amber-50 text-amber-800 border border-amber-100`}>Exp: {qtyText}</span>;
-    return <span className={`${base} bg-emerald-50 text-emerald-800 border border-emerald-100`}>In stock: {qtyText}</span>;
   };
 
   return (
@@ -250,19 +266,20 @@ export default function Page(): JSX.Element {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && fetchProducts({ force: true })}
               className="flex-1 bg-transparent outline-none text-sm text-slate-800 placeholder:text-slate-400"
+              aria-label="Search products"
             />
-            <button onClick={() => fetchProducts({ force: true })} className="rounded-xl px-3 py-1 text-sm bg-blue-600/80 hover:bg-blue-600 text-white shadow-md transition-all">
+            <button type="button" onClick={() => fetchProducts({ force: true })} className="rounded-xl px-3 py-1 text-sm bg-blue-600/80 hover:bg-blue-600 text-white shadow-md transition-all">
               Go
             </button>
           </div>
 
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-xl hover:scale-[1.02] transition-transform">
+          <button type="button" onClick={openCreate} className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-xl hover:scale-[1.02] transition-transform">
             <Plus className="w-4 h-4" /> New Product
           </button>
-          <button onClick={() => fetchProducts({ force: true })} className="p-2 rounded-2xl border border-white/10 bg-white/4 shadow-inner hover:bg-white/6" aria-label="Refresh">
+          <button type="button" onClick={() => fetchProducts({ force: true })} className="p-2 rounded-2xl border border-white/10 bg-white/4 shadow-inner hover:bg-white/6" aria-label="Refresh" title="Refresh">
             <RefreshCw className="w-4 h-4 text-slate-700" />
           </button>
-          <button onClick={() => sell(undefined)} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md hover:scale-[1.02]">
+          <button type="button" onClick={() => sell(undefined)} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md hover:scale-[1.02]">
             <DollarSign className="w-4 h-4 inline-block mr-1" /> Sell (Scan)
           </button>
         </div>
@@ -295,25 +312,26 @@ export default function Page(): JSX.Element {
                 <div className="mt-4 flex justify-between items-center">
                   <div className="flex gap-2 items-center">
                     <StockPill qty={p.stock_qty ?? null} low={!!p.low_stock} expiryDays={p.nearest_expiry_days ?? null} />
-                    <button onClick={() => openBatchModal(p.id, p.name)} className="inline-flex items-center gap-2 px-2 py-1 text-xs rounded-md border border-white/8 bg-white/4 hover:bg-white/6">
+                    <button type="button" onClick={() => openBatchModal(p.id, p.name)} className="inline-flex items-center gap-2 px-2 py-1 text-xs rounded-md border border-white/8 bg-white/4 hover:bg-white/6">
                       <Layers className="w-4 h-4" /> Stock
                     </button>
                   </div>
 
                   <div className="flex gap-2">
-                    <button onClick={() => view(p.id)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`View ${p.name}`}>
+                    <button type="button" onClick={() => view(p.id)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`View ${p.name}`}>
                       <Eye className="w-4 h-4" /> View
                     </button>
-                    <button onClick={() => openEdit(p)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`Edit ${p.name}`}>
+                    <button type="button" onClick={() => openEdit(p)} className="px-3 py-1 rounded-xl backdrop-blur-md bg-white/6 border border-white/8 text-slate-700 text-sm flex items-center gap-1 hover:bg-white/8" aria-label={`Edit ${p.name}`}>
                       <Edit2 className="w-4 h-4" /> Edit
                     </button>
-                    <button onClick={() => receive(p.id)} className="px-3 py-1 rounded-xl bg-emerald-500/90 text-white text-sm shadow-md flex items-center gap-1 hover:bg-emerald-600" aria-label={`Receive ${p.name}`}>
+                    <button type="button" onClick={() => receive(p.id)} className="px-3 py-1 rounded-xl bg-emerald-500/90 text-white text-sm shadow-md flex items-center gap-1 hover:bg-emerald-600" aria-label={`Receive ${p.name}`}>
                       <Box className="w-4 h-4" /> Receive
                     </button>
-                    <button onClick={() => sell(p.id)} className="px-3 py-1 rounded-xl bg-amber-500/90 text-white text-sm shadow-md hover:bg-amber-600" aria-label={`Sell ${p.name}`}>
+                    <button type="button" onClick={() => sell(p.id)} className="px-3 py-1 rounded-xl bg-amber-500/90 text-white text-sm shadow-md hover:bg-amber-600" aria-label={`Sell ${p.name}`}>
                       Sell
                     </button>
                     <button
+                      type="button"
                       disabled={!!deleting[p.id]}
                       onClick={() => onDeleteConfirm(p)}
                       className={`p-2 rounded-full ${deleting[p.id] ? "bg-gray-300 text-gray-600 cursor-not-allowed" : "bg-rose-500 text-white"} shadow-md`}
@@ -343,7 +361,6 @@ export default function Page(): JSX.Element {
 
       {showForm && (
         <ProductForm
-          // NOTE: ProductForm must accept `productId?: string` and callbacks below
           productId={editing?.id ?? undefined}
           onClose={() => {
             setShowForm(false);
@@ -380,7 +397,9 @@ export default function Page(): JSX.Element {
                 <p className="text-sm text-slate-500">Batch-wise quantities and expiry</p>
               </div>
               <div>
-                <button className="px-3 py-1 rounded-md bg-white/4 border border-white/8" onClick={() => setBatchModalFor(null)}>Close</button>
+                <button type="button" className="px-3 py-1 rounded-md bg-white/4 border border-white/8" onClick={() => setBatchModalFor(null)}>
+                  Close
+                </button>
               </div>
             </div>
 
