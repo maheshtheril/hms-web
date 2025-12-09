@@ -10,6 +10,11 @@ import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
  * - Adds robust refresh-on-401 interceptor (queueing + retry once).
  * - Keeps existing redirect-to-/login behaviour for the auth probe.
  * - Exports idempotency helpers: setIdempotencyKey() and generateIdempotencyKey().
+ *
+ * Added fixes:
+ * - Supports runtime override via window.__API_BASE__ for hosts that inject env at runtime.
+ * - Safer default refresh path: /api/auth/refresh.
+ * - Dev-time warning for axios < 1.4 signal support.
  */
 
 /* ───────────────── helpers ───────────────── */
@@ -48,8 +53,12 @@ function up(m?: string) {
 }
 
 /* ───────────────── baseURL ───────────────── */
-const envBase =
-  resolveApiBase(process.env.NEXT_PUBLIC_API_URL) ?? resolveApiBase(process.env.BACKEND_URL);
+/**
+ * Build-time envs (used as fallback).
+ * - NEXT_PUBLIC_API_URL is preferred.
+ * - BACKEND_URL fallback retained for older setups.
+ */
+const envBase = resolveApiBase(process.env.NEXT_PUBLIC_API_URL) ?? resolveApiBase(process.env.BACKEND_URL);
 const computedBaseURL = envBase || "/api";
 
 /* ───────────────── axios instance ───────────────── */
@@ -73,20 +82,47 @@ const refreshClient = axios.create({
   timeout: 15000,
 });
 
+/* Runtime override: if deploy injects a runtime API base (window.__API_BASE__),
+   prefer that over build-time env. Useful for Render / Docker setups that patch index.html. */
+function resolveRuntimeBase(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const w = (window as any).__API_BASE__;
+  return w ? resolveApiBase(String(w)) : undefined;
+}
+const runtimeBase = resolveRuntimeBase();
+if (runtimeBase && runtimeBase !== String(apiClient.defaults.baseURL)) {
+  apiClient.defaults.baseURL = runtimeBase;
+  refreshClient.defaults.baseURL = runtimeBase;
+  try {
+    // eslint-disable-next-line no-console
+    console.info("[apiClient] runtime base override ->", runtimeBase);
+  } catch {}
+}
+
 if (process.env.NODE_ENV !== "production") {
   try {
     // eslint-disable-next-line no-console
     console.log("[apiClient] baseURL =", apiClient.defaults.baseURL);
   } catch {}
+  try {
+    // warn if axios may not support AbortController `signal`
+    const hasSignalSupport = (() => {
+      try {
+        // axios 1.4+ exposes support for 'signal' in requests; best-effort check:
+        const inst = axios.create();
+        return "signal" in (inst.defaults as any);
+      } catch {
+        return false;
+      }
+    })();
+    if (!hasSignalSupport) {
+      // eslint-disable-next-line no-console
+      console.warn("[apiClient] Consider upgrading to axios >=1.4 for AbortController `signal` support (cancellation).");
+    }
+  } catch {}
 }
 
 /* ───────────────── Idempotency helpers ───────────────── */
-/**
- * Attach an Idempotency-Key header to an axios config.
- * Usage:
- *   const key = generateIdempotencyKey('appointments');
- *   await apiClient.post('/hms/appointments', body, setIdempotencyKey({}, key));
- */
 export function setIdempotencyKey(config?: AxiosRequestConfig, key?: string): AxiosRequestConfig {
   const c = config ?? {};
   if (!key) return c;
@@ -94,14 +130,8 @@ export function setIdempotencyKey(config?: AxiosRequestConfig, key?: string): Ax
   return c;
 }
 
-/**
- * Generate a reasonably collision-resistant idempotency key for client use.
- * Format: <prefix>_<timestamp_ms>_<randomHex12>
- * Example: "appointments_1698620000000_4f9a2b3c1d5e"
- */
 export function generateIdempotencyKey(prefix?: string): string {
   const now = Date.now();
-  // random 12 hex chars
   const rand = Array.from(cryptoRandomBytes(6))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -115,26 +145,14 @@ function cryptoRandomBytes(n: number): Uint8Array {
     (crypto as any).getRandomValues(arr);
     return arr;
   }
-  // fallback to Math.random (should be rare in modern browsers)
   const arr = new Uint8Array(n);
   for (let i = 0; i < n; i++) arr[i] = Math.floor(Math.random() * 256);
   return arr;
 }
 
-/* ───────────────── Refresh-on-401 (queue + retry) ─────────────────
-   Behavior:
-   - When a response returns 401 (and request hasn't already been retried),
-     attempt a single refresh by POSTing to /auth/refresh (configurable).
-   - While refresh is in progress, queue other requests that fail with 401.
-   - If refresh succeeds, retry queued requests once.
-   - If refresh fails, fall back to prior behavior (redirect on auth probe or reject).
-   - Each request is retried at most once to avoid loops. We mark
-     config._retry to track retries locally (non-enumerable).
-──────────────────────────────────────────────────────────── */
-
-/* Make the refresh path configurable via env var so deployments that expose
-   a different refresh path (e.g. /api/auth/refresh) work without code changes. */
-const REFRESH_PATH = process.env.NEXT_PUBLIC_REFRESH_PATH ?? "/auth/refresh";
+/* ───────────────── Refresh-on-401 (queue + retry) ───────────────── */
+/* Prefer an API-prefixed default — many apps expose auth at /api/auth/... */
+const REFRESH_PATH = process.env.NEXT_PUBLIC_REFRESH_PATH ?? "/api/auth/refresh";
 
 let isRefreshing = false;
 let refreshPromise: Promise<void> | null = null;
@@ -173,7 +191,6 @@ async function attemptRefresh(): Promise<void> {
       await refreshClient.post(REFRESH_PATH);
       await Promise.resolve();
     } catch (e: any) {
-      // Better debug information when refresh fails in dev / staging.
       try {
         // eslint-disable-next-line no-console
         console.error(
@@ -255,7 +272,7 @@ apiClient.interceptors.response.use(
 
     if (!originalConfig) return Promise.reject(err);
     if (status !== 401) return Promise.reject(err);
-    if (/\/auth\/refresh(\?|$)/i.test(full)) {
+    if (/\/auth\/refresh(\?|$)/i.test(full) || /\/api\/auth\/refresh(\?|$)/i.test(full)) {
       return Promise.reject(err);
     }
     if ((originalConfig as any)._retry) {
