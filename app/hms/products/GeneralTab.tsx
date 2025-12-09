@@ -335,7 +335,7 @@ export default function GeneralTab({ draft, onChange, onRequestSave, defaults }:
           </div>
         </div>
 
-        {/* SAVE */}
+        {/* SAVE. */}
         <div className="flex justify-end gap-3">
           <button type="submit" className="btn-primary" disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="animate-spin w-4 h-4" /> : <RefreshCw className="w-4 h-4" />}
