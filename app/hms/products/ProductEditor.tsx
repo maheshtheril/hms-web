@@ -12,6 +12,8 @@ import LedgerPreview from "./components/LedgerPreview";
 import VariantsPanel from "./components/VariantsPanel";
 import MediaUploader from "./components/MediaUploader";
 
+import { PrimaryButton, SecondaryButton, GhostButton, SegmentedToggle } from "@/app/components/ui/NeuralGlassUI";
+
 type ProductValues = {
   id?: string;
   sku?: string;
@@ -74,16 +76,14 @@ export default function ProductEditor({ id }: { id?: string }) {
     };
   }, []);
 
-  // safe update helper
   const update = (k: string, v: any) => setValues((s: any) => ({ ...s, [k]: v }));
 
-  // SAFE numeric conversion
   function toNumberSafe(v: any): number | null {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   }
 
-  // READ product (uses apiClient)
+  // READ
   useEffect(() => {
     if (!id) return;
     let active = true;
@@ -102,7 +102,6 @@ export default function ProductEditor({ id }: { id?: string }) {
         setLedger(Array.isArray(d.ledger) ? d.ledger : []);
         setMedia(Array.isArray(d.media) ? d.media : []);
         setVariants(Array.isArray(d.variants) ? d.variants : []);
-        // best-effort: run checks but don't block
         runAllChecks(d.product).catch(() => {});
       } catch (e: any) {
         if (!mountedRef.current) return;
@@ -118,9 +117,7 @@ export default function ProductEditor({ id }: { id?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // -----------------------
-  // AI / Safety / Tax helpers (use apiClient, cancellable)
-  // -----------------------
+  // AI helpers
   async function extractSalts(textOrFile?: { text?: string; file?: File }) {
     try {
       setCheckError(null);
@@ -206,7 +203,6 @@ export default function ProductEditor({ id }: { id?: string }) {
     }
   }
 
-  // run all checks with cancellation; salts required by interactions
   async function runAllChecks(product?: any) {
     if (checksControllerRef.current) checksControllerRef.current.abort();
     checksControllerRef.current = new AbortController();
@@ -216,7 +212,6 @@ export default function ProductEditor({ id }: { id?: string }) {
     try {
       const salts = await extractSalts({ text: `${(product && product.name) || values.name}` });
       if (signal.aborted) return;
-      // run the rest in parallel
       await Promise.all([checkInteractions(salts), predictSchedule(), predictHSNAndGST()]);
     } catch (e: any) {
       if (e?.name === "AbortError") return;
@@ -226,9 +221,6 @@ export default function ProductEditor({ id }: { id?: string }) {
     }
   }
 
-  // -----------------------
-  // Save logic: idempotent + numeric sanitization + loading/UI
-  // -----------------------
   const onSave = async () => {
     if (saving) return;
     setSaving(true);
@@ -256,7 +248,6 @@ export default function ProductEditor({ id }: { id?: string }) {
       }
       const data = res.data ?? {};
       const createdId = data.id ?? data.product?.id ?? id;
-      // success UX: navigate to product page if id present
       if (createdId) {
         try {
           router.push(`/hms/products/${createdId}`);
@@ -274,66 +265,72 @@ export default function ProductEditor({ id }: { id?: string }) {
   const hasInteractions = !!(values?.metadata && Array.isArray(values.metadata.interactions) && values.metadata.interactions.length > 0);
 
   return (
-    <div className="max-w-6xl mx-auto mt-10 p-10 bg-white/60 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/30">
+    <div
+      className="max-w-6xl mx-auto mt-10 p-10 rounded-3xl"
+      style={{
+        // stronger fallback to ensure readable background if CSS broken
+        backgroundColor: "rgba(255,255,255,0.95)",
+        boxShadow: "0 12px 40px rgba(15,23,42,0.08)",
+        border: "1px solid rgba(15,23,42,0.04)",
+        backdropFilter: "blur(6px)",
+      }}
+    >
       <div className="flex items-start justify-between">
-        <h1 className="text-3xl font-bold mb-4">{isNew ? "New Product" : values.name || "Edit Product"}</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 mb-2">{isNew ? "New Product" : values.name || "Edit Product"}</h1>
+          <div className="text-sm text-slate-600">Products / Catalog / Editor</div>
+        </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => runAllChecks()}
-            className="px-4 py-2 rounded-xl border bg-white text-sm"
-            disabled={loadingChecks}
-          >
+          <SecondaryButton onClick={() => runAllChecks()} disabled={loadingChecks} style={{ minWidth: 180 }}>
             {loadingChecks ? "Running checks…" : "Run Safety & Tax Checks"}
-          </button>
+          </SecondaryButton>
 
-          <button
-            onClick={onSave}
-            className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg disabled:opacity-60"
-            disabled={saving}
-          >
+          <PrimaryButton onClick={onSave} disabled={saving} style={{ minWidth: 140 }}>
             {saving ? "Saving…" : "Save & Publish"}
-          </button>
+          </PrimaryButton>
         </div>
       </div>
 
       {(error || checkError || saveError) && (
-        <div role="alert" className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl border">
+        <div role="alert" className="mt-6 mb-4 p-3 rounded-xl border border-red-100 bg-red-50 text-red-700">
           {saveError || checkError || error}
         </div>
       )}
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        items={[
-          { id: "general", label: "General" },
-          { id: "pricing", label: "Pricing & Cost" },
-          { id: "inventory", label: "Inventory & Batches" },
-          { id: "suppliers", label: "Suppliers" },
-          { id: "variants", label: "Variants & Attributes" },
-          { id: "tax", label: "Tax & Accounting" },
-          { id: "media", label: "Media / Documents" },
-          { id: "history", label: "History" },
-        ]}
-      />
+      <div className="mt-6">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: "general", label: "General" },
+            { id: "pricing", label: "Pricing & Cost" },
+            { id: "inventory", label: "Inventory & Batches" },
+            { id: "suppliers", label: "Suppliers" },
+            { id: "variants", label: "Variants & Attributes" },
+            { id: "tax", label: "Tax & Accounting" },
+            { id: "media", label: "Media / Documents" },
+            { id: "history", label: "History" },
+          ]}
+        />
+      </div>
 
       {/* --- GENERAL TAB --- */}
       {tab === "general" && (
         <div className="space-y-6 mt-6">
           <div>
-            <label className="block font-medium text-gray-800">SKU</label>
-            <input value={values.sku || ""} onChange={(e) => update("sku", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">SKU</label>
+            <input value={values.sku || ""} onChange={(e) => update("sku", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">Name</label>
-            <input value={values.name || ""} onChange={(e) => update("name", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">Name</label>
+            <input value={values.name || ""} onChange={(e) => update("name", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
 
           <div className="flex gap-4 items-center">
             {values.metadata?.schedule && (
-              <div className="px-3 py-1 rounded-xl bg-purple-100 text-purple-700 w-fit text-sm font-semibold">
+              <div className="px-3 py-1 rounded-xl bg-indigo-50 text-indigo-700 w-fit text-sm font-semibold border border-indigo-100">
                 Schedule {values.metadata.schedule} (confidence: {Math.round((values.metadata.schedule_confidence || 0) * 100)}%)
               </div>
             )}
@@ -345,73 +342,77 @@ export default function ProductEditor({ id }: { id?: string }) {
             )}
 
             {hasInteractions && (
-              <div className="px-3 py-1 rounded-xl bg-yellow-100 text-yellow-800 w-fit text-sm font-semibold">
+              <div className="px-3 py-1 rounded-xl bg-yellow-100 text-yellow-800 w-fit text-sm font-semibold border">
                 ⚠ {values.metadata.interactions.length} interaction(s)
               </div>
             )}
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">Short Description</label>
-            <input value={values.short_description || ""} onChange={(e) => update("short_description", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">Short Description</label>
+            <input value={values.short_description || ""} onChange={(e) => update("short_description", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">Description</label>
-            <textarea rows={5} value={values.description || ""} onChange={(e) => update("description", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">Description</label>
+            <textarea rows={5} value={values.description || ""} onChange={(e) => update("description", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
 
-          <div className="flex gap-4">
-            <button onClick={() => setValues((s: any) => ({ ...s, is_stockable: true, is_service: false }))} className={`px-4 py-2 rounded-xl border ${values.is_stockable ? "bg-blue-600 text-white" : "bg-white"}`}>Stockable</button>
+          <div className="flex items-center justify-between gap-4">
+            <SegmentedToggle
+              leftLabel="Stockable"
+              rightLabel="Service"
+              leftActive={!!values.is_stockable}
+              onToggleLeft={() => setValues((s: any) => ({ ...s, is_stockable: true, is_service: false }))}
+              onToggleRight={() => setValues((s: any) => ({ ...s, is_stockable: false, is_service: true }))}
+            />
 
-            <button onClick={() => setValues((s: any) => ({ ...s, is_stockable: false, is_service: true }))} className={`px-4 py-2 rounded-xl border ${values.is_service ? "bg-blue-600 text-white" : "bg-white"}`}>Service</button>
-          </div>
+            <div className="grid grid-cols-2 gap-4 w-full">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">UoM</label>
+                <input value={values.uom || ""} onChange={(e) => update("uom", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block font-medium text-gray-800">UoM</label>
-              <input value={values.uom || ""} onChange={(e) => update("uom", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Barcode</label>
+                <input value={values.barcode || ""} onChange={(e) => update("barcode", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+              </div>
             </div>
-
-            <div>
-              <label className="block font-medium text-gray-800">Barcode</label>
-              <input value={values.barcode || ""} onChange={(e) => update("barcode", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
-            </div>
           </div>
 
-          {/* Salts & Interactions preview */}
+          {/* salts */}
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Active Ingredients (Salts)</h3>
+              <h3 className="text-lg font-semibold text-slate-800">Active Ingredients (Salts)</h3>
 
               <div className="flex gap-2">
-                <button onClick={() => extractSalts({ text: `${values.name || ""}` })} className="px-3 py-1 rounded-lg border text-sm">Re-extract</button>
+                <GhostButton onClick={() => extractSalts({ text: `${values.name || ""}` })}>Re-extract</GhostButton>
 
-                <button onClick={() => checkInteractions()} className="px-3 py-1 rounded-lg border text-sm">Check Interactions</button>
+                <GhostButton onClick={() => checkInteractions()}>Check Interactions</GhostButton>
               </div>
             </div>
 
-            <div className="p-3 bg-white/70 rounded-xl border">
+            <div className="p-3 rounded-xl border border-slate-200 bg-white">
               {values.metadata?.salts && values.metadata.salts.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {values.metadata.salts.map((s: string, i: number) => (
-                    <div key={i} className="px-3 py-1 bg-white rounded-full border text-sm">{s}</div>
+                    <div key={i} className="px-3 py-1 rounded-full text-sm bg-slate-100 border border-slate-200 text-slate-800">{s}</div>
                   ))}
                 </div>
               ) : (
-                <div className="text-sm text-gray-500">No salts detected yet</div>
+                <div className="text-sm text-slate-500">No salts detected yet</div>
               )}
             </div>
 
             {hasInteractions && (
-              <div className="p-3 bg-yellow-50 rounded-xl border">
+              <div className="p-3 rounded-xl border bg-yellow-50">
                 <h4 className="font-semibold">Detected Interactions</h4>
                 <div className="mt-2 space-y-2">
                   {values.metadata.interactions.map((it: any, idx: number) => (
-                    <div key={idx} className="p-3 rounded-lg bg-white/80 border">
-                      <div className="font-semibold">{it.summary}</div>
-                      <div className="text-sm text-gray-700 mt-1">{it.details}</div>
-                      <div className="text-xs text-gray-500 mt-1">confidence: {Math.round((it.confidence || 0) * 100)}%</div>
+                    <div key={idx} className="p-3 rounded-lg bg-white border">
+                      <div className="font-semibold text-slate-800">{it.summary}</div>
+                      <div className="text-sm text-slate-700 mt-1">{it.details}</div>
+                      <div className="text-xs text-slate-500 mt-1">confidence: {Math.round((it.confidence || 0) * 100)}%</div>
                     </div>
                   ))}
                 </div>
@@ -421,37 +422,30 @@ export default function ProductEditor({ id }: { id?: string }) {
         </div>
       )}
 
-      {/* --- PRICING TAB --- */}
+      {/* pricing/inventory/tax/media/history */}
       {tab === "pricing" && (
         <div className="space-y-6 mt-6">
           <div>
-            <label className="block font-medium text-gray-800">Price (Selling)</label>
-            <input type="number" value={values.price ?? 0} onChange={(e) => update("price", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">Price (Selling)</label>
+            <input type="number" value={values.price ?? 0} onChange={(e) => update("price", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">Default Cost</label>
-            <input type="number" value={values.default_cost ?? 0} onChange={(e) => update("default_cost", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">Default Cost</label>
+            <input type="number" value={values.default_cost ?? 0} onChange={(e) => update("default_cost", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
           </div>
         </div>
       )}
 
-      {/* --- INVENTORY TAB --- */}
       {tab === "inventory" && <BatchTable batches={batches} setBatches={setBatches} />}
-
-      {/* --- SUPPLIERS TAB --- */}
       {tab === "suppliers" && <SupplierTable suppliers={suppliers} setSuppliers={setSuppliers} />}
-
-      {/* --- VARIANTS TAB --- */}
       {tab === "variants" && <VariantsPanel variants={variants} setVariants={setVariants} />}
 
-      {/* --- TAX TAB --- */}
       {tab === "tax" && (
         <div className="mt-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Tax & Accounting</h3>
-
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-slate-600">
               {values.metadata?.hsn ? <span>HSN: {values.metadata.hsn} • GST: {values.metadata.gst}%</span> : <span className="italic">HSN not predicted</span>}
             </div>
           </div>
@@ -459,26 +453,22 @@ export default function ProductEditor({ id }: { id?: string }) {
           <TaxSelector taxRules={taxRules} setTaxRules={setTaxRules} />
 
           <div className="mt-4">
-            <button onClick={() => predictHSNAndGST()} className="px-4 py-2 rounded-xl border">Predict HSN / GST (AI)</button>
+            <SecondaryButton onClick={() => predictHSNAndGST()}>Predict HSN / GST (AI)</SecondaryButton>
           </div>
         </div>
       )}
 
-      {/* --- MEDIA TAB --- */}
       {tab === "media" && <MediaUploader media={media} setMedia={setMedia} />}
-
-      {/* --- HISTORY TAB --- */}
       {tab === "history" && <LedgerPreview ledger={ledger} />}
 
-      {/* bottom actions */}
       <div className="mt-8 flex gap-4">
-        <button onClick={() => runAllChecks()} className="px-4 py-2 rounded-xl border bg-white text-sm" disabled={loadingChecks}>
+        <SecondaryButton onClick={() => runAllChecks()} disabled={loadingChecks}>
           {loadingChecks ? "Running checks…" : "Run All Checks"}
-        </button>
+        </SecondaryButton>
 
-        <button onClick={onSave} className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg" disabled={saving}>
+        <PrimaryButton onClick={onSave} disabled={saving}>
           {saving ? "Saving…" : "Save & Publish"}
-        </button>
+        </PrimaryButton>
       </div>
     </div>
   );
