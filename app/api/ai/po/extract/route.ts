@@ -1,15 +1,26 @@
-// web/app/api/ai/po/extract/route.ts
+// web/app/api/ai/product/extract/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const runtime = "edge";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+// Lazy factory — returns null if no key is available
+async function getOpenAI() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  return new OpenAI({ apiKey: key });
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const openai = await getOpenAI();
+    if (!openai) {
+      return NextResponse.json(
+        { error: "AI unavailable: OPENAI_API_KEY not set in environment." },
+        { status: 503 }
+      );
+    }
+
     const form = await req.formData();
     const file = form.get("file") as File | null;
     if (!file) {
@@ -20,62 +31,52 @@ export async function POST(req: NextRequest) {
     const dataUrl = `data:${file.type};base64,${bytes.toString("base64")}`;
 
     const prompt = `
-Extract ALL medicine line-items from a PDF invoice image.
+You are an expert medical inventory extraction system.
+Extract structured product + batch + tax details from medicine invoices.
 
 Return ONLY JSON in this exact format:
-
 {
-  "lines": [
-    {
-      "name": "",
-      "salt": "",
-      "manufacturer": "",
-      "batch_no": "",
-      "expiry": "",
-      "qty": 0,
-      "mrp": 0,
-      "cost": 0,
-      "gst": 0,
-      "hsn": ""
-    }
-  ]
+  "sku": "...",
+  "name": "...",
+  "manufacturer": "...",
+  "hsn": "...",
+  "mrp": "...",
+  "cost": "...",
+  "batch_no": "...",
+  "expiry": "...",
+  "qty": "...",
+  "gst": "...",
+  "salt": "...",
+  "pack": "...",
+  "uom": "Unit"
 }
-
-Be accurate. Bill may have 5 to 200 items.
+Be accurate.
 `;
 
-    // Use Responses API which supports multimodal inputs
-    const aiResponse = await openai.responses.create({
+    // Use Responses API (multimodal-friendly). Use `any` casts to avoid fragile SDK types at compile time.
+    const ai = await (openai as any).responses.create({
       model: "gpt-4o-mini",
       input: [
         { role: "system", content: prompt },
         {
           role: "user",
-          // cast to any to avoid strict typing for the multimodal part
-          content: [
-            { type: "input_image", image_url: dataUrl } as any
-          ],
+          content: [{ type: "input_image", image_url: dataUrl } as any],
         },
       ],
-      // you can tune max_output_tokens etc. if needed
-    } as any); // top-level any to avoid strict shape mismatch
+    } as any);
 
-    // The Responses API returns outputs in several shapes.
-    // We'll search for a text output in aiResponse.output.
-    const outputs: any[] = (aiResponse as any)?.output || [];
+    // defensive extraction of textual output
+    const outputs: any[] = (ai as any)?.output || [];
     let rawText: string | null = null;
 
     for (const out of outputs) {
       if (!out) continue;
-      // Some outputs have .content which is an array of parts
       const parts = out.content || [];
       for (const part of parts) {
-        // part may have 'type' and 'text' or 'value' depending on model
         if (part?.type === "output_text" && typeof part?.text === "string") {
           rawText = part.text;
           break;
         }
-        // fallback: some SDK versions return { type: 'message', text: '...' } or { text: '...' }
         if (typeof part === "string") {
           rawText = part;
           break;
@@ -90,39 +91,28 @@ Be accurate. Bill may have 5 to 200 items.
         }
       }
       if (rawText) break;
-      // fallback: some outputs include 'content[0].text' at top level
       if (out?.text && typeof out.text === "string") {
         rawText = out.text;
         break;
       }
     }
 
-    if (!rawText) {
-      // as last resort, inspect aiResponse.output_text (older SDK shapes)
-      if ((aiResponse as any).output_text && typeof (aiResponse as any).output_text === "string") {
-        rawText = (aiResponse as any).output_text;
-      }
-    }
+    if (!rawText && (ai as any).output_text) rawText = (ai as any).output_text;
 
     if (!rawText) {
-      return NextResponse.json({ error: "No textual output from AI" }, { status: 502 });
+      return NextResponse.json({ error: "AI returned no textual output" }, { status: 502 });
     }
 
-    // Attempt to parse JSON from the model output
-    // Some models may return text with code fences — strip them
     const cleaned = rawText.trim().replace(/^```json\s*/, "").replace(/```\s*$/, "").trim();
 
-    let parsed: any;
     try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      // If parsing fails, return the raw text so the caller can inspect it
+      const parsed = JSON.parse(cleaned);
+      return NextResponse.json(parsed);
+    } catch (e: any) {
       return NextResponse.json({ error: "Failed to parse AI output as JSON", raw: cleaned }, { status: 502 });
     }
-
-    return NextResponse.json(parsed);
   } catch (err: any) {
-    console.error("AI extract error:", err);
+    console.error("AI product extract error:", err);
     return NextResponse.json({ error: err?.message || "Extraction failed" }, { status: 500 });
   }
 }
