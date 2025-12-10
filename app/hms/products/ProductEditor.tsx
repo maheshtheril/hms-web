@@ -1,8 +1,9 @@
 // web/app/hms/products/ProductEditor.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { readProduct, saveProduct } from "./api";
+import React, { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import apiClient, { generateIdempotencyKey, setIdempotencyKey } from "@/lib/api-client";
 import Tabs from "./components/Tabs";
 import BatchTable from "./components/BatchTable";
 import SupplierTable from "./components/SupplierTable";
@@ -17,8 +18,8 @@ type ProductValues = {
   name?: string;
   description?: string;
   short_description?: string;
-  price?: number;
-  default_cost?: number;
+  price?: number | null;
+  default_cost?: number | null;
   is_stockable?: boolean;
   is_service?: boolean;
   uom?: string;
@@ -30,9 +31,9 @@ type ProductValues = {
 
 export default function ProductEditor({ id }: { id?: string }) {
   const isNew = !id;
+  const router = useRouter();
 
   const [tab, setTab] = useState("general");
-
   const [values, setValues] = useState<ProductValues>({
     sku: "",
     name: "",
@@ -55,60 +56,91 @@ export default function ProductEditor({ id }: { id?: string }) {
   const [media, setMedia] = useState<any[]>([]);
   const [variants, setVariants] = useState<any[]>([]);
 
+  const [loading, setLoading] = useState(false);
   const [loadingChecks, setLoadingChecks] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const mountedRef = useRef(true);
+  const checksControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (checksControllerRef.current) checksControllerRef.current.abort();
+    };
+  }, []);
+
+  // safe update helper
+  const update = (k: string, v: any) => setValues((s: any) => ({ ...s, [k]: v }));
+
+  // SAFE numeric conversion
+  function toNumberSafe(v: any): number | null {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // READ product (uses apiClient)
+  useEffect(() => {
     if (!id) return;
+    let active = true;
+    setLoading(true);
+    setError(null);
 
-    readProduct(id).then((res) => {
-      setValues(res.product || {});
-      setBatches(res.batches || []);
-      setSuppliers(res.suppliers || []);
-      setTaxRules(res.tax_rules || []);
-      setLedger(res.ledger || []);
-      setVariants(res.variants || []);
-      setMedia(res.media || []);
+    (async () => {
+      try {
+        const res = await apiClient.get(`/products/${id}`);
+        const d = res.data ?? {};
+        if (!active || !mountedRef.current) return;
+        setValues(d.product ?? {});
+        setBatches(Array.isArray(d.batches) ? d.batches : []);
+        setSuppliers(Array.isArray(d.suppliers) ? d.suppliers : []);
+        setTaxRules(Array.isArray(d.tax_rules) ? d.tax_rules : []);
+        setLedger(Array.isArray(d.ledger) ? d.ledger : []);
+        setMedia(Array.isArray(d.media) ? d.media : []);
+        setVariants(Array.isArray(d.variants) ? d.variants : []);
+        // best-effort: run checks but don't block
+        runAllChecks(d.product).catch(() => {});
+      } catch (e: any) {
+        if (!mountedRef.current) return;
+        setError(e?.response?.data?.message ?? e?.message ?? "Failed to load product");
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    })();
 
-      // run safety & classification checks automatically (best-effort)
-      runAllChecks(res.product).catch(() => {
-        /* ignore — user can retry */
-      });
-    });
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const update = (k: string, v: any) =>
-    setValues((s: any) => ({ ...s, [k]: v }));
-
   // -----------------------
-  // AI / Safety / Tax helpers
+  // AI / Safety / Tax helpers (use apiClient, cancellable)
   // -----------------------
   async function extractSalts(textOrFile?: { text?: string; file?: File }) {
     try {
       setCheckError(null);
       const form = new FormData();
+      if (textOrFile?.file) form.append("file", textOrFile.file);
+      else form.append("text", textOrFile?.text ?? values.name ?? "");
 
-      if (textOrFile?.file) {
-        form.append("file", textOrFile.file);
-      } else {
-        form.append("text", textOrFile?.text || `${values.name || ""}`);
-      }
-
-      const res = await fetch("/api/ai/salt/extract", {
-        method: "POST",
-        body: form,
+      const res = await apiClient.post("/ai/salt/extract", form, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      const json = await res.json();
-      // json: { salts: [...], raw_text }
-      const salts = json.salts || [];
+      const json = res.data ?? {};
+      const salts = Array.isArray(json.salts) ? json.salts : [];
       setValues((s: any) => ({
         ...s,
         metadata: { ...(s.metadata || {}), salts, extracted_text: json.raw_text },
       }));
       return salts;
     } catch (e: any) {
-      setCheckError("Salt extraction failed: " + (e.message || e));
+      const msg = e?.response?.data?.message ?? e?.message ?? "Salt extraction failed";
+      setCheckError(msg);
       return [];
     }
   }
@@ -116,26 +148,16 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function checkInteractions(salts?: string[]) {
     try {
       setCheckError(null);
-      const payload = { salts: salts || values.metadata?.salts || [] };
-      if (!payload.salts || payload.salts.length === 0) {
-        return [];
-      }
-
-      const res = await fetch("/api/ai/drug/interactions", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const json = await res.json();
-      const interactions = json.interactions || [];
-      setValues((s: any) => ({
-        ...s,
-        metadata: { ...(s.metadata || {}), interactions },
-      }));
+      const payload = { salts: Array.isArray(salts) ? salts : values.metadata?.salts ?? [] };
+      if (!payload.salts || payload.salts.length === 0) return [];
+      const res = await apiClient.post("/ai/drug/interactions", payload);
+      const json = res.data ?? {};
+      const interactions = Array.isArray(json.interactions) ? json.interactions : [];
+      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), interactions } }));
       return interactions;
     } catch (e: any) {
-      setCheckError("Interaction check failed: " + (e.message || e));
+      const msg = e?.response?.data?.message ?? e?.message ?? "Interaction check failed";
+      setCheckError(msg);
       return [];
     }
   }
@@ -143,24 +165,18 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function predictSchedule() {
     try {
       setCheckError(null);
-      const res = await fetch("/api/ai/schedule", {
-        method: "POST",
-        body: JSON.stringify({
-          name: values.name,
-          salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
-          manufacturer: values.metadata?.manufacturer || "",
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json();
-      // { schedule, confidence, source }
-      setValues((s: any) => ({
-        ...s,
-        metadata: { ...(s.metadata || {}), schedule: json.schedule, schedule_confidence: json.confidence },
-      }));
+      const payload = {
+        name: values.name,
+        salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
+        manufacturer: values.metadata?.manufacturer || "",
+      };
+      const res = await apiClient.post("/ai/schedule", payload);
+      const json = res.data ?? {};
+      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), schedule: json.schedule, schedule_confidence: json.confidence } }));
       return json;
     } catch (e: any) {
-      setCheckError("Schedule prediction failed: " + (e.message || e));
+      const msg = e?.response?.data?.message ?? e?.message ?? "Schedule prediction failed";
+      setCheckError(msg);
       return null;
     }
   }
@@ -168,66 +184,60 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function predictHSNAndGST() {
     try {
       setCheckError(null);
-      const res = await fetch("/api/ai/hsn", {
-        method: "POST",
-        body: JSON.stringify({
-          name: values.name,
-          salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
-          category: values.metadata?.category || "",
-          mrp: values.price,
-          brand: values.metadata?.manufacturer || "",
-          packaging: values.metadata?.packaging || "",
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json();
-      // { hsn, gst, confidence }
-      setValues((s: any) => ({
-        ...s,
-        metadata: { ...(s.metadata || {}), hsn: json.hsn, gst: json.gst, hsn_confidence: json.confidence },
-      }));
-
-      // Also update taxRules preview with predicted GST if not already set
+      const payload = {
+        name: values.name,
+        salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
+        category: values.metadata?.category || "",
+        mrp: values.price,
+        brand: values.metadata?.manufacturer || "",
+        packaging: values.metadata?.packaging || "",
+      };
+      const res = await apiClient.post("/ai/hsn", payload);
+      const json = res.data ?? {};
+      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), hsn: json.hsn, gst: json.gst, hsn_confidence: json.confidence } }));
       if (json.gst && (!taxRules || taxRules.length === 0)) {
         setTaxRules([{ tax_id: null, tax_name: `GST ${json.gst}%`, rate: json.gst, account_id: null }]);
       }
-
       return json;
     } catch (e: any) {
-      setCheckError("HSN/GST prediction failed: " + (e.message || e));
+      const msg = e?.response?.data?.message ?? e?.message ?? "HSN/GST prediction failed";
+      setCheckError(msg);
       return null;
     }
   }
 
-  // run all checks in sequence (atomic-ish, best-effort)
+  // run all checks with cancellation; salts required by interactions
   async function runAllChecks(product?: any) {
+    if (checksControllerRef.current) checksControllerRef.current.abort();
+    checksControllerRef.current = new AbortController();
+    const signal = checksControllerRef.current.signal;
     setLoadingChecks(true);
     setCheckError(null);
     try {
-      // 1) extract salts
       const salts = await extractSalts({ text: `${(product && product.name) || values.name}` });
-
-      // 2) interactions
-      await checkInteractions(salts);
-
-      // 3) schedule
-      await predictSchedule();
-
-      // 4) HSN/GST
-      await predictHSNAndGST();
+      if (signal.aborted) return;
+      // run the rest in parallel
+      await Promise.all([checkInteractions(salts), predictSchedule(), predictHSNAndGST()]);
     } catch (e: any) {
-      setCheckError(e.message || "Unknown error during checks");
+      if (e?.name === "AbortError") return;
+      setCheckError(e?.message ?? "Unknown error during checks");
     } finally {
-      setLoadingChecks(false);
+      if (!signal.aborted) setLoadingChecks(false);
     }
   }
 
   // -----------------------
-  // Save logic: include metadata + related arrays
+  // Save logic: idempotent + numeric sanitization + loading/UI
   // -----------------------
   const onSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaveError(null);
+
     const payload = {
       ...values,
+      price: toNumberSafe(values.price),
+      default_cost: toNumberSafe(values.default_cost),
       batches,
       suppliers,
       tax_rules: taxRules,
@@ -236,31 +246,37 @@ export default function ProductEditor({ id }: { id?: string }) {
     };
 
     try {
+      const idemp = generateIdempotencyKey("product_create");
+      const cfg = setIdempotencyKey({}, idemp);
+      let res;
       if (isNew) {
-        const res = await saveProduct(payload);
-        if (res?.id) {
-          alert("Created product: " + res.id);
-        } else {
-          alert("Saved (created)");
-        }
+        res = await apiClient.post("/products", payload, cfg);
       } else {
-        await saveProduct(payload, id);
-        alert("Saved");
+        res = await apiClient.put(`/products/${id}`, payload, cfg);
+      }
+      const data = res.data ?? {};
+      const createdId = data.id ?? data.product?.id ?? id;
+      // success UX: navigate to product page if id present
+      if (createdId) {
+        try {
+          router.push(`/hms/products/${createdId}`);
+          return;
+        } catch {}
       }
     } catch (e: any) {
-      alert("Save failed: " + (e.message || e));
+      const msg = e?.response?.data?.message ?? e?.message ?? "Save failed";
+      setSaveError(String(msg));
+    } finally {
+      if (mountedRef.current) setSaving(false);
     }
   };
 
-  // small UI helpers
-  const hasInteractions = (values.metadata && values.metadata.interactions && values.metadata.interactions.length > 0);
+  const hasInteractions = !!(values?.metadata && Array.isArray(values.metadata.interactions) && values.metadata.interactions.length > 0);
 
   return (
     <div className="max-w-6xl mx-auto mt-10 p-10 bg-white/60 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/30">
       <div className="flex items-start justify-between">
-        <h1 className="text-3xl font-bold mb-4">
-          {isNew ? "New Product" : values.name || "Edit Product"}
-        </h1>
+        <h1 className="text-3xl font-bold mb-4">{isNew ? "New Product" : values.name || "Edit Product"}</h1>
 
         <div className="flex items-center gap-3">
           <button
@@ -273,15 +289,18 @@ export default function ProductEditor({ id }: { id?: string }) {
 
           <button
             onClick={onSave}
-            className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg"
+            className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg disabled:opacity-60"
+            disabled={saving}
           >
-            Save & Publish
+            {saving ? "Saving…" : "Save & Publish"}
           </button>
         </div>
       </div>
 
-      {checkError && (
-        <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl border">{checkError}</div>
+      {(error || checkError || saveError) && (
+        <div role="alert" className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl border">
+          {saveError || checkError || error}
+        </div>
       )}
 
       <Tabs
@@ -304,27 +323,18 @@ export default function ProductEditor({ id }: { id?: string }) {
         <div className="space-y-6 mt-6">
           <div>
             <label className="block font-medium text-gray-800">SKU</label>
-            <input
-              value={values.sku || ""}
-              onChange={(e) => update("sku", e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <input value={values.sku || ""} onChange={(e) => update("sku", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
 
           <div>
             <label className="block font-medium text-gray-800">Name</label>
-            <input
-              value={values.name || ""}
-              onChange={(e) => update("name", e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <input value={values.name || ""} onChange={(e) => update("name", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
 
           <div className="flex gap-4 items-center">
             {values.metadata?.schedule && (
               <div className="px-3 py-1 rounded-xl bg-purple-100 text-purple-700 w-fit text-sm font-semibold">
-                Schedule {values.metadata.schedule} (confidence:{" "}
-                {Math.round((values.metadata.schedule_confidence || 0) * 100)}%)
+                Schedule {values.metadata.schedule} (confidence: {Math.round((values.metadata.schedule_confidence || 0) * 100)}%)
               </div>
             )}
 
@@ -342,77 +352,30 @@ export default function ProductEditor({ id }: { id?: string }) {
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">
-              Short Description
-            </label>
-            <input
-              value={values.short_description || ""}
-              onChange={(e) => update("short_description", e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <label className="block font-medium text-gray-800">Short Description</label>
+            <input value={values.short_description || ""} onChange={(e) => update("short_description", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">
-              Description
-            </label>
-            <textarea
-              rows={5}
-              value={values.description || ""}
-              onChange={(e) => update("description", e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <label className="block font-medium text-gray-800">Description</label>
+            <textarea rows={5} value={values.description || ""} onChange={(e) => update("description", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
 
           <div className="flex gap-4">
-            <button
-              onClick={() =>
-                setValues((s: any) => ({
-                  ...s,
-                  is_stockable: true,
-                  is_service: false,
-                }))
-              }
-              className={`px-4 py-2 rounded-xl border ${
-                values.is_stockable ? "bg-blue-600 text-white" : "bg-white"
-              }`}
-            >
-              Stockable
-            </button>
+            <button onClick={() => setValues((s: any) => ({ ...s, is_stockable: true, is_service: false }))} className={`px-4 py-2 rounded-xl border ${values.is_stockable ? "bg-blue-600 text-white" : "bg-white"}`}>Stockable</button>
 
-            <button
-              onClick={() =>
-                setValues((s: any) => ({
-                  ...s,
-                  is_stockable: false,
-                  is_service: true,
-                }))
-              }
-              className={`px-4 py-2 rounded-xl border ${
-                values.is_service ? "bg-blue-600 text-white" : "bg-white"
-              }`}
-            >
-              Service
-            </button>
+            <button onClick={() => setValues((s: any) => ({ ...s, is_stockable: false, is_service: true }))} className={`px-4 py-2 rounded-xl border ${values.is_service ? "bg-blue-600 text-white" : "bg-white"}`}>Service</button>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block font-medium text-gray-800">UoM</label>
-              <input
-                value={values.uom || ""}
-                onChange={(e) => update("uom", e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border bg-white/70"
-              />
+              <input value={values.uom || ""} onChange={(e) => update("uom", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
             </div>
 
             <div>
               <label className="block font-medium text-gray-800">Barcode</label>
-              <input
-                value={values.barcode || ""}
-                onChange={(e) => update("barcode", e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border bg-white/70"
-              />
+              <input value={values.barcode || ""} onChange={(e) => update("barcode", e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
             </div>
           </div>
 
@@ -422,19 +385,9 @@ export default function ProductEditor({ id }: { id?: string }) {
               <h3 className="font-semibold">Active Ingredients (Salts)</h3>
 
               <div className="flex gap-2">
-                <button
-                  onClick={() => extractSalts({ text: `${values.name || ""}` })}
-                  className="px-3 py-1 rounded-lg border text-sm"
-                >
-                  Re-extract
-                </button>
+                <button onClick={() => extractSalts({ text: `${values.name || ""}` })} className="px-3 py-1 rounded-lg border text-sm">Re-extract</button>
 
-                <button
-                  onClick={() => checkInteractions()}
-                  className="px-3 py-1 rounded-lg border text-sm"
-                >
-                  Check Interactions
-                </button>
+                <button onClick={() => checkInteractions()} className="px-3 py-1 rounded-lg border text-sm">Check Interactions</button>
               </div>
             </div>
 
@@ -442,9 +395,7 @@ export default function ProductEditor({ id }: { id?: string }) {
               {values.metadata?.salts && values.metadata.salts.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {values.metadata.salts.map((s: string, i: number) => (
-                    <div key={i} className="px-3 py-1 bg-white rounded-full border text-sm">
-                      {s}
-                    </div>
+                    <div key={i} className="px-3 py-1 bg-white rounded-full border text-sm">{s}</div>
                   ))}
                 </div>
               ) : (
@@ -474,47 +425,25 @@ export default function ProductEditor({ id }: { id?: string }) {
       {tab === "pricing" && (
         <div className="space-y-6 mt-6">
           <div>
-            <label className="block font-medium text-gray-800">
-              Price (Selling)
-            </label>
-            <input
-              type="number"
-              value={values.price ?? 0}
-              onChange={(e) => update("price", parseFloat(e.target.value))}
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <label className="block font-medium text-gray-800">Price (Selling)</label>
+            <input type="number" value={values.price ?? 0} onChange={(e) => update("price", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
 
           <div>
-            <label className="block font-medium text-gray-800">
-              Default Cost
-            </label>
-            <input
-              type="number"
-              value={values.default_cost ?? 0}
-              onChange={(e) =>
-                update("default_cost", parseFloat(e.target.value))
-              }
-              className="w-full px-4 py-3 rounded-xl border bg-white/70"
-            />
+            <label className="block font-medium text-gray-800">Default Cost</label>
+            <input type="number" value={values.default_cost ?? 0} onChange={(e) => update("default_cost", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border bg-white/70" />
           </div>
         </div>
       )}
 
       {/* --- INVENTORY TAB --- */}
-      {tab === "inventory" && (
-        <BatchTable batches={batches} setBatches={setBatches} />
-      )}
+      {tab === "inventory" && <BatchTable batches={batches} setBatches={setBatches} />}
 
       {/* --- SUPPLIERS TAB --- */}
-      {tab === "suppliers" && (
-        <SupplierTable suppliers={suppliers} setSuppliers={setSuppliers} />
-      )}
+      {tab === "suppliers" && <SupplierTable suppliers={suppliers} setSuppliers={setSuppliers} />}
 
       {/* --- VARIANTS TAB --- */}
-      {tab === "variants" && (
-        <VariantsPanel variants={variants} setVariants={setVariants} />
-      )}
+      {tab === "variants" && <VariantsPanel variants={variants} setVariants={setVariants} />}
 
       {/* --- TAX TAB --- */}
       {tab === "tax" && (
@@ -523,49 +452,32 @@ export default function ProductEditor({ id }: { id?: string }) {
             <h3 className="font-semibold">Tax & Accounting</h3>
 
             <div className="text-sm text-gray-600">
-              {values.metadata?.hsn ? (
-                <span>HSN: {values.metadata.hsn} • GST: {values.metadata.gst}%</span>
-              ) : (
-                <span className="italic">HSN not predicted</span>
-              )}
+              {values.metadata?.hsn ? <span>HSN: {values.metadata.hsn} • GST: {values.metadata.gst}%</span> : <span className="italic">HSN not predicted</span>}
             </div>
           </div>
 
           <TaxSelector taxRules={taxRules} setTaxRules={setTaxRules} />
 
           <div className="mt-4">
-            <button
-              onClick={() => predictHSNAndGST()}
-              className="px-4 py-2 rounded-xl border"
-            >
-              Predict HSN / GST (AI)
-            </button>
+            <button onClick={() => predictHSNAndGST()} className="px-4 py-2 rounded-xl border">Predict HSN / GST (AI)</button>
           </div>
         </div>
       )}
 
       {/* --- MEDIA TAB --- */}
-      {tab === "media" && (
-        <MediaUploader media={media} setMedia={setMedia} />
-      )}
+      {tab === "media" && <MediaUploader media={media} setMedia={setMedia} />}
 
       {/* --- HISTORY TAB --- */}
       {tab === "history" && <LedgerPreview ledger={ledger} />}
 
       {/* bottom actions */}
       <div className="mt-8 flex gap-4">
-        <button
-          onClick={() => runAllChecks()}
-          className="px-4 py-2 rounded-xl border bg-white text-sm"
-        >
+        <button onClick={() => runAllChecks()} className="px-4 py-2 rounded-xl border bg-white text-sm" disabled={loadingChecks}>
           {loadingChecks ? "Running checks…" : "Run All Checks"}
         </button>
 
-        <button
-          onClick={onSave}
-          className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg"
-        >
-          Save & Publish
+        <button onClick={onSave} className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg" disabled={saving}>
+          {saving ? "Saving…" : "Save & Publish"}
         </button>
       </div>
     </div>
