@@ -1,0 +1,79 @@
+/* styles/neural-glass.css - Neural Glass Pro tokens + small helpers */
+:root{
+  --ng-bg: #ffffff;
+  --ng-surface: rgba(255,255,255,0.94);
+  --ng-border: rgba(15,23,42,0.06);
+  --ng-body: #0f172a;
+  --ng-muted: #6b7280;
+  --ng-accent-start: #2563eb;
+  --ng-accent-end: #06b6d4;
+  --ng-accent-grad: linear-gradient(135deg,var(--ng-accent-start) 0%,var(--ng-accent-end) 100%);
+  --ng-glow: rgba(37,99,235,0.14);
+  --ng-shadow: 0 12px 40px rgba(15,23,42,0.08);
+}
+
+/* Card */
+.ng-card {
+  background: var(--ng-surface);
+  border: 1px solid var(--ng-border);
+  box-shadow: var(--ng-shadow);
+  border-radius: 1.25rem;
+  backdrop-filter: blur(8px) saturate(120%);
+}
+
+/* Buttons */
+.ng-btn { 
+  border-radius: 1rem;
+  min-height: 40px;
+  padding: 0.5rem 1.25rem;
+  font-weight: 600;
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.ng-btn:active{ transform: translateY(1px); }
+
+.ng-btn-primary{
+  background-image: var(--ng-accent-grad);
+  color: #fff;
+  border: 0;
+  box-shadow: 0 8px 30px var(--ng-glow);
+}
+
+.ng-btn-secondary{
+  background: #fff;
+  color: var(--ng-body);
+  border: 1px solid rgba(15,23,42,0.04);
+}
+
+.ng-btn-ghost{
+  background: rgba(255,255,255,0.94);
+  color: var(--ng-body);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+/* Segmented control */
+.ng-seg {
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  padding: 4px;
+  border: 1px solid rgba(255,255,255,0.06);
+  display: inline-flex;
+}
+.ng-seg > button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ng-muted);
+  border: none;
+  cursor: pointer;
+}
+.ng-seg > button[aria-selected="true"]{
+  background: #fff;
+  color: var(--ng-body);
+  box-shadow: 0 8px 24px rgba(15,23,42,0.06);
+}
+
+/* small helpers */
+.no-select { user-select: none; }

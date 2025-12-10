@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import apiClient, { generateIdempotencyKey, setIdempotencyKey } from "@/lib/api-client";
+
 import Tabs from "./components/Tabs";
 import BatchTable from "./components/BatchTable";
 import SupplierTable from "./components/SupplierTable";
@@ -12,7 +13,13 @@ import LedgerPreview from "./components/LedgerPreview";
 import VariantsPanel from "./components/VariantsPanel";
 import MediaUploader from "./components/MediaUploader";
 
-import { PrimaryButton, SecondaryButton, GhostButton, SegmentedToggle } from "@/app/components/ui/NeuralGlassUI";
+import {
+  PrimaryButton,
+  SecondaryButton,
+  GhostButton,
+  Card,
+  Segmented,
+} from "./components/ui/NeuralGlassProUI";
 
 type ProductValues = {
   id?: string;
@@ -76,14 +83,17 @@ export default function ProductEditor({ id }: { id?: string }) {
     };
   }, []);
 
-  const update = (k: string, v: any) => setValues((s: any) => ({ ...s, [k]: v }));
+  const update = (k: string, v: any) =>
+    setValues((s: any) => ({ ...s, [k]: v }));
 
   function toNumberSafe(v: any): number | null {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   }
 
-  // READ
+  // -------------------------
+  // READ PRODUCT
+  // -------------------------
   useEffect(() => {
     if (!id) return;
     let active = true;
@@ -95,13 +105,15 @@ export default function ProductEditor({ id }: { id?: string }) {
         const res = await apiClient.get(`/products/${id}`);
         const d = res.data ?? {};
         if (!active || !mountedRef.current) return;
+
         setValues(d.product ?? {});
-        setBatches(Array.isArray(d.batches) ? d.batches : []);
-        setSuppliers(Array.isArray(d.suppliers) ? d.suppliers : []);
-        setTaxRules(Array.isArray(d.tax_rules) ? d.tax_rules : []);
-        setLedger(Array.isArray(d.ledger) ? d.ledger : []);
-        setMedia(Array.isArray(d.media) ? d.media : []);
-        setVariants(Array.isArray(d.variants) ? d.variants : []);
+        setBatches(d.batches ?? []);
+        setSuppliers(d.suppliers ?? []);
+        setTaxRules(d.tax_rules ?? []);
+        setLedger(d.ledger ?? []);
+        setMedia(d.media ?? []);
+        setVariants(d.variants ?? []);
+
         runAllChecks(d.product).catch(() => {});
       } catch (e: any) {
         if (!mountedRef.current) return;
@@ -117,11 +129,14 @@ export default function ProductEditor({ id }: { id?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // AI helpers
+  // -------------------------
+  // AI HELPERS
+  // -------------------------
   async function extractSalts(textOrFile?: { text?: string; file?: File }) {
     try {
       setCheckError(null);
       const form = new FormData();
+
       if (textOrFile?.file) form.append("file", textOrFile.file);
       else form.append("text", textOrFile?.text ?? values.name ?? "");
 
@@ -130,14 +145,20 @@ export default function ProductEditor({ id }: { id?: string }) {
       });
       const json = res.data ?? {};
       const salts = Array.isArray(json.salts) ? json.salts : [];
+
       setValues((s: any) => ({
         ...s,
-        metadata: { ...(s.metadata || {}), salts, extracted_text: json.raw_text },
+        metadata: {
+          ...(s.metadata || {}),
+          salts,
+          extracted_text: json.raw_text,
+        },
       }));
       return salts;
     } catch (e: any) {
-      const msg = e?.response?.data?.message ?? e?.message ?? "Salt extraction failed";
-      setCheckError(msg);
+      setCheckError(
+        e?.response?.data?.message ?? e?.message ?? "Salt extraction failed"
+      );
       return [];
     }
   }
@@ -145,16 +166,32 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function checkInteractions(salts?: string[]) {
     try {
       setCheckError(null);
-      const payload = { salts: Array.isArray(salts) ? salts : values.metadata?.salts ?? [] };
-      if (!payload.salts || payload.salts.length === 0) return [];
+
+      const payload = {
+        salts: Array.isArray(salts)
+          ? salts
+          : values.metadata?.salts ?? [],
+      };
+
+      if (!payload.salts.length) return [];
+
       const res = await apiClient.post("/ai/drug/interactions", payload);
       const json = res.data ?? {};
-      const interactions = Array.isArray(json.interactions) ? json.interactions : [];
-      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), interactions } }));
-      return interactions;
+
+      setValues((s: any) => ({
+        ...s,
+        metadata: {
+          ...(s.metadata || {}),
+          interactions: json.interactions ?? [],
+        },
+      }));
+      return json.interactions ?? [];
     } catch (e: any) {
-      const msg = e?.response?.data?.message ?? e?.message ?? "Interaction check failed";
-      setCheckError(msg);
+      setCheckError(
+        e?.response?.data?.message ??
+          e?.message ??
+          "Interaction check failed"
+      );
       return [];
     }
   }
@@ -162,18 +199,32 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function predictSchedule() {
     try {
       setCheckError(null);
+
       const payload = {
         name: values.name,
-        salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
-        manufacturer: values.metadata?.manufacturer || "",
+        salt: values.metadata?.salts?.join(", ") ?? "",
+        manufacturer: values.metadata?.manufacturer ?? "",
       };
+
       const res = await apiClient.post("/ai/schedule", payload);
       const json = res.data ?? {};
-      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), schedule: json.schedule, schedule_confidence: json.confidence } }));
+
+      setValues((s: any) => ({
+        ...s,
+        metadata: {
+          ...(s.metadata || {}),
+          schedule: json.schedule,
+          schedule_confidence: json.confidence,
+        },
+      }));
+
       return json;
     } catch (e: any) {
-      const msg = e?.response?.data?.message ?? e?.message ?? "Schedule prediction failed";
-      setCheckError(msg);
+      setCheckError(
+        e?.response?.data?.message ??
+          e?.message ??
+          "Schedule prediction failed"
+      );
       return null;
     }
   }
@@ -181,38 +232,76 @@ export default function ProductEditor({ id }: { id?: string }) {
   async function predictHSNAndGST() {
     try {
       setCheckError(null);
+
       const payload = {
         name: values.name,
-        salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
-        category: values.metadata?.category || "",
+        salt: values.metadata?.salts?.join(", ") ?? "",
+        category: values.metadata?.category ?? "",
         mrp: values.price,
-        brand: values.metadata?.manufacturer || "",
-        packaging: values.metadata?.packaging || "",
+        brand: values.metadata?.manufacturer ?? "",
+        packaging: values.metadata?.packaging ?? "",
       };
+
       const res = await apiClient.post("/ai/hsn", payload);
       const json = res.data ?? {};
-      setValues((s: any) => ({ ...s, metadata: { ...(s.metadata || {}), hsn: json.hsn, gst: json.gst, hsn_confidence: json.confidence } }));
+
+      setValues((s: any) => ({
+        ...s,
+        metadata: {
+          ...(s.metadata || {}),
+          hsn: json.hsn,
+          gst: json.gst,
+          hsn_confidence: json.confidence,
+        },
+      }));
+
       if (json.gst && (!taxRules || taxRules.length === 0)) {
-        setTaxRules([{ tax_id: null, tax_name: `GST ${json.gst}%`, rate: json.gst, account_id: null }]);
+        setTaxRules([
+          {
+            tax_id: null,
+            tax_name: `GST ${json.gst}%`,
+            rate: json.gst,
+            account_id: null,
+          },
+        ]);
       }
+
       return json;
     } catch (e: any) {
-      const msg = e?.response?.data?.message ?? e?.message ?? "HSN/GST prediction failed";
-      setCheckError(msg);
+      setCheckError(
+        e?.response?.data?.message ??
+          e?.message ??
+          "HSN/GST prediction failed"
+      );
       return null;
     }
   }
 
+  // -------------------------
+  // RUN ALL CHECKS
+  // -------------------------
   async function runAllChecks(product?: any) {
-    if (checksControllerRef.current) checksControllerRef.current.abort();
+    if (checksControllerRef.current)
+      checksControllerRef.current.abort();
+
     checksControllerRef.current = new AbortController();
     const signal = checksControllerRef.current.signal;
+
     setLoadingChecks(true);
     setCheckError(null);
+
     try {
-      const salts = await extractSalts({ text: `${(product && product.name) || values.name}` });
+      const salts = await extractSalts({
+        text: `${product?.name || values.name}`,
+      });
+
       if (signal.aborted) return;
-      await Promise.all([checkInteractions(salts), predictSchedule(), predictHSNAndGST()]);
+
+      await Promise.all([
+        checkInteractions(salts),
+        predictSchedule(),
+        predictHSNAndGST(),
+      ]);
     } catch (e: any) {
       if (e?.name === "AbortError") return;
       setCheckError(e?.message ?? "Unknown error during checks");
@@ -221,8 +310,12 @@ export default function ProductEditor({ id }: { id?: string }) {
     }
   }
 
+  // -------------------------
+  // SAVE
+  // -------------------------
   const onSave = async () => {
     if (saving) return;
+
     setSaving(true);
     setSaveError(null);
 
@@ -240,60 +333,68 @@ export default function ProductEditor({ id }: { id?: string }) {
     try {
       const idemp = generateIdempotencyKey("product_create");
       const cfg = setIdempotencyKey({}, idemp);
+
       let res;
-      if (isNew) {
-        res = await apiClient.post("/products", payload, cfg);
-      } else {
-        res = await apiClient.put(`/products/${id}`, payload, cfg);
-      }
+
+      if (isNew) res = await apiClient.post("/products", payload, cfg);
+      else res = await apiClient.put(`/products/${id}`, payload, cfg);
+
       const data = res.data ?? {};
       const createdId = data.id ?? data.product?.id ?? id;
-      if (createdId) {
-        try {
-          router.push(`/hms/products/${createdId}`);
-          return;
-        } catch {}
-      }
+
+      if (createdId) router.push(`/hms/products/${createdId}`);
     } catch (e: any) {
-      const msg = e?.response?.data?.message ?? e?.message ?? "Save failed";
-      setSaveError(String(msg));
+      setSaveError(
+        e?.response?.data?.message ??
+          e?.message ??
+          "Save failed"
+      );
     } finally {
       if (mountedRef.current) setSaving(false);
     }
   };
 
-  const hasInteractions = !!(values?.metadata && Array.isArray(values.metadata.interactions) && values.metadata.interactions.length > 0);
+  const hasInteractions =
+    !!values.metadata?.interactions &&
+    values.metadata.interactions.length > 0;
 
+  // -------------------------
+  // RENDER
+  // -------------------------
   return (
-    <div
-      className="max-w-6xl mx-auto mt-10 p-10 rounded-3xl"
-      style={{
-        // stronger fallback to ensure readable background if CSS broken
-        backgroundColor: "rgba(255,255,255,0.95)",
-        boxShadow: "0 12px 40px rgba(15,23,42,0.08)",
-        border: "1px solid rgba(15,23,42,0.04)",
-        backdropFilter: "blur(6px)",
-      }}
-    >
+    <Card className="max-w-6xl mx-auto mt-10" style={{ padding: 28 }}>
+      {/* HEADER */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">{isNew ? "New Product" : values.name || "Edit Product"}</h1>
-          <div className="text-sm text-slate-600">Products / Catalog / Editor</div>
+          <h1 className="text-3xl font-bold mb-2">
+            {isNew ? "New Product" : values.name || "Edit Product"}
+          </h1>
+          <div className="text-sm text-slate-600">
+            Products / Catalog / Editor
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <SecondaryButton onClick={() => runAllChecks()} disabled={loadingChecks} style={{ minWidth: 180 }}>
-            {loadingChecks ? "Running checks…" : "Run Safety & Tax Checks"}
+          <SecondaryButton
+            onClick={() => runAllChecks()}
+            disabled={loadingChecks}
+          >
+            {loadingChecks
+              ? "Running checks…"
+              : "Run Safety & Tax Checks"}
           </SecondaryButton>
 
-          <PrimaryButton onClick={onSave} disabled={saving} style={{ minWidth: 140 }}>
+          <PrimaryButton onClick={onSave} disabled={saving}>
             {saving ? "Saving…" : "Save & Publish"}
           </PrimaryButton>
         </div>
       </div>
 
       {(error || checkError || saveError) && (
-        <div role="alert" className="mt-6 mb-4 p-3 rounded-xl border border-red-100 bg-red-50 text-red-700">
+        <div
+          role="alert"
+          className="mt-6 mb-4 p-3 rounded-xl border border-red-100 bg-red-50 text-red-700"
+        >
           {saveError || checkError || error}
         </div>
       )}
@@ -315,29 +416,46 @@ export default function ProductEditor({ id }: { id?: string }) {
         />
       </div>
 
-      {/* --- GENERAL TAB --- */}
+      {/* GENERAL TAB */}
       {tab === "general" && (
         <div className="space-y-6 mt-6">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">SKU</label>
-            <input value={values.sku || ""} onChange={(e) => update("sku", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              SKU
+            </label>
+            <input
+              value={values.sku || ""}
+              onChange={(e) => update("sku", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Name</label>
-            <input value={values.name || ""} onChange={(e) => update("name", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Name
+            </label>
+            <input
+              value={values.name || ""}
+              onChange={(e) => update("name", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
 
           <div className="flex gap-4 items-center">
             {values.metadata?.schedule && (
               <div className="px-3 py-1 rounded-xl bg-indigo-50 text-indigo-700 w-fit text-sm font-semibold border border-indigo-100">
-                Schedule {values.metadata.schedule} (confidence: {Math.round((values.metadata.schedule_confidence || 0) * 100)}%)
+                Schedule {values.metadata.schedule} (confidence:{" "}
+                {Math.round(
+                  (values.metadata.schedule_confidence || 0) * 100
+                )}
+                %)
               </div>
             )}
 
             {values.metadata?.hsn && (
               <div className="px-3 py-1 rounded-xl bg-slate-50 text-slate-800 w-fit text-sm font-medium border">
-                HSN: {values.metadata.hsn} • GST: {values.metadata.gst ?? "—"}%
+                HSN: {values.metadata.hsn} • GST:{" "}
+                {values.metadata.gst ?? "—"}%
               </div>
             )}
 
@@ -349,58 +467,119 @@ export default function ProductEditor({ id }: { id?: string }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Short Description</label>
-            <input value={values.short_description || ""} onChange={(e) => update("short_description", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Short Description
+            </label>
+            <input
+              value={values.short_description || ""}
+              onChange={(e) =>
+                update("short_description", e.target.value)
+              }
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Description</label>
-            <textarea rows={5} value={values.description || ""} onChange={(e) => update("description", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Description
+            </label>
+            <textarea
+              rows={5}
+              value={values.description || ""}
+              onChange={(e) => update("description", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4">
-            <SegmentedToggle
+            <Segmented
               leftLabel="Stockable"
               rightLabel="Service"
               leftActive={!!values.is_stockable}
-              onToggleLeft={() => setValues((s: any) => ({ ...s, is_stockable: true, is_service: false }))}
-              onToggleRight={() => setValues((s: any) => ({ ...s, is_stockable: false, is_service: true }))}
+              onLeft={() =>
+                setValues((s: any) => ({
+                  ...s,
+                  is_stockable: true,
+                  is_service: false,
+                }))
+              }
+              onRight={() =>
+                setValues((s: any) => ({
+                  ...s,
+                  is_stockable: false,
+                  is_service: true,
+                }))
+              }
             />
 
             <div className="grid grid-cols-2 gap-4 w-full">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">UoM</label>
-                <input value={values.uom || ""} onChange={(e) => update("uom", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  UoM
+                </label>
+                <input
+                  value={values.uom || ""}
+                  onChange={(e) => update("uom", e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+                />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Barcode</label>
-                <input value={values.barcode || ""} onChange={(e) => update("barcode", e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Barcode
+                </label>
+                <input
+                  value={values.barcode || ""}
+                  onChange={(e) =>
+                    update("barcode", e.target.value)
+                  }
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+                />
               </div>
             </div>
           </div>
 
-          {/* salts */}
+          {/* SALTS */}
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">Active Ingredients (Salts)</h3>
+              <h3 className="text-lg font-semibold text-slate-800">
+                Active Ingredients (Salts)
+              </h3>
 
               <div className="flex gap-2">
-                <GhostButton onClick={() => extractSalts({ text: `${values.name || ""}` })}>Re-extract</GhostButton>
+                <GhostButton
+                  onClick={() =>
+                    extractSalts({ text: `${values.name || ""}` })
+                  }
+                >
+                  Re-extract
+                </GhostButton>
 
-                <GhostButton onClick={() => checkInteractions()}>Check Interactions</GhostButton>
+                <GhostButton onClick={() => checkInteractions()}>
+                  Check Interactions
+                </GhostButton>
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white">
-              {values.metadata?.salts && values.metadata.salts.length > 0 ? (
+              {values.metadata?.salts &&
+              values.metadata.salts.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
-                  {values.metadata.salts.map((s: string, i: number) => (
-                    <div key={i} className="px-3 py-1 rounded-full text-sm bg-slate-100 border border-slate-200 text-slate-800">{s}</div>
-                  ))}
+                  {values.metadata.salts.map(
+                    (s: string, i: number) => (
+                      <div
+                        key={i}
+                        className="px-3 py-1 rounded-full text-sm bg-slate-100 border border-slate-200 text-slate-800"
+                      >
+                        {s}
+                      </div>
+                    )
+                  )}
                 </div>
               ) : (
-                <div className="text-sm text-slate-500">No salts detected yet</div>
+                <div className="text-sm text-slate-500">
+                  No salts detected yet
+                </div>
               )}
             </div>
 
@@ -408,13 +587,28 @@ export default function ProductEditor({ id }: { id?: string }) {
               <div className="p-3 rounded-xl border bg-yellow-50">
                 <h4 className="font-semibold">Detected Interactions</h4>
                 <div className="mt-2 space-y-2">
-                  {values.metadata.interactions.map((it: any, idx: number) => (
-                    <div key={idx} className="p-3 rounded-lg bg-white border">
-                      <div className="font-semibold text-slate-800">{it.summary}</div>
-                      <div className="text-sm text-slate-700 mt-1">{it.details}</div>
-                      <div className="text-xs text-slate-500 mt-1">confidence: {Math.round((it.confidence || 0) * 100)}%</div>
-                    </div>
-                  ))}
+                  {values.metadata.interactions.map(
+                    (it: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="p-3 rounded-lg bg-white border"
+                      >
+                        <div className="font-semibold text-slate-800">
+                          {it.summary}
+                        </div>
+                        <div className="text-sm text-slate-700 mt-1">
+                          {it.details}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          confidence:{" "}
+                          {Math.round(
+                            (it.confidence || 0) * 100
+                          )}
+                          %
+                        </div>
+                      </div>
+                    )
+                  )}
                 </div>
               </div>
             )}
@@ -422,47 +616,109 @@ export default function ProductEditor({ id }: { id?: string }) {
         </div>
       )}
 
-      {/* pricing/inventory/tax/media/history */}
+      {/* PRICING */}
       {tab === "pricing" && (
         <div className="space-y-6 mt-6">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Price (Selling)</label>
-            <input type="number" value={values.price ?? 0} onChange={(e) => update("price", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Price (Selling)
+            </label>
+            <input
+              type="number"
+              value={values.price ?? 0}
+              onChange={(e) =>
+                update("price", toNumberSafe(e.target.value))
+              }
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Default Cost</label>
-            <input type="number" value={values.default_cost ?? 0} onChange={(e) => update("default_cost", toNumberSafe(e.target.value))} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white" />
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Default Cost
+            </label>
+            <input
+              type="number"
+              value={values.default_cost ?? 0}
+              onChange={(e) =>
+                update(
+                  "default_cost",
+                  toNumberSafe(e.target.value)
+                )
+              }
+              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white"
+            />
           </div>
         </div>
       )}
 
-      {tab === "inventory" && <BatchTable batches={batches} setBatches={setBatches} />}
-      {tab === "suppliers" && <SupplierTable suppliers={suppliers} setSuppliers={setSuppliers} />}
-      {tab === "variants" && <VariantsPanel variants={variants} setVariants={setVariants} />}
+      {tab === "inventory" && (
+        <BatchTable batches={batches} setBatches={setBatches} />
+      )}
+
+      {tab === "suppliers" && (
+        <SupplierTable
+          suppliers={suppliers}
+          setSuppliers={setSuppliers}
+        />
+      )}
+
+      {tab === "variants" && (
+        <VariantsPanel
+          variants={variants}
+          setVariants={setVariants}
+        />
+      )}
 
       {tab === "tax" && (
         <div className="mt-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Tax & Accounting</h3>
+            <h3 className="text-lg font-semibold text-slate-800">
+              Tax & Accounting
+            </h3>
             <div className="text-sm text-slate-600">
-              {values.metadata?.hsn ? <span>HSN: {values.metadata.hsn} • GST: {values.metadata.gst}%</span> : <span className="italic">HSN not predicted</span>}
+              {values.metadata?.hsn ? (
+                <span>
+                  HSN: {values.metadata.hsn} • GST:{" "}
+                  {values.metadata.gst}%
+                </span>
+              ) : (
+                <span className="italic">HSN not predicted</span>
+              )}
             </div>
           </div>
 
-          <TaxSelector taxRules={taxRules} setTaxRules={setTaxRules} />
+          <TaxSelector
+            taxRules={taxRules}
+            setTaxRules={setTaxRules}
+          />
 
           <div className="mt-4">
-            <SecondaryButton onClick={() => predictHSNAndGST()}>Predict HSN / GST (AI)</SecondaryButton>
+            <SecondaryButton
+              onClick={() => predictHSNAndGST()}
+            >
+              Predict HSN / GST (AI)
+            </SecondaryButton>
           </div>
         </div>
       )}
 
-      {tab === "media" && <MediaUploader media={media} setMedia={setMedia} />}
-      {tab === "history" && <LedgerPreview ledger={ledger} />}
+      {tab === "media" && (
+        <MediaUploader
+          media={media}
+          setMedia={setMedia}
+        />
+      )}
+
+      {tab === "history" && (
+        <LedgerPreview ledger={ledger} />
+      )}
 
       <div className="mt-8 flex gap-4">
-        <SecondaryButton onClick={() => runAllChecks()} disabled={loadingChecks}>
+        <SecondaryButton
+          onClick={() => runAllChecks()}
+          disabled={loadingChecks}
+        >
           {loadingChecks ? "Running checks…" : "Run All Checks"}
         </SecondaryButton>
 
@@ -470,6 +726,6 @@ export default function ProductEditor({ id }: { id?: string }) {
           {saving ? "Saving…" : "Save & Publish"}
         </PrimaryButton>
       </div>
-    </div>
+    </Card>
   );
 }
