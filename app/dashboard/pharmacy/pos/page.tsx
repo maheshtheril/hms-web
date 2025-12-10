@@ -1,24 +1,74 @@
+// app/dashboard/pharmacy/pos/page.tsx
 "use client";
 
 import usePosEngine from "./usePosEngine";
 import PosItem from "./components/PosItem";
 import { useState } from "react";
+import apiClient from "@/lib/api-client";
+
+/** Safe error extractor for unknowns (TypeScript-friendly) */
+function getErrorMessage(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  try {
+    const a = e as any;
+    if (a?.response?.data?.message) return String(a.response.data.message);
+    if (a?.message) return String(a.message);
+    return JSON.stringify(a);
+  } catch {
+    return String(e);
+  }
+}
 
 export default function POSPage() {
   const { cart, addProduct, checkout } = usePosEngine();
   const [productSearch, setProductSearch] = useState("");
   const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function searchProducts() {
-    const r = await fetch(`/api/products?search=${productSearch}`);
-    const json = await r.json();
-    setResults(json);
+    if (!productSearch || productSearch.trim().length < 1) {
+      setResults([]);
+      setError(null);
+      return;
+    }
+
+    setSearching(true);
+    setError(null);
+
+    try {
+      // use apiClient so cookies are sent and baseURL normalization is used
+      const res = await apiClient.get("/products", { params: { search: productSearch } });
+      const body = res?.data ?? [];
+      const list = Array.isArray(body) ? body : body?.items ?? [];
+      setResults(list);
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      // eslint-disable-next-line no-console
+      console.warn("POS search failed:", msg);
+      setError(msg || "Search failed");
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
   }
 
   async function confirmCheckout() {
-    const invoiceId = "INV-" + Date.now(); // later: real invoice ID
-    await checkout(invoiceId);
-    alert("Checkout complete");
+    try {
+      const invoiceId = "INV-" + Date.now(); // later: real invoice ID
+      await checkout(invoiceId);
+      // lightweight success feedback
+      try {
+        // refresh cart state might be handled by usePosEngine; still give user notice
+        alert("Checkout complete");
+      } catch {}
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      // eslint-disable-next-line no-console
+      console.warn("checkout failed:", msg);
+      alert("Checkout failed: " + (msg || "unknown error"));
+    }
   }
 
   return (
@@ -32,14 +82,20 @@ export default function POSPage() {
           placeholder="Search medicines..."
           value={productSearch}
           onChange={(e) => setProductSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") searchProducts();
+          }}
         />
         <button
           onClick={searchProducts}
-          className="px-4 py-2 bg-blue-600 text-white rounded-xl"
+          disabled={searching}
+          className="px-4 py-2 bg-blue-600 text-white rounded-xl disabled:opacity-60"
         >
-          Search
+          {searching ? "Searching…" : "Search"}
         </button>
       </div>
+
+      {error && <div className="mb-4 text-sm text-red-600">Error: {error}</div>}
 
       {/* SEARCH RESULTS */}
       {results.length > 0 && (
