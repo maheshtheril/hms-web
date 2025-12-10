@@ -1,398 +1,573 @@
-// app/hms/products/ProductEditor.tsx
+// web/app/hms/products/ProductEditor.tsx
 "use client";
 
-import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { Tab } from "@headlessui/react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useDebouncedCallback } from "use-debounce";
-import { useToast } from "@/components/toast/ToastProvider";
-import { ArrowLeft, Save, Zap, Layers, Truck, DollarSign } from "lucide-react";
-import apiClient from "@/lib/api-client";
-import CompanySelector from "@/components/CompanySelector";
-import { useCompany } from "@/app/providers/CompanyProvider";
-import type { ProductDraft } from "./types"; // centralized shared type
-import ConfirmModal from "@/components/ConfirmModal";
-import { v4 as uuidv4 } from "uuid";
+import { useState, useEffect } from "react";
+import { readProduct, saveProduct } from "./api";
+import Tabs from "./components/Tabs";
+import BatchTable from "./components/BatchTable";
+import SupplierTable from "./components/SupplierTable";
+import TaxSelector from "./components/TaxSelector";
+import LedgerPreview from "./components/LedgerPreview";
+import VariantsPanel from "./components/VariantsPanel";
+import MediaUploader from "./components/MediaUploader";
 
-/* --- Lazy tabs (now pointing to product-editor/*) --- */
-const GeneralTab = React.lazy(() => import("./GeneralTab"));
-const InventoryTab = React.lazy(() => import("./InventoryTab"));
-const VariantsTab = React.lazy(() => import("./VariantsTab"));
-const PricingTab = React.lazy(() => import("./PricingTab"));
-const AIAssistTab = React.lazy(() => import("./AIAssistTab"));
+type ProductValues = {
+  id?: string;
+  sku?: string;
+  name?: string;
+  description?: string;
+  short_description?: string;
+  price?: number;
+  default_cost?: number;
+  is_stockable?: boolean;
+  is_service?: boolean;
+  uom?: string;
+  barcode?: string;
+  barcode_type?: string;
+  metadata?: any;
+  [k: string]: any;
+};
 
-interface ProductEditorProps {
-  productId?: string | null;
-  onClose?: () => void;
-  onSaved?: (p: ProductDraft) => void;
-}
+export default function ProductEditor({ id }: { id?: string }) {
+  const isNew = !id;
 
-export default function ProductEditor({ productId = null, onClose, onSaved }: ProductEditorProps) {
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const { company } = useCompany();
+  const [tab, setTab] = useState("general");
 
-  const [activeIndex, setActiveIndex] = useState<number>(0);
-  const [draft, setDraft] = useState<ProductDraft>({});
-  const [loading, setLoading] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const [values, setValues] = useState<ProductValues>({
+    sku: "",
+    name: "",
+    description: "",
+    short_description: "",
+    price: 0,
+    default_cost: 0,
+    is_stockable: true,
+    is_service: false,
+    uom: "Unit",
+    barcode: "",
+    barcode_type: "EAN-13",
+    metadata: {},
+  });
 
-  // save lock + abort for save operations (prevents concurrent POST/PUT)
-  const saveLockRef = useRef(false);
-  const saveAbortRef = useRef<AbortController | null>(null);
+  const [batches, setBatches] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [taxRules, setTaxRules] = useState<any[]>([]);
+  const [ledger, setLedger] = useState<any[]>([]);
+  const [media, setMedia] = useState<any[]>([]);
+  const [variants, setVariants] = useState<any[]>([]);
 
-  // idempotency key for new product creates (stable during the modal lifetime)
-  const idempotencyKeyRef = useRef<string | null>(null);
-
-  // structured validation errors returned from server (field -> message)
-  const [validationErrors, setValidationErrors] = useState<Record<string, string> | null>(null);
-
-  // Confirm modal for unsaved changes
-  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
-  const pendingCloseRef = useRef<(() => void) | null>(null);
-
-  // defaults derived from company settings
-  const defaults = useMemo(() => {
-    const compAny = company as any;
-    return {
-      currency: compAny?.settings?.default_currency ?? "USD",
-      tax_inclusive: compAny?.settings?.tax_inclusive_by_default ?? false,
-    };
-  }, [company]);
-
-  /* -------------- Load product (edit) or initialize new draft -------------- */
-  useEffect(() => {
-    idempotencyKeyRef.current = idempotencyKeyRef.current ?? uuidv4();
-  }, []);
+  const [loadingChecks, setLoadingChecks] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      if (!productId) {
-        setDraft({ currency: defaults.currency, is_stockable: true } as any);
-        setDirty(false);
-        setValidationErrors(null);
-        return;
-      }
+    if (!id) return;
 
-      setLoading(true);
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
+    readProduct(id).then((res) => {
+      setValues(res.product || {});
+      setBatches(res.batches || []);
+      setSuppliers(res.suppliers || []);
+      setTaxRules(res.tax_rules || []);
+      setLedger(res.ledger || []);
+      setVariants(res.variants || []);
+      setMedia(res.media || []);
 
-      try {
-        const res = await apiClient.get(`/hms/products/${encodeURIComponent(productId)}`, { signal: abortRef.current.signal });
-        if (!mounted) return;
-        setDraft(res.data?.data ? (res.data.data as ProductDraft) : {});
-        setDirty(false);
-        setValidationErrors(null);
-      } catch (err: any) {
-        if (err?.name === "CanceledError" || err?.name === "AbortError") return;
-        toast.error(err?.message ?? "Failed to load product");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-      abortRef.current?.abort();
-    };
-  }, [productId, defaults.currency, toast]);
-
-  /* ---------------- Save (create or update) ---------------- */
-  const saveDraft = useCallback(
-    async (payload: ProductDraft, opts: { force?: boolean; closeAfter?: boolean } = {}) => {
-      if (!company) {
-        setValidationErrors({ company_id: "Select a company first" });
-        toast.error("Select company first");
-        throw new Error("No company selected");
-      }
-
-      if (saveLockRef.current && !opts.force) {
-        toast.info("Save in progress, waiting...");
-        return;
-      }
-
-      saveLockRef.current = true;
-      setValidationErrors(null);
-
-      saveAbortRef.current?.abort();
-      saveAbortRef.current = new AbortController();
-      const signal = saveAbortRef.current.signal;
-
-      try {
-        const body: any = { ...payload, company_id: company.id };
-
-        if (payload.inventory?.batches && Array.isArray(payload.inventory.batches) && payload.inventory.batches.length) {
-          body.inventory = { batches: payload.inventory.batches };
-        }
-
-        const headers: Record<string, string> = {};
-        const isCreate = !payload.id;
-        if (isCreate && idempotencyKeyRef.current) {
-          headers["Idempotency-Key"] = idempotencyKeyRef.current;
-        }
-
-        let res;
-        if (payload.id) {
-          res = await apiClient.put(`/hms/products/${encodeURIComponent(payload.id)}`, body, { signal, headers });
-        } else {
-          res = await apiClient.post(`/hms/products`, body, { signal, headers });
-        }
-
-        const savedRaw = res?.data?.data ?? null;
-        const canonical = savedRaw ? { ...payload, ...savedRaw } : { ...payload };
-        const saved = canonical as ProductDraft;
-
-        setDraft(saved);
-        setDirty(false);
-        setValidationErrors(null);
-
-        if (company?.id) queryClient.invalidateQueries({ queryKey: ["products", company.id] });
-        onSaved?.(saved);
-        toast.success("Saved");
-
-        if (opts.closeAfter) {
-          onClose?.();
-        }
-        return saved;
-      } catch (err: any) {
-        const serverErrors = err?.response?.data?.errors ?? null;
-        if (Array.isArray(serverErrors)) {
-          const map: Record<string, string> = {};
-          for (const e of serverErrors) {
-            if (e?.field && e?.message) map[e.field] = e.message;
-          }
-          setValidationErrors(map);
-          const firstMsg = serverErrors[0]?.message ?? "Validation failed";
-          toast.error(firstMsg);
-        } else {
-          const message = err?.response?.data?.error ?? err?.message ?? "Save failed";
-          toast.error(String(message));
-        }
-        throw err;
-      } finally {
-        saveLockRef.current = false;
-      }
-    },
-    [company, onSaved, queryClient, toast, onClose]
-  );
-
-  /* ---------------- Autosave (debounced) ---------------- */
-  const debouncedSave = useDebouncedCallback(async (nextDraft: ProductDraft) => {
-    try {
-      await saveDraft(nextDraft);
-    } catch {
-      // handled by saveDraft toasts/errors
-    }
-  }, 1800);
-
-  useEffect(() => {
-    if (!dirty) return;
-    debouncedSave(draft);
-    return () => {
-      const maybeCancel = (debouncedSave as any)?.cancel;
-      if (typeof maybeCancel === "function") maybeCancel();
-    };
-  }, [draft, dirty, debouncedSave]);
-
-  /* ---------------- helpers ---------------- */
-  const updateDraft = (patch: Partial<ProductDraft>) => {
-    setDraft((d) => {
-      const merged = { ...d, ...patch } as ProductDraft;
-      return merged;
+      // run safety & classification checks automatically (best-effort)
+      runAllChecks(res.product).catch(() => {
+        /* ignore — user can retry */
+      });
     });
-    setDirty(true);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
-  const onManualSave = async () => {
-    setLoading(true);
+  const update = (k: string, v: any) =>
+    setValues((s: any) => ({ ...s, [k]: v }));
+
+  // -----------------------
+  // AI / Safety / Tax helpers
+  // -----------------------
+  async function extractSalts(textOrFile?: { text?: string; file?: File }) {
     try {
-      await saveDraft(draft, { force: true });
-    } finally {
-      setLoading(false);
-    }
-  };
+      setCheckError(null);
+      const form = new FormData();
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        if (!loading && dirty) onManualSave();
+      if (textOrFile?.file) {
+        form.append("file", textOrFile.file);
+      } else {
+        form.append("text", textOrFile?.text || `${values.name || ""}`);
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dirty, loading, onManualSave]);
 
-  const tabs = useMemo(
-    () => [
-      { name: "General", icon: Zap },
-      { name: "Inventory", icon: Truck },
-      { name: "Variants", icon: Layers },
-      { name: "Pricing", icon: DollarSign },
-      { name: "AI Assist", icon: Zap },
-    ],
-    []
-  );
-
-  /* ---------------- Close handling ---------------- */
-  const handleCloseAttempt = () => {
-    if (dirty) {
-      pendingCloseRef.current = onClose ?? null;
-      setConfirmDiscardOpen(true);
-      return;
+      const res = await fetch("/api/ai/salt/extract", {
+        method: "POST",
+        body: form,
+      });
+      const json = await res.json();
+      // json: { salts: [...], raw_text }
+      const salts = json.salts || [];
+      setValues((s: any) => ({
+        ...s,
+        metadata: { ...(s.metadata || {}), salts, extracted_text: json.raw_text },
+      }));
+      return salts;
+    } catch (e: any) {
+      setCheckError("Salt extraction failed: " + (e.message || e));
+      return [];
     }
-    onClose?.();
+  }
+
+  async function checkInteractions(salts?: string[]) {
+    try {
+      setCheckError(null);
+      const payload = { salts: salts || values.metadata?.salts || [] };
+      if (!payload.salts || payload.salts.length === 0) {
+        return [];
+      }
+
+      const res = await fetch("/api/ai/drug/interactions", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const json = await res.json();
+      const interactions = json.interactions || [];
+      setValues((s: any) => ({
+        ...s,
+        metadata: { ...(s.metadata || {}), interactions },
+      }));
+      return interactions;
+    } catch (e: any) {
+      setCheckError("Interaction check failed: " + (e.message || e));
+      return [];
+    }
+  }
+
+  async function predictSchedule() {
+    try {
+      setCheckError(null);
+      const res = await fetch("/api/ai/schedule", {
+        method: "POST",
+        body: JSON.stringify({
+          name: values.name,
+          salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
+          manufacturer: values.metadata?.manufacturer || "",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      // { schedule, confidence, source }
+      setValues((s: any) => ({
+        ...s,
+        metadata: { ...(s.metadata || {}), schedule: json.schedule, schedule_confidence: json.confidence },
+      }));
+      return json;
+    } catch (e: any) {
+      setCheckError("Schedule prediction failed: " + (e.message || e));
+      return null;
+    }
+  }
+
+  async function predictHSNAndGST() {
+    try {
+      setCheckError(null);
+      const res = await fetch("/api/ai/hsn", {
+        method: "POST",
+        body: JSON.stringify({
+          name: values.name,
+          salt: (values.metadata && values.metadata.salts && values.metadata.salts.join(", ")) || "",
+          category: values.metadata?.category || "",
+          mrp: values.price,
+          brand: values.metadata?.manufacturer || "",
+          packaging: values.metadata?.packaging || "",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      // { hsn, gst, confidence }
+      setValues((s: any) => ({
+        ...s,
+        metadata: { ...(s.metadata || {}), hsn: json.hsn, gst: json.gst, hsn_confidence: json.confidence },
+      }));
+
+      // Also update taxRules preview with predicted GST if not already set
+      if (json.gst && (!taxRules || taxRules.length === 0)) {
+        setTaxRules([{ tax_id: null, tax_name: `GST ${json.gst}%`, rate: json.gst, account_id: null }]);
+      }
+
+      return json;
+    } catch (e: any) {
+      setCheckError("HSN/GST prediction failed: " + (e.message || e));
+      return null;
+    }
+  }
+
+  // run all checks in sequence (atomic-ish, best-effort)
+  async function runAllChecks(product?: any) {
+    setLoadingChecks(true);
+    setCheckError(null);
+    try {
+      // 1) extract salts
+      const salts = await extractSalts({ text: `${(product && product.name) || values.name}` });
+
+      // 2) interactions
+      await checkInteractions(salts);
+
+      // 3) schedule
+      await predictSchedule();
+
+      // 4) HSN/GST
+      await predictHSNAndGST();
+    } catch (e: any) {
+      setCheckError(e.message || "Unknown error during checks");
+    } finally {
+      setLoadingChecks(false);
+    }
+  }
+
+  // -----------------------
+  // Save logic: include metadata + related arrays
+  // -----------------------
+  const onSave = async () => {
+    const payload = {
+      ...values,
+      batches,
+      suppliers,
+      tax_rules: taxRules,
+      variants,
+      media,
+    };
+
+    try {
+      if (isNew) {
+        const res = await saveProduct(payload);
+        if (res?.id) {
+          alert("Created product: " + res.id);
+        } else {
+          alert("Saved (created)");
+        }
+      } else {
+        await saveProduct(payload, id);
+        alert("Saved");
+      }
+    } catch (e: any) {
+      alert("Save failed: " + (e.message || e));
+    }
   };
 
-  const confirmDiscard = () => {
-    setConfirmDiscardOpen(false);
-    setDirty(false);
-    const toCall = pendingCloseRef.current;
-    pendingCloseRef.current = null;
-    toCall?.();
-  };
+  // small UI helpers
+  const hasInteractions = (values.metadata && values.metadata.interactions && values.metadata.interactions.length > 0);
 
-  /* ---------------- UI ---------------- */
   return (
-    <div className="fixed inset-0 z-[2000] flex items-start justify-center p-6 overflow-auto" style={{ background: "rgba(15,23,42,0.55)" }}>
-      <motion.div
-        layout
-        className="product-editor w-full max-w-6xl rounded-3xl border shadow-2xl p-6"
-        initial={{ y: -8, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 8, opacity: 0 }}
-        style={{ background: "var(--glass-surface)", borderColor: "rgba(255,255,255,0.12)" }}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button onClick={handleCloseAttempt} className="p-2 rounded-full bg-white/60 hover:bg-white/80 border border-white/10" aria-label="Close editor">
-              <ArrowLeft className="w-4 h-4 text-slate-700" />
-            </button>
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">{productId ? "Edit product" : "Create product"}</h3>
-              <p className="text-xs text-slate-500">Neural Glass — product editor</p>
-            </div>
-          </div>
+    <div className="max-w-6xl mx-auto mt-10 p-10 bg-white/60 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/30">
+      <div className="flex items-start justify-between">
+        <h1 className="text-3xl font-bold mb-4">
+          {isNew ? "New Product" : values.name || "Edit Product"}
+        </h1>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:block">
-              <CompanySelector />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={onManualSave}
-                disabled={loading || !dirty || saveLockRef.current}
-                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl shadow-sm ${loading || !dirty ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-gradient-to-br from-blue-600 to-indigo-600 text-white"}`}
-                title="Save (Ctrl/Cmd+S)"
-              >
-                <Save className="w-4 h-4" /> Save
-              </button>
-              <button
-                onClick={() => {
-                  setDraft({ currency: defaults.currency, is_stockable: true } as any);
-                  setDirty(false);
-                  setValidationErrors(null);
-                  toast.info("Cleared fields");
-                }}
-                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => runAllChecks()}
+            className="px-4 py-2 rounded-xl border bg-white text-sm"
+            disabled={loadingChecks}
+          >
+            {loadingChecks ? "Running checks…" : "Run Safety & Tax Checks"}
+          </button>
+
+          <button
+            onClick={onSave}
+            className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg"
+          >
+            Save & Publish
+          </button>
         </div>
+      </div>
 
-        {validationErrors && (
-          <div className="mt-3 rounded-lg p-3 bg-rose-50 border border-rose-100 text-rose-700">
-            <div className="font-medium">Validation errors</div>
-            <ul className="mt-1 ml-3 list-disc text-sm">
-              {Object.entries(validationErrors).map(([k, v]) => (
-                <li key={k}>
-                  <strong className="capitalize">{k}</strong>: {v}
-                </li>
-              ))}
-            </ul>
+      {checkError && (
+        <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl border">{checkError}</div>
+      )}
+
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        items={[
+          { id: "general", label: "General" },
+          { id: "pricing", label: "Pricing & Cost" },
+          { id: "inventory", label: "Inventory & Batches" },
+          { id: "suppliers", label: "Suppliers" },
+          { id: "variants", label: "Variants & Attributes" },
+          { id: "tax", label: "Tax & Accounting" },
+          { id: "media", label: "Media / Documents" },
+          { id: "history", label: "History" },
+        ]}
+      />
+
+      {/* --- GENERAL TAB --- */}
+      {tab === "general" && (
+        <div className="space-y-6 mt-6">
+          <div>
+            <label className="block font-medium text-gray-800">SKU</label>
+            <input
+              value={values.sku || ""}
+              onChange={(e) => update("sku", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
           </div>
-        )}
 
-        <Tab.Group selectedIndex={activeIndex} onChange={setActiveIndex}>
-          <div className="mt-4 grid grid-cols-12 gap-6">
-            <aside className="col-span-3">
-              <Tab.List className="space-y-2">
-                {tabs.map((t) => (
-                  <Tab as={React.Fragment} key={t.name}>
-                    {({ selected }) => (
-                      <button className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${selected ? "bg-white/80 ring-1 ring-blue-300 shadow" : "bg-white/60 hover:bg-white/70"}`}>
-                        <t.icon className="w-4 h-4 text-slate-700" />
-                        <span className="flex-1 text-slate-900">{t.name}</span>
-                        {selected && <span className="ml-auto text-xs text-slate-500">●</span>}
-                      </button>
-                    )}
-                  </Tab>
-                ))}
-              </Tab.List>
+          <div>
+            <label className="block font-medium text-gray-800">Name</label>
+            <input
+              value={values.name || ""}
+              onChange={(e) => update("name", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
+          </div>
 
-              <div className="mt-6 p-3 rounded-xl bg-white/75 border border-slate-100">
-                <div className="text-xs text-slate-600">Quick actions</div>
-                <div className="mt-3 flex flex-col gap-2">
-                  <button onClick={() => { setActiveIndex(0); toast.info("Jumped to General"); }} className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900">Edit basic info</button>
-                  <button onClick={() => { setActiveIndex(2); toast.info("Jumped to Variants"); }} className="text-sm px-3 py-2 rounded-md bg-white/90 text-slate-900">Manage variants</button>
+          <div className="flex gap-4 items-center">
+            {values.metadata?.schedule && (
+              <div className="px-3 py-1 rounded-xl bg-purple-100 text-purple-700 w-fit text-sm font-semibold">
+                Schedule {values.metadata.schedule} (confidence:{" "}
+                {Math.round((values.metadata.schedule_confidence || 0) * 100)}%)
+              </div>
+            )}
+
+            {values.metadata?.hsn && (
+              <div className="px-3 py-1 rounded-xl bg-slate-50 text-slate-800 w-fit text-sm font-medium border">
+                HSN: {values.metadata.hsn} • GST: {values.metadata.gst ?? "—"}%
+              </div>
+            )}
+
+            {hasInteractions && (
+              <div className="px-3 py-1 rounded-xl bg-yellow-100 text-yellow-800 w-fit text-sm font-semibold">
+                ⚠ {values.metadata.interactions.length} interaction(s)
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block font-medium text-gray-800">
+              Short Description
+            </label>
+            <input
+              value={values.short_description || ""}
+              onChange={(e) => update("short_description", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
+          </div>
+
+          <div>
+            <label className="block font-medium text-gray-800">
+              Description
+            </label>
+            <textarea
+              rows={5}
+              value={values.description || ""}
+              onChange={(e) => update("description", e.target.value)}
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
+          </div>
+
+          <div className="flex gap-4">
+            <button
+              onClick={() =>
+                setValues((s: any) => ({
+                  ...s,
+                  is_stockable: true,
+                  is_service: false,
+                }))
+              }
+              className={`px-4 py-2 rounded-xl border ${
+                values.is_stockable ? "bg-blue-600 text-white" : "bg-white"
+              }`}
+            >
+              Stockable
+            </button>
+
+            <button
+              onClick={() =>
+                setValues((s: any) => ({
+                  ...s,
+                  is_stockable: false,
+                  is_service: true,
+                }))
+              }
+              className={`px-4 py-2 rounded-xl border ${
+                values.is_service ? "bg-blue-600 text-white" : "bg-white"
+              }`}
+            >
+              Service
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block font-medium text-gray-800">UoM</label>
+              <input
+                value={values.uom || ""}
+                onChange={(e) => update("uom", e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border bg-white/70"
+              />
+            </div>
+
+            <div>
+              <label className="block font-medium text-gray-800">Barcode</label>
+              <input
+                value={values.barcode || ""}
+                onChange={(e) => update("barcode", e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border bg-white/70"
+              />
+            </div>
+          </div>
+
+          {/* Salts & Interactions preview */}
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Active Ingredients (Salts)</h3>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => extractSalts({ text: `${values.name || ""}` })}
+                  className="px-3 py-1 rounded-lg border text-sm"
+                >
+                  Re-extract
+                </button>
+
+                <button
+                  onClick={() => checkInteractions()}
+                  className="px-3 py-1 rounded-lg border text-sm"
+                >
+                  Check Interactions
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-white/70 rounded-xl border">
+              {values.metadata?.salts && values.metadata.salts.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {values.metadata.salts.map((s: string, i: number) => (
+                    <div key={i} className="px-3 py-1 bg-white rounded-full border text-sm">
+                      {s}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">No salts detected yet</div>
+              )}
+            </div>
+
+            {hasInteractions && (
+              <div className="p-3 bg-yellow-50 rounded-xl border">
+                <h4 className="font-semibold">Detected Interactions</h4>
+                <div className="mt-2 space-y-2">
+                  {values.metadata.interactions.map((it: any, idx: number) => (
+                    <div key={idx} className="p-3 rounded-lg bg-white/80 border">
+                      <div className="font-semibold">{it.summary}</div>
+                      <div className="text-sm text-gray-700 mt-1">{it.details}</div>
+                      <div className="text-xs text-gray-500 mt-1">confidence: {Math.round((it.confidence || 0) * 100)}%</div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </aside>
-
-            <section className="col-span-9">
-              <div className="rounded-2xl border p-4 shadow-sm text-slate-900" style={{ background: "var(--glass-surface)" }}>
-                <Tab.Panels>
-                  <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading General…</div>}>
-                      <GeneralTab draft={draft} onChange={(update) => updateDraft(update)} onRequestSave={() => onManualSave()} defaults={defaults} />
-                    </Suspense>
-                  </Tab.Panel>
-
-                  <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading Inventory…</div>}>
-                      <InventoryTab draft={draft} onChange={(update) => updateDraft(update)} />
-                    </Suspense>
-                  </Tab.Panel>
-
-                  <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading Variants…</div>}>
-                      <VariantsTab draft={draft} onChange={(update) => updateDraft(update)} />
-                    </Suspense>
-                  </Tab.Panel>
-
-                  <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading Pricing…</div>}>
-                      <PricingTab draft={draft} onChange={(update) => updateDraft(update)} />
-                    </Suspense>
-                  </Tab.Panel>
-
-                  <Tab.Panel>
-                    <Suspense fallback={<div className="p-6 text-slate-600">Loading AI Assist…</div>}>
-                      <AIAssistTab draft={draft} onChange={(update) => updateDraft(update)} />
-                    </Suspense>
-                  </Tab.Panel>
-                </Tab.Panels>
-              </div>
-            </section>
+            )}
           </div>
-        </Tab.Group>
-      </motion.div>
+        </div>
+      )}
 
-      <ConfirmModal
-        open={confirmDiscardOpen}
-        title="Discard changes?"
-        description="You have unsaved changes. Discard and close the editor?"
-        confirmLabel="Discard"
-        cancelLabel="Cancel"
-        loading={false}
-        onConfirm={confirmDiscard}
-        onCancel={() => setConfirmDiscardOpen(false)}
-      />
+      {/* --- PRICING TAB --- */}
+      {tab === "pricing" && (
+        <div className="space-y-6 mt-6">
+          <div>
+            <label className="block font-medium text-gray-800">
+              Price (Selling)
+            </label>
+            <input
+              type="number"
+              value={values.price ?? 0}
+              onChange={(e) => update("price", parseFloat(e.target.value))}
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
+          </div>
+
+          <div>
+            <label className="block font-medium text-gray-800">
+              Default Cost
+            </label>
+            <input
+              type="number"
+              value={values.default_cost ?? 0}
+              onChange={(e) =>
+                update("default_cost", parseFloat(e.target.value))
+              }
+              className="w-full px-4 py-3 rounded-xl border bg-white/70"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* --- INVENTORY TAB --- */}
+      {tab === "inventory" && (
+        <BatchTable batches={batches} setBatches={setBatches} />
+      )}
+
+      {/* --- SUPPLIERS TAB --- */}
+      {tab === "suppliers" && (
+        <SupplierTable suppliers={suppliers} setSuppliers={setSuppliers} />
+      )}
+
+      {/* --- VARIANTS TAB --- */}
+      {tab === "variants" && (
+        <VariantsPanel variants={variants} setVariants={setVariants} />
+      )}
+
+      {/* --- TAX TAB --- */}
+      {tab === "tax" && (
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Tax & Accounting</h3>
+
+            <div className="text-sm text-gray-600">
+              {values.metadata?.hsn ? (
+                <span>HSN: {values.metadata.hsn} • GST: {values.metadata.gst}%</span>
+              ) : (
+                <span className="italic">HSN not predicted</span>
+              )}
+            </div>
+          </div>
+
+          <TaxSelector taxRules={taxRules} setTaxRules={setTaxRules} />
+
+          <div className="mt-4">
+            <button
+              onClick={() => predictHSNAndGST()}
+              className="px-4 py-2 rounded-xl border"
+            >
+              Predict HSN / GST (AI)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- MEDIA TAB --- */}
+      {tab === "media" && (
+        <MediaUploader media={media} setMedia={setMedia} />
+      )}
+
+      {/* --- HISTORY TAB --- */}
+      {tab === "history" && <LedgerPreview ledger={ledger} />}
+
+      {/* bottom actions */}
+      <div className="mt-8 flex gap-4">
+        <button
+          onClick={() => runAllChecks()}
+          className="px-4 py-2 rounded-xl border bg-white text-sm"
+        >
+          {loadingChecks ? "Running checks…" : "Run All Checks"}
+        </button>
+
+        <button
+          onClick={onSave}
+          className="px-6 py-3 rounded-xl bg-blue-600 text-white shadow-lg"
+        >
+          Save & Publish
+        </button>
+      </div>
     </div>
   );
 }
