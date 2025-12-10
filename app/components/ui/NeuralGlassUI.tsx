@@ -8,27 +8,31 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 /**
- * Hardened NeuralGlass UI primitives
- * - Explicit, high-contrast backgrounds & text (solid) so global CSS doesn't break it
- * - Inline style fallback for critical color properties
- * - Accessible focus states
+ * Hardened NeuralGlass UI primitives (strong inline fallbacks + data attribute)
+ * - Each button gets a data-ng attribute so global CSS overrides can be targeted safely
+ * - Inline styles set explicit colors so higher-specificity CSS rarely wins
  */
 
+const baseTapHighlight = { WebkitTapHighlightColor: "transparent" };
+
 export const PrimaryButton: React.FC<ButtonProps> = ({ children, className = "", style = {}, ...rest }) => {
-  // solid blue background + white text (explicit)
   const fallbackStyle: React.CSSProperties = {
     backgroundColor: "#2563eb", // blue-600
     color: "#ffffff",
-    WebkitTapHighlightColor: "transparent",
+    borderRadius: 16,
+    minHeight: 40,
+    ...baseTapHighlight,
+    ...style,
   };
   return (
     <button
       {...rest}
-      style={{ ...fallbackStyle, ...style }}
+      data-ng="neural primary"
+      style={fallbackStyle}
       className={[
         "inline-flex items-center justify-center gap-2 px-6 py-2 rounded-2xl text-sm font-semibold",
         "transition disabled:opacity-60 disabled:cursor-not-allowed",
-        // keep gradient class but solid fallback above prevents invisible text
+        // gradient class left for normal styling, fallback is inline
         "bg-gradient-to-br from-blue-600 to-blue-500",
         "focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-200",
         className,
@@ -40,16 +44,19 @@ export const PrimaryButton: React.FC<ButtonProps> = ({ children, className = "",
 };
 
 export const SecondaryButton: React.FC<ButtonProps> = ({ children, className = "", style = {}, ...rest }) => {
-  // white solid background with dark text explicit
   const fallbackStyle: React.CSSProperties = {
     backgroundColor: "#ffffff",
     color: "#0f172a", // slate-900
-    WebkitTapHighlightColor: "transparent",
+    borderRadius: 16,
+    minHeight: 36,
+    ...baseTapHighlight,
+    ...style,
   };
   return (
     <button
       {...rest}
-      style={{ ...fallbackStyle, ...style }}
+      data-ng="neural secondary"
+      style={fallbackStyle}
       className={[
         "inline-flex items-center justify-center gap-2 px-4 py-2 rounded-2xl text-sm font-medium",
         "transition border border-white/30",
@@ -63,16 +70,19 @@ export const SecondaryButton: React.FC<ButtonProps> = ({ children, className = "
 };
 
 export const GhostButton: React.FC<ButtonProps> = ({ children, className = "", style = {}, ...rest }) => {
-  // subtle light background + dark text explicit
   const fallbackStyle: React.CSSProperties = {
-    backgroundColor: "rgba(255,255,255,0.9)",
+    backgroundColor: "rgba(255,255,255,0.95)",
     color: "#0f172a",
-    WebkitTapHighlightColor: "transparent",
+    borderRadius: 12,
+    minHeight: 32,
+    ...baseTapHighlight,
+    ...style,
   };
   return (
     <button
       {...rest}
-      style={{ ...fallbackStyle, ...style }}
+      data-ng="neural ghost"
+      style={fallbackStyle}
       className={[
         "inline-flex items-center gap-2 px-3 py-1 rounded-xl text-sm font-medium",
         "transition border border-white/20",
@@ -104,6 +114,24 @@ export const SegmentedToggle: React.FC<SegmentedToggleProps> = ({
   ariaLabel = "Segmented control",
   className = "",
 }) => {
+  // explicit inline styles for both states
+  const activeStyle: React.CSSProperties = {
+    backgroundColor: "#ffffff",
+    color: "#0f172a",
+    boxShadow: "0 6px 18px rgba(15,23,42,0.06)",
+    borderRadius: 10,
+    padding: "8px 14px",
+    minWidth: 90,
+    ...baseTapHighlight,
+  };
+  const inactiveStyle: React.CSSProperties = {
+    backgroundColor: "transparent",
+    color: "#475569", // slate-600 — visible but softer
+    padding: "8px 14px",
+    minWidth: 90,
+    ...baseTapHighlight,
+  };
+
   const onKeyDownLeft = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowRight") onToggleRight();
     if (e.key === "Home") onToggleLeft();
@@ -121,7 +149,7 @@ export const SegmentedToggle: React.FC<SegmentedToggleProps> = ({
       role="tablist"
       aria-label={ariaLabel}
       className={["inline-flex rounded-xl p-1 border", "border-white/20 bg-white/5", className].join(" ")}
-      style={{ WebkitTapHighlightColor: "transparent" }}
+      style={{ ...baseTapHighlight }}
     >
       <button
         role="tab"
@@ -129,13 +157,9 @@ export const SegmentedToggle: React.FC<SegmentedToggleProps> = ({
         tabIndex={leftActive ? 0 : -1}
         onClick={onToggleLeft}
         onKeyDown={onKeyDownLeft}
-        className={[
-          "px-4 py-2 rounded-lg text-sm font-medium transition",
-          leftActive
-            ? "bg-white text-slate-900 shadow"
-            : "text-white/80",
-        ].join(" ")}
-        style={leftActive ? { backgroundColor: "#ffffff", color: "#0f172a" } : undefined}
+        data-ng="neural segmented-left"
+        style={leftActive ? activeStyle : inactiveStyle}
+        className="text-sm font-medium transition"
       >
         {leftLabel}
       </button>
@@ -146,13 +170,9 @@ export const SegmentedToggle: React.FC<SegmentedToggleProps> = ({
         tabIndex={!leftActive ? 0 : -1}
         onClick={onToggleRight}
         onKeyDown={onKeyDownRight}
-        className={[
-          "px-4 py-2 rounded-lg text-sm font-medium transition",
-          !leftActive
-            ? "bg-white text-slate-900 shadow"
-            : "text-white/80",
-        ].join(" ")}
-        style={!leftActive ? { backgroundColor: "#ffffff", color: "#0f172a" } : undefined}
+        data-ng="neural segmented-right"
+        style={!leftActive ? activeStyle : inactiveStyle}
+        className="text-sm font-medium transition"
       >
         {rightLabel}
       </button>

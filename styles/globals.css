@@ -32,3 +32,46 @@ body {
 }
 
 /* small utilities for Sidebar/Topbar spacing already used in components */
+/* NeuralGlass surgical overrides — safe, scoped to data-ng attributes */
+button[data-ng^="neural"] {
+  /* force readable colors if global rules attempt to hide them */
+  background-color: var(--ng-bg, #ffffff) !important;
+  color: var(--ng-color, #0f172a) !important;
+  border-color: rgba(15,23,42,0.06) !important;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.06) !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+/* Primary gradient */
+button[data-ng~="primary"] {
+  background-image: linear-gradient(135deg,#2563eb 0%,#3b82f6 100%) !important;
+  color: #fff !important;
+}
+
+/* Secondary solid */
+button[data-ng~="secondary"] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Ghost */
+button[data-ng~="ghost"] {
+  background-color: rgba(255,255,255,0.95) !important;
+  color: #0f172a !important;
+}
+
+/* Segmented: ensure both sides visible even when parent styles are weird */
+button[data-ng~="segmented-left"],
+button[data-ng~="segmented-right"] {
+  min-width: 88px !important;
+  padding: 8px 14px !important;
+  border-radius: 10px !important;
+  color: inherit !important;
+  background-color: transparent !important;
+}
+button[data-ng~="segmented-left"][aria-selected="true"],
+button[data-ng~="segmented-right"][aria-selected="true"] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.06) !important;
+}
